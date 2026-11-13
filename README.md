@@ -10,6 +10,7 @@ voice, and automatic TLS, wired together for your own domain.
 | `unrealircd` | IRC server (UnrealIRCd 6) | 6697 (TLS), 6667 (optional) |
 | `anope` | IRC services: NickServ, ChanServ, … (Anope 2.0), linked to unrealircd over TLS | internal |
 | `quicvoiced` | Voice rooms over QUIC ([boson-chat/quicvoice](https://github.com/boson-chat/quicvoice)) | 7700/udp |
+| `victoriametrics` | Optional (`metrics` profile): scrapes every service's `/metrics`, 90-day retention. Internal only, at `http://victoriametrics:8428` (Prometheus-compatible query API) | internal |
 
 Planned: an auth service (accounts, SSO via OIDC/SAML, voice tokens, IRC SASL
 against the same accounts), video, an admin web panel, and the desktop
@@ -37,6 +38,12 @@ scripts/setup.sh --local    # irc.localhost / voice.localhost, self-signed TLS
 docker compose up -d --build
 scripts/smoke-irc.py        # TLS connect + NickServ reply
 ```
+
+## Profiles
+
+`COMPOSE_PROFILES` in `.env` picks what runs: `irc`, `voice` and `metrics`
+(Caddy and certsync always run). For example, `COMPOSE_PROFILES=voice,metrics`
+runs only voice and metrics next to an IRC server you already have.
 
 ## Configuration
 

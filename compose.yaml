@@ -1,7 +1,7 @@
 # boson stack: IRC (UnrealIRCd + Anope), voice (quicvoiced) and TLS (Caddy).
 # Configure in .env (see .env.example / scripts/setup.sh), then:
 #   docker compose up -d --build
-# Which parts run is chosen by COMPOSE_PROFILES in .env (irc, voice).
+# Which parts run is chosen by COMPOSE_PROFILES in .env (irc, voice, metrics).
 name: boson
 
 x-restart: &restart
@@ -114,6 +114,21 @@ services:
       - certs_voice:/certs:ro
     depends_on: [certsync]
 
+  victoriametrics:
+    <<: *restart
+    profiles: [metrics]
+    image: victoriametrics/victoria-metrics:v1.131.0
+    command:
+      - -storageDataPath=/storage
+      - -retentionPeriod=${METRICS_RETENTION:-90d}
+      - -promscrape.config=/etc/vm/scrape.yml
+      - -httpListenAddr=:8428
+    volumes:
+      - ./monitoring/scrape.yml:/etc/vm/scrape.yml:ro
+      - vm_data:/storage
+    # Internal only: the admin panel (and Grafana, if you add one) query
+    # http://victoriametrics:8428. Not published on the host.
+
 volumes:
   caddy_data:
   caddy_config:
@@ -123,3 +138,4 @@ volumes:
   unreal_logs:
   anope_data:
   anope_logs:
+  vm_data:
