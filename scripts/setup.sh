@@ -144,6 +144,7 @@ umask 077
 	echo "POSTGRES_PASSWORD=$(rand 40)"
 	echo "AUTH_KEY_ENCRYPTION_KEY=$(openssl rand -base64 32)"
 	echo "INTERNAL_API_TOKEN=$(openssl rand -hex 32)"
+	echo "ADMIN_SESSION_KEY=$(openssl rand -base64 32)"
 	echo "VOICE_JWT_SECRET=$(rand 64)"
 	echo "SMTP_HOST="
 	echo "SMTP_PORT=587"
