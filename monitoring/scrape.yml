@@ -4,6 +4,9 @@ global:
   scrape_interval: 15s
 
 scrape_configs:
+  - job_name: traefik
+    static_configs:
+      - targets: ["traefik:8080"]   # --metrics.prometheus on Traefik's internal entrypoint
   - job_name: quicvoiced
     static_configs:
       - targets: ["quicvoiced:8080"]
