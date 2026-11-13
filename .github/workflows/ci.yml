@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Local .env (self-signed TLS)
+        run: scripts/setup.sh --local
+      - name: Start IRC + services
+        run: docker compose up -d --build --wait caddy certsync unrealircd anope
+      - name: Wait for the services link
+        run: |
+          for i in $(seq 1 30); do
+            docker compose logs anope | grep -q 'is done syncing' && exit 0; sleep 2
+          done
+          docker compose logs; exit 1
+      - name: IRC + NickServ smoke test
+        run: python3 scripts/smoke-irc.py 127.0.0.1
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs
+
+  publish:
+    needs: smoke
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build + push images
+        run: |
+          for img in unrealircd:6.2.5 anope:2.0.20 certsync:latest; do
+            name=${img%%:*}; tag=${img#*:}
+            docker buildx build --platform linux/amd64,linux/arm64 --push \
+              -t ghcr.io/boson-chat/stack-$name:$tag \
+              -t ghcr.io/boson-chat/stack-$name:sha-${GITHUB_SHA::7} images/$name
+          done

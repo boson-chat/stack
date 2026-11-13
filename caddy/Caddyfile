@@ -1,0 +1,14 @@
+# Caddy obtains and renews certificates for every hostname in the stack.
+# IRC and voice don't speak HTTP; their names are listed here only so Caddy
+# keeps certs for them, which certsync hands to unrealircd and quicvoiced.
+#
+# TLS_ISSUER: an email address for Let's Encrypt, or "internal" for a local
+# self-signed CA (development).
+{
+	admin off
+}
+
+{$IRC_HOST}, {$VOICE_HOST} {
+	tls {$TLS_ISSUER}
+	respond "{$NETWORK_NAME}: connect with an IRC client to {$IRC_HOST}:6697" 200
+}
