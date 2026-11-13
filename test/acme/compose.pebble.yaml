@@ -1,0 +1,27 @@
+# ACME test: Pebble (Let's Encrypt's test CA) + a DNS server that resolves
+# every name to Traefik, so the real HTTP-01 path is exercised:
+# Traefik ACME → acme.json → certsync (traefik-certs-dumper) → Ergo/quicvoiced.
+# Used by test/acme/run.sh; not for production.
+services:
+  traefik:
+    environment:
+      LEGO_CA_CERTIFICATES: /pebble-ca/pebble.minica.pem
+    volumes:
+      - ./test/acme/pebble.minica.pem:/pebble-ca/pebble.minica.pem:ro
+    networks:
+      default:
+        ipv4_address: 10.203.53.10
+  pebble:
+    image: ghcr.io/letsencrypt/pebble:2.10.3
+    command: ["-config", "/pebble.json", "-dnsserver", "10.203.53.11:8053", "-strict"]
+    environment:
+      PEBBLE_VA_NOSLEEP: "1"
+    volumes:
+      - ./test/acme/pebble.json:/pebble.json:ro
+  challtestsrv:
+    image: ghcr.io/letsencrypt/pebble-challtestsrv:2.10.3
+    command: ["-defaultIPv4", "10.203.53.10", "-defaultIPv6", "", "-dnsserver", ":8053",
+              "-http01", "", "-https01", "", "-tlsalpn01", "", "-doh", ""]
+    networks:
+      default:
+        ipv4_address: 10.203.53.11

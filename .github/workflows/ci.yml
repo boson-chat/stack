@@ -7,47 +7,99 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
+  helper:
+    name: boson-ergo helper (Go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: images/ergo/helper
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: images/ergo/helper/go.mod
+      - run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+
   smoke:
+    name: local stack smoke (Traefik + auth + Ergo SASL)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Local .env (self-signed TLS)
+      - name: Local .env (local CA, *.localhost)
         run: scripts/setup.sh --local
-      - name: Start IRC + services
-        run: docker compose up -d --build --wait caddy certsync unrealircd anope
-      - name: Wait for the services link
+      - name: Start traefik, certsync, ergo, postgres, auth, quicvoiced, victoriametrics
+        env:
+          COMPOSE_PROFILES: irc,voice,auth,metrics
+        run: docker compose up -d --build --wait --wait-timeout 300
+      - name: Auth signup + IRC SASL (PLAIN, wrong password, OAUTHBEARER) + voice token
+        run: python3 scripts/smoke-irc.py --print-voice-token | sed -E 's/^(VOICE_TOKEN ).*/\1<redacted>/'
+      - name: VictoriaMetrics scrapes auth, quicvoiced and traefik
+        env:
+          COMPOSE_PROFILES: irc,voice,auth,metrics
         run: |
           for i in $(seq 1 30); do
-            docker compose logs anope | grep -q 'is done syncing' && exit 0; sleep 2
+            up=$(docker compose exec -T victoriametrics wget -qO- 'http://127.0.0.1:8428/api/v1/query?query=up' || true)
+            n=$(echo "$up" | python3 -c 'import sys,json; r=json.load(sys.stdin)["data"]["result"]; print(sum(1 for m in r if m["metric"]["job"] in ("auth","quicvoiced","traefik") and m["value"][1]=="1"))' 2>/dev/null || echo 0)
+            [ "$n" = 3 ] && { echo "all 3 targets up"; exit 0; }
+            sleep 5
           done
-          docker compose logs; exit 1
-      - name: IRC + NickServ smoke test
-        run: python3 scripts/smoke-irc.py 127.0.0.1
+          echo "$up"; exit 1
       - name: Logs on failure
         if: failure()
+        env:
+          COMPOSE_PROFILES: irc,voice,auth,metrics
         run: docker compose logs
 
-  publish:
-    needs: smoke
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  acme:
+    name: ACME path (Pebble → Traefik → certsync → Ergo/quicvoiced)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build + push images
+      - run: scripts/setup.sh --local
+      - run: test/acme/run.sh
+
+  publish:
+    name: publish images to Harbor
+    needs: [helper, smoke, acme]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY: harbor.floret.dev
+      HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
+    steps:
+      - name: Check Harbor credentials
+        id: creds
         run: |
-          for img in unrealircd:6.2.5 anope:2.0.20 certsync:latest; do
+          if [ -z "$HARBOR_USERNAME" ]; then
+            echo "HARBOR_USERNAME/HARBOR_PASSWORD not set; skipping publish."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.creds.outputs.ok == 'true'
+      - uses: docker/setup-qemu-action@v3
+        if: steps.creds.outputs.ok == 'true'
+      - uses: docker/setup-buildx-action@v3
+        if: steps.creds.outputs.ok == 'true'
+      - uses: docker/login-action@v3
+        if: steps.creds.outputs.ok == 'true'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_PASSWORD }}
+      - name: Build + push harbor.floret.dev/boson/stack-*
+        if: steps.creds.outputs.ok == 'true'
+        run: |
+          # <dir>:<tag>; every image also gets :sha-<commit>.
+          for img in certsync:latest ergo:2.19.1; do
             name=${img%%:*}; tag=${img#*:}
-            docker buildx build --platform linux/amd64,linux/arm64 --push \
-              -t ghcr.io/boson-chat/stack-$name:$tag \
-              -t ghcr.io/boson-chat/stack-$name:sha-${GITHUB_SHA::7} images/$name
+            docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --push \
+              --label org.opencontainers.image.source=https://github.com/${{ github.repository }} \
+              -t $REGISTRY/boson/stack-$name:$tag \
+              -t $REGISTRY/boson/stack-$name:sha-${GITHUB_SHA::7} images/$name
           done
