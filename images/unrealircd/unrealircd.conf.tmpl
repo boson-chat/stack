@@ -1,0 +1,174 @@
+/* UnrealIRCd 6 configuration, rendered by entrypoint.sh from environment
+ * variables at container start. Edit the template, not the rendered file.
+ * Network: ${NETWORK_NAME} (${IRC_HOST})
+ */
+
+include "modules.default.conf";
+include "help/help.conf";
+include "badwords.conf";
+include "operclass.default.conf";
+include "snomasks.default.conf";
+
+loadmodule "cloak_sha256";
+
+me {
+	name "${IRC_HOST}";
+	info "${NETWORK_NAME} IRC Network";
+	sid "${IRC_SID}";
+}
+
+admin {
+	"${NETWORK_NAME} Admin";
+	"${OPER_NAME}";
+	"${ADMIN_EMAIL}";
+}
+
+class clients { pingfreq 90; maxclients 1000; sendq 200k; recvq 8000; }
+class opers   { pingfreq 90; maxclients 50;   sendq 1M;   recvq 8000; }
+class servers { pingfreq 60; connfreq 15; maxclients 10; sendq 20M; }
+
+allow {
+	mask *;
+	class clients;
+	maxperip 5;
+	global-maxperip 10;
+}
+
+oper ${OPER_NAME} {
+	class opers;
+	mask *@*;
+	password "${OPER_PASSWORD_HASH}" { argon2; }
+	operclass netadmin;
+	swhois "is a Network Administrator";
+}
+
+/* TLS IRC */
+listen {
+	ip *;
+	port 6697;
+	options { tls; }
+	tls-options {
+		certificate "${TLS_CERT}";
+		key "${TLS_KEY}";
+	}
+}
+
+/* Server links: services only, never published outside the compose network.
+ * TLS even inside the network: plaintext-policy denies plaintext server links. */
+listen {
+	ip *;
+	port 7000;
+	options { tls; serversonly; }
+	tls-options {
+		certificate "${TLS_CERT}";
+		key "${TLS_KEY}";
+	}
+}
+
+link ${SERVICES_HOST} {
+	incoming { mask *; }
+	password "${SERVICES_LINK_PASSWORD}";
+	class servers;
+}
+
+ulines { ${SERVICES_HOST}; }
+
+drpass {
+	restart "${DRPASS}";
+	die "${DRPASS}";
+}
+
+log {
+	source {
+		all;
+		!debug;
+		!join.LOCAL_CLIENT_JOIN;
+		!join.REMOTE_CLIENT_JOIN;
+		!part.LOCAL_CLIENT_PART;
+		!part.REMOTE_CLIENT_PART;
+		!kick.LOCAL_CLIENT_KICK;
+		!kick.REMOTE_CLIENT_KICK;
+	}
+	destination {
+		file "ircd.log" { maxsize 100M; }
+	}
+}
+
+include "aliases/anope.conf";
+
+except ban {
+	mask *.irccloud.com;
+	type { maxperip; connect-flood; }
+}
+
+blacklist dronebl {
+	dns {
+		name dnsbl.dronebl.org;
+		type record;
+		reply { 3; 5; 6; 7; 8; 9; 10; 11; 12; 13; 14; 15; 16; }
+	}
+	action gline;
+	ban-time 24h;
+	reason "Proxy/Drone detected. Check https://dronebl.org/lookup?ip=$ip for details.";
+}
+
+/* Default TLS settings (also used for outgoing links and as Unreal's fallback cert). */
+set {
+	tls {
+		certificate "${TLS_CERT}";
+		key "${TLS_KEY}";
+	}
+}
+
+set {
+	network-name      "${NETWORK_NAME}";
+	default-server    "${IRC_HOST}";
+	services-server   "${SERVICES_HOST}";
+
+	help-channel "${HELP_CHANNEL}";
+	cloak-prefix "${CLOAK_PREFIX}";
+	prefix-quit  "Quit";
+
+	cloak-keys {
+		"${CLOAK_KEY1}";
+		"${CLOAK_KEY2}";
+		"${CLOAK_KEY3}";
+	}
+
+	kline-address "${ADMIN_EMAIL}";
+
+	modes-on-connect "+ixw";
+	modes-on-oper    "+xws";
+	modes-on-join    "+nt";
+	oper-auto-join   "#opers";
+
+	options {
+		hide-ulines;
+		show-connect-info;
+	}
+
+	maxchannelsperuser 30;
+	anti-spam-quit-message-time 10s;
+
+	anti-flood { channel { default-profile normal; } }
+
+	plaintext-policy     { user warn; oper deny; server deny; }
+	outdated-tls-policy  { user warn; oper deny; server deny; }
+
+	spamfilter {
+		ban-time 1d;
+		ban-reason "Spam/Advertising";
+		virus-help-channel "${HELP_CHANNEL}";
+	}
+
+	restrict-commands {
+		list   { except { connect-time 60;  identified yes; reputation-score 24; } }
+		invite { except { connect-time 120; identified yes; reputation-score 24; } }
+	}
+
+	connthrottle {
+		except { reputation-score 24; identified yes; }
+		new-users { local-throttle 20:60; global-throttle 30:60; }
+		disabled-when { reputation-gathering 1w; start-delay 3m; }
+	}
+}

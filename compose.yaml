@@ -1,0 +1,121 @@
+# boson stack: IRC (UnrealIRCd + Anope), voice (quicvoiced) and TLS (Caddy).
+# Configure in .env (see .env.example / scripts/setup.sh), then:
+#   docker compose up -d --build
+name: boson
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  caddy:
+    <<: *restart
+    image: caddy:2.10-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      IRC_HOST: ${IRC_HOST:?set IRC_HOST in .env}
+      VOICE_HOST: ${VOICE_HOST:?set VOICE_HOST in .env}
+      NETWORK_NAME: ${NETWORK_NAME:-Boson}
+      TLS_ISSUER: ${TLS_ISSUER:?set TLS_ISSUER in .env}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  certsync:
+    <<: *restart
+    build: images/certsync
+    image: ghcr.io/boson-chat/stack-certsync:latest
+    environment:
+      CADDY_DATA: /caddy
+      CERTSYNC_TARGETS: >-
+        ${IRC_HOST}:/certs/irc:10000:server.cert.pem:server.key.pem
+        ${VOICE_HOST}:/certs/voice:65532:tls.crt:tls.key
+    volumes:
+      - caddy_data:/caddy:ro
+      - certs_irc:/certs/irc
+      - certs_voice:/certs/voice
+    depends_on: [caddy]
+
+  unrealircd:
+    <<: *restart
+    build: images/unrealircd
+    image: ghcr.io/boson-chat/stack-unrealircd:6.2.5
+    ports:
+      - "6697:6697"
+      - "${IRC_PLAINTEXT_PORT:-127.0.0.1:6667}:6667"
+    environment:
+      IRC_HOST: ${IRC_HOST}
+      NETWORK_NAME: ${NETWORK_NAME:-Boson}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?set ADMIN_EMAIL in .env}
+      OPER_NAME: ${OPER_NAME:-admin}
+      OPER_PASSWORD_HASH: ${OPER_PASSWORD_HASH:?set OPER_PASSWORD_HASH (run scripts/setup.sh)}
+      CLOAK_KEY1: ${CLOAK_KEY1:?run scripts/setup.sh}
+      CLOAK_KEY2: ${CLOAK_KEY2:?run scripts/setup.sh}
+      CLOAK_KEY3: ${CLOAK_KEY3:?run scripts/setup.sh}
+      SERVICES_HOST: ${SERVICES_HOST:?set SERVICES_HOST in .env}
+      SERVICES_LINK_PASSWORD: ${SERVICES_LINK_PASSWORD:?run scripts/setup.sh}
+      IRC_PLAINTEXT: ${IRC_PLAINTEXT:-false}
+      CERT_DIR: /certs
+    volumes:
+      - certs_irc:/certs:ro
+      - unreal_data:/home/unrealircd/unrealircd/data
+      - unreal_logs:/home/unrealircd/unrealircd/logs
+    depends_on: [certsync]
+    healthcheck:
+      # Ready once the services link port accepts connections.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/7000"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 120s
+
+  anope:
+    <<: *restart
+    build: images/anope
+    image: ghcr.io/boson-chat/stack-anope:2.0.20
+    environment:
+      SERVICES_HOST: ${SERVICES_HOST}
+      NETWORK_NAME: ${NETWORK_NAME:-Boson}
+      UPLINK_HOST: unrealircd
+      UPLINK_PORT: "7000"
+      SERVICES_LINK_PASSWORD: ${SERVICES_LINK_PASSWORD}
+      OPER_NAME: ${OPER_NAME:-admin}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+    volumes:
+      - anope_data:/home/anope/anope/data
+      - anope_logs:/home/anope/anope/logs
+    depends_on:
+      unrealircd:
+        condition: service_healthy
+
+  quicvoiced:
+    <<: *restart
+    image: ${QUICVOICE_IMAGE:-ghcr.io/boson-chat/quicvoice:1.1.0}
+    ports:
+      - "7700:7700/udp"
+    environment:
+      ENV: production
+      QUIC_ADDR: ":7700"
+      HTTP_ADDR: ":8080"
+      TLS_CERT_FILE: /certs/tls.crt
+      TLS_KEY_FILE: /certs/tls.key
+      JWT_SECRET: ${VOICE_JWT_SECRET:?run scripts/setup.sh}
+    volumes:
+      - certs_voice:/certs:ro
+    depends_on: [certsync]
+
+volumes:
+  caddy_data:
+  caddy_config:
+  certs_irc:
+  certs_voice:
+  unreal_data:
+  unreal_logs:
+  anope_data:
+  anope_logs:
