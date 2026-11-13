@@ -50,7 +50,7 @@ local_ca() {
 			extendedKeyUsage=serverAuth
 			subjectKeyIdentifier=hash
 			authorityKeyIdentifier=keyid,issuer
-			subjectAltName=DNS:localhost,DNS:*.localhost,DNS:irc.localhost,DNS:voice.localhost,DNS:auth.localhost,DNS:admin.localhost,IP:127.0.0.1,IP:::1
+			subjectAltName=DNS:localhost,DNS:*.localhost,DNS:irc.localhost,DNS:voice.localhost,DNS:auth.localhost,DNS:admin.localhost,DNS:api.localhost,IP:127.0.0.1,IP:::1
 		EXT
 		openssl x509 -req -in cert.csr -CA ca.pem -CAkey ca.key -CAcreateserial -days 825 \
 			-extfile cert.ext -out cert.pem 2>/dev/null
@@ -69,10 +69,11 @@ if [ "${1:-}" = "--local" ]; then
 	VOICE_HOST=voice.localhost
 	AUTH_HOST=auth.localhost
 	ADMIN_HOST=admin.localhost
+	API_HOST=api.localhost
 	ADMIN_EMAIL=admin@localhost
 	TLS_ISSUER=local
 	ACME_CA_SERVER=
-	PROFILES=irc,voice,auth
+	PROFILES=irc,voice,auth,api
 	REQUIRE_EMAIL_VERIFICATION=false
 	OPER_NAME=admin
 	OPER_PASSWORD=$(rand 20)
@@ -84,6 +85,7 @@ else
 	ask VOICE_HOST "Voice hostname" "voice.$DOMAIN"
 	ask AUTH_HOST "Accounts (auth) hostname" "auth.$DOMAIN"
 	ADMIN_HOST="admin.$DOMAIN"
+	API_HOST="api.$DOMAIN"
 	ask ADMIN_EMAIL "Admin email (also used for Let's Encrypt)" "admin@$DOMAIN"
 	ask TLS_ISSUER "TLS: Let's Encrypt email, or 'local' for a self-made local CA" "$ADMIN_EMAIL"
 	ACME_CA_SERVER=
@@ -91,7 +93,7 @@ else
 		ask STAGING "Use the Let's Encrypt staging CA (test certs, no rate limits)? y/N" "n"
 		case "$STAGING" in [yY]*) ACME_CA_SERVER=https://acme-staging-v02.api.letsencrypt.org/directory ;; esac
 	fi
-	ask PROFILES "Parts to run (irc, voice, auth, metrics)" "irc,voice,auth"
+	ask PROFILES "Parts to run (irc, voice, auth, api, metrics, admin)" "irc,voice,auth,api"
 	REQUIRE_EMAIL_VERIFICATION=true
 	ask OPER_NAME "IRC operator name" "admin"
 	read -r -s -p "IRC operator password (empty = generate): " OPER_PASSWORD; echo
@@ -132,6 +134,8 @@ umask 077
 	echo "VOICE_HOST=$VOICE_HOST"
 	echo "AUTH_HOST=$AUTH_HOST"
 	echo "ADMIN_HOST=$ADMIN_HOST"
+	echo "API_HOST=$API_HOST"
+	echo "CERT_HOSTS=$IRC_HOST,$VOICE_HOST,$AUTH_HOST,$API_HOST"
 	echo "ADMIN_EMAIL=$ADMIN_EMAIL"
 	echo "TLS_ISSUER=$TLS_ISSUER"
 	[ -z "$ACME_CA_SERVER" ] || echo "ACME_CA_SERVER=$ACME_CA_SERVER"
@@ -145,6 +149,7 @@ umask 077
 	echo "AUTH_KEY_ENCRYPTION_KEY=$(openssl rand -base64 32)"
 	echo "INTERNAL_API_TOKEN=$(openssl rand -hex 32)"
 	echo "ADMIN_SESSION_KEY=$(openssl rand -base64 32)"
+	echo "API_DB_PASSWORD=$(rand 40)"
 	echo "VOICE_JWT_SECRET=$(rand 64)"
 	echo "SMTP_HOST="
 	echo "SMTP_PORT=587"
@@ -156,7 +161,7 @@ umask 077
 
 echo "Wrote .env. Next:"
 if [ "$LOCAL" = false ] && [ "$TLS_ISSUER" != local ]; then
-	echo "  1. Point DNS A records for $IRC_HOST, $VOICE_HOST and $AUTH_HOST at this server."
+	echo "  1. Point DNS A records for $IRC_HOST, $VOICE_HOST, $AUTH_HOST and $API_HOST at this server."
 	echo "  2. Open ports 80/tcp, 443/tcp, 6697/tcp and 7700/udp."
 	echo "  3. Optional: SMTP_* in .env so the auth service can send verification email."
 fi
