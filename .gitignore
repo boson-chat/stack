@@ -1,3 +1,10 @@
 .env
 .env.*
 !.env.example
+# Local dev CA + certificate from scripts/setup.sh --local
+/local-certs/
+# Install-specific config
+/compose.override.yaml
+/traefik/dynamic/*
+!/traefik/dynamic/README.md
+!/traefik/dynamic/stack.yml

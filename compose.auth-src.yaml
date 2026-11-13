@@ -1,0 +1,14 @@
+# Build the auth service from a local checkout instead of pulling a release
+# (until harbor.floret.dev/boson/auth has the version you need, or to test
+# unreleased changes). Enable it in .env:
+#   COMPOSE_FILE=compose.yaml:compose.auth-src.yaml
+#   AUTH_SRC=../auth                # path to a boson-chat/auth checkout
+# (Add :compose.override.yaml to COMPOSE_FILE too if you use one: setting
+# COMPOSE_FILE turns off compose.override.yaml auto-loading.)
+services:
+  auth:
+    build:
+      context: ${AUTH_SRC:-../auth}
+      args:
+        VERSION: local
+    image: boson-auth:local

@@ -1,0 +1,36 @@
+# Part of the stack (don't edit; add your own *.yml next to it instead).
+# Traefik renders this Go template with its own environment (compose.yaml).
+#
+# CERT_HOSTS: Traefik holds a certificate for each of these hostnames, even
+# the ones that aren't HTTP (IRC, voice): a low-priority router per host on
+# the no-op service makes Traefik's ACME resolver obtain and renew it, and
+# certsync exports it from acme.json for the services that need files.
+# Routers for real HTTP services (auth, webirc, ...) only set `tls: {}` and
+# pick these certificates up by SNI.
+#
+# Local mode (TLS_ISSUER=local): no ACME; the certificate made by
+# scripts/setup.sh --local (./local-certs) is the default for every host.
+{{- $local := has (env "TLS_ISSUER") (list "local" "internal") }}
+{{- $hosts := list }}
+{{- range splitList "," (env "CERT_HOSTS") }}{{ $h := trim . }}{{ if $h }}{{ $hosts = append $hosts $h }}{{ end }}{{ end }}
+
+{{- if $local }}
+tls:
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /local-certs/cert.pem
+        keyFile: /local-certs/key.pem
+{{- else if $hosts }}
+http:
+  routers:
+{{- range $hosts }}
+    cert-{{ normalize . }}:
+      entryPoints: [websecure]
+      rule: Host(`{{ . }}`)
+      priority: 1
+      service: noop@internal
+      tls:
+        certResolver: le
+{{- end }}
+{{- end }}
