@@ -144,8 +144,13 @@ services:
       POSTGRES_USER: auth
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run scripts/setup.sh}
       POSTGRES_DB: auth
+      # First start only: also create the API's database (api profile).
+      API_DB_PASSWORD: ${API_DB_PASSWORD:-}
+      API_DB_USER: ${API_DB_USER:-api}
+      API_DB_NAME: ${API_DB_NAME:-api}
     volumes:
       - pg_data:/var/lib/postgresql
+      - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "auth", "-d", "auth"]
       interval: 5s
@@ -241,14 +246,14 @@ services:
       ENV: production
       PUBLIC_URL: https://${ADMIN_HOST:-admin.${DOMAIN:-localhost}}
       # Seals the admin's auth tokens in the session cookie (32 random bytes, base64).
-      SESSION_KEY: ${ADMIN_SESSION_KEY:?run scripts/setup.sh (ADMIN_SESSION_KEY)}
+      SESSION_KEY: ${ADMIN_SESSION_KEY:-}
       TRUSTED_PROXIES: ${STACK_SUBNET:-10.203.53.0/24}
       AUTH_URL: http://auth:8080
       AUTH_INTERNAL_URL: http://auth:8081
       METRICS_URL: ${ADMIN_METRICS_URL-http://victoriametrics:8428}
       GRAFANA_URL: ${GRAFANA_URL:-}
       HEALTH_TARGETS: >-
-        auth=http://auth:8081/healthz,auth=http://auth:8081/readyz,quicvoiced=http://quicvoiced:8080/healthz,victoriametrics=http://victoriametrics:8428/health
+        auth=http://auth:8081/healthz,auth=http://auth:8081/readyz,quicvoiced=http://quicvoiced:8080/healthz,victoriametrics=http://victoriametrics:8428/health${ADMIN_API_HEALTH-,api=http://api:3000/health}
       VERSION_TARGETS: auth=http://auth:8081/metrics,quicvoiced=http://quicvoiced:8080/version
       # host:port to report, @ where to dial it from inside the network.
       TLS_CHECK_HOSTS: >-
@@ -261,6 +266,79 @@ services:
       - traefik.http.services.admin.loadbalancer.server.port=8080
     # Note: ADMIN_HOST must be in CERT_HOSTS so Traefik gets its certificate.
     depends_on: [auth]
+
+  # ---- api (optional): the boson backend API --------------------------------
+  # Server directory, profiles, nick claims and avatars for the boson client
+  # (github.com/boson-chat/boson backend/). Uses the stack Postgres and the
+  # auth service. POP3_* (nick claims) and R2_* (avatars) are optional: empty
+  # disables that feature. See docs/api.md.
+  api:
+    <<: *restart
+    profiles: [api]
+    image: ${API_IMAGE:-harbor.floret.dev/boson/backend:0.43.0}
+    command: ["serve"]
+    environment: &api-env
+      PORT: "3000"
+      ENV: production
+      ALLOWED_ORIGINS: ${API_ALLOWED_ORIGINS:-https://${DOMAIN:-localhost}}
+      AUTH_JWKS_URL: http://auth:8080/.well-known/jwks.json
+      AUTH_ISSUER: https://${AUTH_HOST}
+      AUTH_AUDIENCE: boson
+      DBHOST: postgres
+      DBPORT: "5432"
+      DBNAME: ${API_DB_NAME:-api}
+      DBUSERNAME: ${API_DB_USER:-api}
+      DBPASSWORD: ${API_DB_PASSWORD:-}
+      DBSSLMODE: disable
+      NICK_CLAIM_EMAIL_DOMAIN: ${NICK_CLAIM_EMAIL_DOMAIN:-${DOMAIN:-}}
+      NICK_CLAIM_RATE_LIMIT_PER_HOUR: ${NICK_CLAIM_RATE_LIMIT_PER_HOUR:-5}
+      PURELYMAIL_POP3_HOST: ${POP3_HOST:-}
+      PURELYMAIL_POP3_PORT: ${POP3_PORT:-995}
+      PURELYMAIL_POP3_USER: ${POP3_USER:-}
+      PURELYMAIL_POP3_TLS: ${POP3_TLS:-true}
+      PURELYMAIL_POP3_PASSWORD: ${POP3_PASSWORD:-}
+      CLOUDFLARE_R2_ACCESS_KEY: ${R2_ACCESS_KEY:-}
+      CLOUDFLARE_R2_SECRET_KEY: ${R2_SECRET_KEY:-}
+      CLOUDFLARE_R2_ENDPOINT: ${R2_ENDPOINT:-}
+      CLOUDFLARE_R2_BUCKET: ${R2_BUCKET:-}
+      CLOUDFLARE_CDN_BASE_URL: ${CDN_BASE_URL:-}
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.api.rule=Host(`${API_HOST:-api.${DOMAIN:-localhost}}`)
+      - traefik.http.routers.api.entrypoints=websecure
+      - traefik.http.routers.api.tls=true
+      - traefik.http.services.api.loadbalancer.server.port=3000
+    # Note: API_HOST must be in CERT_HOSTS so Traefik gets its certificate.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api-migrate:
+        condition: service_completed_successfully
+
+  # Applies the API's database migrations before it starts (exits when done).
+  api-migrate:
+    profiles: [api]
+    image: ${API_IMAGE:-harbor.floret.dev/boson/backend:0.43.0}
+    command: ["migrate", "up"]
+    environment: *api-env
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Scheduled jobs (DNS re-verification daily, server health every 15 min).
+  api-cron:
+    <<: *restart
+    profiles: [api]
+    build:
+      context: images/api-cron
+      args:
+        API_IMAGE: ${API_IMAGE:-harbor.floret.dev/boson/backend:0.43.0}
+    image: harbor.floret.dev/boson/stack-api-cron:${API_CRON_TAG:-0.43.0}
+    environment: *api-env
+    depends_on:
+      api-migrate:
+        condition: service_completed_successfully
 
   # ---- webroot (optional) ---------------------------------------------------
   # Serves WEBROOT_DIR at http://WEBROOT_HOST/.well-known/acme-challenge/ for
