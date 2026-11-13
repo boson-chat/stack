@@ -1,6 +1,7 @@
 # boson stack: IRC (UnrealIRCd + Anope), voice (quicvoiced) and TLS (Caddy).
 # Configure in .env (see .env.example / scripts/setup.sh), then:
 #   docker compose up -d --build
+# Which parts run is chosen by COMPOSE_PROFILES in .env (irc, voice).
 name: boson
 
 x-restart: &restart
@@ -14,12 +15,12 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      IRC_HOST: ${IRC_HOST:?set IRC_HOST in .env}
-      VOICE_HOST: ${VOICE_HOST:?set VOICE_HOST in .env}
+      CERT_HOSTS: ${CERT_HOSTS:-${IRC_HOST:?set IRC_HOST in .env}, ${VOICE_HOST:?set VOICE_HOST in .env}}
       NETWORK_NAME: ${NETWORK_NAME:-Boson}
       TLS_ISSUER: ${TLS_ISSUER:?set TLS_ISSUER in .env}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/sites:/etc/caddy/sites:ro
       - caddy_data:/data
       - caddy_config:/config
 
@@ -40,6 +41,7 @@ services:
 
   unrealircd:
     <<: *restart
+    profiles: [irc]
     build: images/unrealircd
     image: ghcr.io/boson-chat/stack-unrealircd:6.2.5
     ports:
@@ -48,14 +50,14 @@ services:
     environment:
       IRC_HOST: ${IRC_HOST}
       NETWORK_NAME: ${NETWORK_NAME:-Boson}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:?set ADMIN_EMAIL in .env}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       OPER_NAME: ${OPER_NAME:-admin}
-      OPER_PASSWORD_HASH: ${OPER_PASSWORD_HASH:?set OPER_PASSWORD_HASH (run scripts/setup.sh)}
-      CLOAK_KEY1: ${CLOAK_KEY1:?run scripts/setup.sh}
-      CLOAK_KEY2: ${CLOAK_KEY2:?run scripts/setup.sh}
-      CLOAK_KEY3: ${CLOAK_KEY3:?run scripts/setup.sh}
-      SERVICES_HOST: ${SERVICES_HOST:?set SERVICES_HOST in .env}
-      SERVICES_LINK_PASSWORD: ${SERVICES_LINK_PASSWORD:?run scripts/setup.sh}
+      OPER_PASSWORD_HASH: ${OPER_PASSWORD_HASH:-}
+      CLOAK_KEY1: ${CLOAK_KEY1:-}
+      CLOAK_KEY2: ${CLOAK_KEY2:-}
+      CLOAK_KEY3: ${CLOAK_KEY3:-}
+      SERVICES_HOST: ${SERVICES_HOST:-}
+      SERVICES_LINK_PASSWORD: ${SERVICES_LINK_PASSWORD:-}
       IRC_PLAINTEXT: ${IRC_PLAINTEXT:-false}
       CERT_DIR: /certs
     volumes:
@@ -73,6 +75,7 @@ services:
 
   anope:
     <<: *restart
+    profiles: [irc]
     build: images/anope
     image: ghcr.io/boson-chat/stack-anope:2.0.20
     environment:
@@ -96,6 +99,7 @@ services:
 
   quicvoiced:
     <<: *restart
+    profiles: [voice]
     image: ${QUICVOICE_IMAGE:-ghcr.io/boson-chat/quicvoice:1.1.0}
     ports:
       - "7700:7700/udp"
