@@ -102,6 +102,44 @@ With an older auth (no feed) deleted users keep their Ergo accounts and
 channels; their channels then only go away by expiry (or an oper:
 `/msg NickServ ERASE <account>`).
 
+## Guest access: `guest_access`
+
+The auth setting `guest_access` (auth 1.8+, admin panel → Network settings
+→ "Guest access", default `true`) decides whether people can use IRC
+without an account. It reaches Ergo like the other settings (re-render +
+rehash, within `SETTINGS_POLL_SECONDS`):
+
+| `guest_access` | Ergo config | On IRC |
+|---|---|---|
+| `true` | `accounts.require-sasl.enabled: false` | Anyone can connect. Guests can chat and create (unregistered) channels, but hold no roles: no ChanServ registration, no voice, no role modes, vhosts or oper |
+| `false` | `accounts.require-sasl.enabled: true` | Every connection must log in with SASL (PLAIN or OAUTHBEARER) or `PASS account:password` before registering. A guest gets `FAIL * ACCOUNT_REQUIRED :You must log in with SASL to join this server` and is disconnected |
+
+Details:
+
+- **Already connected guests** stay until they disconnect; the switch only
+  applies to new connections.
+- **Older auth** (no `guest_access` in `/internal/v1/settings`):
+  `IRC_REQUIRE_SASL` decides (`false`, guests allowed, unless set). With
+  auth unreachable, the last value auth sent (kept in
+  `/ircd/boson-settings.json`) wins over `IRC_REQUIRE_SASL`, so a restart
+  during an auth outage never reopens a closed network.
+- **Web clients** (`wss://IRC_HOST/webirc`, through Traefik) and the boson
+  app log in with SASL like any other client, so they're unaffected for
+  users with an account. Ergo checks the client's real address (Traefik's
+  `X-Forwarded-For`), not Traefik's.
+- **In-stack services**: RoleServ logs in with SASL to its local Ergo
+  account, and quicvoiced only uses Ergo's HTTP API, so neither needs an
+  exemption. The admin panel's IRC health check (`ADMIN_IRC_CHECK`) only
+  needs the server to answer `CAP LS` (Ergo does that before the login
+  check); with guests off it shows "up" without the server version, since it
+  has no account to finish registering with.
+- **Exemptions**: `localhost` (inside the Ergo container) by default.
+  `IRC_REQUIRE_SASL_EXEMPT` (comma-separated IPs/CIDRs, replaces the
+  default) lets e.g. a bouncer or gateway that can't do SASL connect without
+  logging in. Don't exempt `STACK_SUBNET`: published ports can reach Ergo
+  from the Docker gateway address (e.g. IPv6 clients through docker-proxy),
+  which would let guests in.
+
 ## The Ergo patches
 
 [images/ergo/patches](../images/ergo/patches), applied in order on Ergo
@@ -131,9 +169,9 @@ Both are written against upstream and kept as commits on the
 Ergo 2.19 has no switch for "only logged-in users may create channels":
 under `registered`, a guest (not logged in) can still create an unregistered
 channel by joining it. Only ChanServ registration (ownership) needs an
-account. To make the network logged-in-only, set `IRC_REQUIRE_SASL=true`
-(`accounts.require-sasl.enabled`): every client must authenticate with SASL
-or `PASS user:password`.
+account. To make the network logged-in-only, turn
+[guest access](#guest-access-guest_access) off: every client must
+authenticate with SASL or `PASS user:password`.
 
 ### Network roles and IRC operators
 

@@ -11,7 +11,8 @@ plus what the stack asks auth to add (docs/roles.md "Requested from auth"):
   GET  /internal/v1/irc/accounts/removed     (auth 1.7: users deleted/disabled after ?since=)
   /internal/v1/acting/...                    (the admin API as X-Acting-Account,
                                               X-Internal-Token = INTERNAL_ACTING_TOKEN; GET /me)
-and a test control endpoint, POST /test/state {users: {name: [role]}, roles: {role: patch}, disable: [name], delete: [name]}.
+and a test control endpoint, POST /test/state {users: {name: [role]}, roles: {role: patch}, disable: [name], delete: [name],
+settings: {field: value}} (settings: merged into GET /internal/v1/settings).
 """
 import hashlib, json, os, re, sys, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -20,6 +21,7 @@ from urllib.parse import urlparse, parse_qs, unquote
 TOKEN = os.environ.get("INTERNAL_API_TOKEN", "")
 ACTING = os.environ.get("INTERNAL_ACTING_TOKEN", "")
 lock = threading.Lock()
+SETTINGS = {"channel_creation": "registered", "channel_auto_register": True, "channel_expiry_days": 0, "guest_access": True}
 
 CAPS = {"kill", "ban", "nofakelag", "relaymsg", "vhosts", "sajoin", "samode", "snomasks", "roleplay", "rehash",
         "accreg", "chanreg", "history", "defcon", "massmessage", "metadata"}
@@ -116,7 +118,7 @@ class H(BaseHTTPRequestHandler):
             return self.err(401, "unauthorized", "bad token")
         with lock:
             if method == "GET" and p == "/internal/v1/settings":
-                return self.reply(200, {"channel_creation": "registered", "channel_auto_register": True, "channel_expiry_days": 0})
+                return self.reply(200, SETTINGS)
             if method == "GET" and p == "/internal/v1/irc/accounts/removed":
                 q = parse_qs(u.query); since = int((q.get("since") or ["0"])[0] or 0); limit = int((q.get("limit") or ["500"])[0])
                 page = [r for r in REMOVED if r[0] > since][:limit]
@@ -158,6 +160,7 @@ class H(BaseHTTPRequestHandler):
                 for name in b.get("disable") or []: DISABLED.add(name); removed(name, "disabled")
                 for name in b.get("delete") or []:
                     USERS.pop(name, None); DISABLED.discard(name); removed(name, "deleted")
+                SETTINGS.update(b.get("settings") or {})
                 for rid, patch in (b.get("roles") or {}).items():
                     rid = role(rid)["id"]
                     r = role(rid)

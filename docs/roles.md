@@ -248,8 +248,9 @@ de-opered and loses its vhost.
 
 - Ergo 2.19 has no per-account switch for creating channels, so
   `channel.create` isn't enforced on IRC: under `channel_creation:
-  registered` anyone can create a channel by joining it (set
-  `IRC_REQUIRE_SASL=true` to keep guests out); under `admins`, only opers with
+  registered` anyone can create a channel by joining it (turn the
+  `guest_access` network setting off to keep guests out, see
+  [irc-channels.md](irc-channels.md#guest-access-guest_access)); under `admins`, only opers with
   `irc.chanreg` can (Owner and Admin by default).
 - Role colours, hoisting and mentions have no IRC representation (a client
   can read them from `GET https://AUTH_HOST/v1/roles` and

@@ -48,13 +48,16 @@ func parsePolicy(s string) (channelPolicy, error) {
 }
 
 // netSettings are the auth service's network settings that shape ircd.yaml.
-// The channel lifecycle fields are nil when auth doesn't have them (< 1.7).
+// The channel lifecycle fields are nil when auth doesn't have them (< 1.7),
+// GuestAccess when it is older than 1.8.
 type netSettings struct {
 	ChannelCreation channelPolicy `json:"channel_creation"`
 	// channel_auto_register: a logged-in user's new channel is registered to them
 	AutoRegister *bool `json:"channel_auto_register,omitempty"`
 	// channel_expiry_days: registered channels unused this long are unregistered (0 = never)
 	ExpiryDays *int `json:"channel_expiry_days,omitempty"`
+	// guest_access: false = every IRC client must log in (accounts.require-sasl)
+	GuestAccess *bool `json:"guest_access,omitempty"`
 }
 
 const maxExpiryDays = 3650
@@ -67,6 +70,9 @@ func (s netSettings) String() string {
 	if s.ExpiryDays != nil {
 		out += fmt.Sprintf(" channel_expiry_days=%d", *s.ExpiryDays)
 	}
+	if s.GuestAccess != nil {
+		out += fmt.Sprintf(" guest_access=%t", *s.GuestAccess)
+	}
 	return out
 }
 
@@ -78,6 +84,7 @@ func parseSettings(b []byte) (netSettings, error) {
 		ChannelCreation string `json:"channel_creation"`
 		AutoRegister    *bool  `json:"channel_auto_register"`
 		ExpiryDays      *int   `json:"channel_expiry_days"`
+		GuestAccess     *bool  `json:"guest_access"`
 	}
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return netSettings{}, err
@@ -92,7 +99,7 @@ func parseSettings(b []byte) (netSettings, error) {
 	if raw.ExpiryDays != nil && (*raw.ExpiryDays < 0 || *raw.ExpiryDays > maxExpiryDays) {
 		return netSettings{}, fmt.Errorf("channel_expiry_days %d out of range", *raw.ExpiryDays)
 	}
-	return netSettings{ChannelCreation: p, AutoRegister: raw.AutoRegister, ExpiryDays: raw.ExpiryDays}, nil
+	return netSettings{ChannelCreation: p, AutoRegister: raw.AutoRegister, ExpiryDays: raw.ExpiryDays, GuestAccess: raw.GuestAccess}, nil
 }
 
 type settingsClient struct {
@@ -204,6 +211,15 @@ func channelLifecycle(get func(string) string, st netSettings) (autoRegister boo
 		return autoRegister, "0", nil
 	}
 	return autoRegister, fmt.Sprintf("%dd", days), nil
+}
+
+// requireSASL: auth's guest_access (false = log in required), else
+// IRC_REQUIRE_SASL (auth < 1.8, or auth unreachable with nothing remembered).
+func requireSASL(get func(string) string, st netSettings) bool {
+	if st.GuestAccess != nil {
+		return !*st.GuestAccess
+	}
+	return boolEnv(get, "IRC_REQUIRE_SASL", false)
 }
 
 // sighup sends SIGHUP to pid (Ergo is PID 1 in the container).

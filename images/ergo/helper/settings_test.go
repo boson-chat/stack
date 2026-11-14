@@ -282,3 +282,88 @@ func TestWatchSettingsRehashesOnExpiryChange(t *testing.T) {
 		t.Fatalf("rehashes %d, conf:\n%s", rehashes, readConf(t, dir))
 	}
 }
+
+func TestGuestAccessRendersRequireSASL(t *testing.T) {
+	yes, no := true, false
+	for _, c := range []struct {
+		name  string
+		env   map[string]string
+		guest *bool
+		want  string
+	}{
+		{"auth < 1.8, default", nil, nil, "require-sasl:\n        enabled: false"},
+		{"auth < 1.8, IRC_REQUIRE_SASL", map[string]string{"IRC_REQUIRE_SASL": "true"}, nil, "require-sasl:\n        enabled: true"},
+		{"guests allowed beats IRC_REQUIRE_SASL", map[string]string{"IRC_REQUIRE_SASL": "true"}, &yes, "require-sasl:\n        enabled: false"},
+		{"guests refused", nil, &no, "require-sasl:\n        enabled: true\n        exempted:\n            - \"localhost\"\n"},
+		{"exemptions", map[string]string{"IRC_REQUIRE_SASL_EXEMPT": "localhost, 192.0.2.10,2001:db8::/32"}, &no,
+			"enabled: true\n        exempted:\n            - \"localhost\"\n            - \"192.0.2.10\"\n            - \"2001:db8::/32\"\n"},
+	} {
+		dir := t.TempDir()
+		st := netSettings{ChannelCreation: policyRegistered, GuestAccess: c.guest}
+		if _, err := render(testEnv(c.env), "", dir, st, nil); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if conf := readConf(t, dir); !strings.Contains(conf, c.want) {
+			t.Errorf("%s: ircd.yaml lacks %q:\n%s", c.name, c.want, conf)
+		}
+	}
+	for _, bad := range []string{"irc.example.com", "10.0.0.0/33", "*"} {
+		_, err := render(testEnv(map[string]string{"IRC_REQUIRE_SASL_EXEMPT": bad}), "", t.TempDir(), netSettings{ChannelCreation: policyRegistered}, nil)
+		if err == nil {
+			t.Errorf("IRC_REQUIRE_SASL_EXEMPT=%q accepted", bad)
+		}
+	}
+}
+
+func TestParseSettingsGuestAccess(t *testing.T) {
+	st, err := parseSettings([]byte(`{"channel_creation":"registered","guest_access":false}`))
+	if err != nil || st.GuestAccess == nil || *st.GuestAccess || st.String() != "channel_creation=registered guest_access=false" {
+		t.Fatalf("%+v %v", st, err)
+	}
+	if _, err := parseSettings([]byte(`{"channel_creation":"registered","guest_access":"no"}`)); err == nil {
+		t.Fatal("non-boolean guest_access accepted")
+	}
+	// auth < 1.8: absent, so IRC_REQUIRE_SASL decides
+	if st, err = parseSettings([]byte(`{"channel_creation":"registered"}`)); err != nil || st.GuestAccess != nil {
+		t.Fatalf("%+v %v", st, err)
+	}
+}
+
+func TestGuestAccessRememberedAndWatched(t *testing.T) {
+	fs := &fakeSettings{value: "registered", extra: `,"guest_access":false`}
+	srv := httptest.NewServer(fs)
+	defer srv.Close()
+	dir := t.TempDir()
+	// IRC_REQUIRE_SASL=false must not reopen the network while auth is down.
+	get := testEnv(map[string]string{"AUTH_SETTINGS_URL": srv.URL, "IRC_ROLES": "false", "IRC_REQUIRE_SASL": "false"})
+	logf := func(string, ...any) {}
+	st := resolveSettings(context.Background(), get, dir, newSettingsClient(get), logf)
+	if !requireSASL(get, st) {
+		t.Fatalf("from auth: %s", st)
+	}
+	fs.set("", http.StatusBadGateway)
+	if cached := resolveSettings(context.Background(), get, dir, newSettingsClient(get), logf); !requireSASL(get, cached) {
+		t.Fatalf("remembered %s, want guest_access=false", cached)
+	}
+
+	fs.set("registered", 0)
+	w := newWatcher(get, "", dir, 0, func() error { return nil }, t.Logf)
+	var rehashes int
+	w.rehash = func() error { rehashes++; return nil }
+	w.tick(context.Background())
+	if !strings.Contains(readConf(t, dir), "require-sasl:\n        enabled: true") {
+		t.Fatalf("guests off, conf:\n%s", readConf(t, dir))
+	}
+	first := rehashes
+	fs.setExtra(`,"guest_access":true`)
+	w.tick(context.Background())
+	if rehashes != first+1 || !strings.Contains(readConf(t, dir), "require-sasl:\n        enabled: false") {
+		t.Fatalf("guests on: rehashes %d, conf:\n%s", rehashes, readConf(t, dir))
+	}
+	// Auth down again: keeps guest_access=true, no rehash.
+	fs.set("", http.StatusBadGateway)
+	w.tick(context.Background())
+	if rehashes != first+1 || !strings.Contains(readConf(t, dir), "require-sasl:\n        enabled: false") {
+		t.Fatalf("auth down: rehashes %d", rehashes)
+	}
+}

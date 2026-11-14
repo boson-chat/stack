@@ -15,7 +15,8 @@ import (
 // auth service at runtime.
 //
 //   - network settings (every settingsEvery: channel_creation,
-//     channel_auto_register, channel_expiry_days): re-render + rehash on change
+//     channel_auto_register, channel_expiry_days, guest_access): re-render
+//     and rehash on change
 //   - removed accounts (every settingsEvery, needs ERGO_API_TOKEN and auth's
 //     /internal/v1/irc/accounts/removed): erase deleted users' Ergo accounts,
 //     which unregisters the channels they founded

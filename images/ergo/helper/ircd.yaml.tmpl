@@ -128,11 +128,19 @@ accounts:
     # SCRAM needs Ergo to hold password hashes; the auth service holds them.
     advertise-scram: false
 
-    # IRC_REQUIRE_SASL=true: every client must log in (SASL or PASS).
+    # Guest access follows the auth service's guest_access setting
+    # (IRC_REQUIRE_SASL until auth has one): when guests are off, every
+    # client must log in (SASL, or PASS account:password) before
+    # registering; boson-ergo watch-settings re-renders and rehashes on a
+    # change. Guests already connected stay until they disconnect.
+    # Exempt (IRC_REQUIRE_SASL_EXEMPT, by the client's real IP: web clients
+    # behind Traefik are checked by their X-Forwarded-For address):
     require-sasl:
         enabled: {{ .RequireSASL }}
         exempted:
-            - "localhost"
+{{- range .RequireSASLExempt }}
+            - {{ q . }}
+{{- end }}
 
     nick-reservation:
         enabled: true
@@ -184,8 +192,8 @@ accounts:
 # (now: {{ .ChannelCreation }}); boson-ergo watch-settings re-renders this
 # file and rehashes Ergo when it changes.
 #   registered: anyone can create channels; logged-in users can register them
-#               with ChanServ (Ergo has no "logged-in only" creation switch,
-#               see IRC_REQUIRE_SASL).
+#               with ChanServ (Ergo has no "logged-in only" creation switch;
+#               turn guest_access off to keep guests out).
 #   admins:     only opers with the chanreg capability (the emergency
 #               /OPER {{ .OperName }}, or a network role with irc.chanreg)
 #               can create or register channels;
