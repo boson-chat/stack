@@ -13,7 +13,7 @@ voice, and automatic TLS, wired together for your own domain.
 | `postgres` | `auth` | Database for `auth` (Postgres 18) | internal |
 | `quicvoiced` | `voice` | Voice rooms over QUIC ([boson-chat/quicvoice](https://github.com/boson-chat/quicvoice)); accepts tokens from `auth`. Static channels from `VOICE_ROOMS` plus channels created through the rooms API at `https://VOICE_HOST/v1/rooms` (optionally under an IRC channel, lockable to IRC roles) | 7700/udp, via Traefik at `https://VOICE_HOST` |
 | `victoriametrics` | `metrics` | Scrapes `/metrics` of traefik, auth, quicvoiced (and admin), 90-day retention. Internal only, at `http://victoriametrics:8428` | internal |
-| `admin` | `admin` | The admin panel ([boson-chat/admin](https://github.com/boson-chat/admin)): users, invites, sign-in providers, network settings, audit log, stack health, and services control (restart/stop/start, logs) | via Traefik at `https://ADMIN_HOST` |
+| `admin` | `admin` | The admin panel ([boson-chat/admin](https://github.com/boson-chat/admin)): users, invites, sign-in providers, network settings, audit log, stack health, and services control (restart/stop/start, logs); edits [`config/boson.yaml`](docs/config.md) | via Traefik at `https://ADMIN_HOST` |
 | `docker-proxy` | `admin` | [Socket proxy](https://github.com/wollomatic/socket-proxy) that is the admin panel's only access to Docker: list/inspect containers, logs, stats, start/stop/restart; nothing else, only from `admin`, on an internal network | internal |
 | `directory` | `directory` | Optional: a boson network directory ([boson-chat/directory](https://github.com/boson-chat/directory)): website and paginated `/v1` API where networks list themselves (DNS-verified), federated with other directories; includes directory.boson.chat's listings by default ([docs/directory.md](docs/directory.md)) | via Traefik at `https://DIRECTORY_HOST` |
 | `webroot` | `webroot` | Optional: serves a host directory at `http://WEBROOT_HOST/.well-known/acme-challenge/` for a certbot outside the stack | via Traefik |
@@ -94,7 +94,8 @@ acting API). Ergo is built with a small patch for this
 ([docs/ergo-account-opers.md](docs/ergo-account-opers.md)). The emergency
 `/OPER $OPER_NAME` login (`OPER_PASSWORD_HASH`) stays.
 
-**Network settings from the admin panel** (auth service,
+**Network settings from the admin panel** (`config/boson.yaml` `auth:`,
+[docs/config.md](docs/config.md); served to the others by auth's
 `/internal/v1/settings`) apply at runtime: `channel_creation`
 (`registered | admins`), the channel lifecycle settings and `guest_access`
 (whether people can use IRC without an account) are polled by `boson-ergo watch-settings` every
@@ -176,9 +177,24 @@ Let's Encrypt ──HTTP-01 on :80──▶ traefik ──▶ acme.json (traefik
 
 ## Configuration
 
-Everything lives in `.env` (see `.env.example`). Config files are generated
-inside the containers at every start, so changing `.env` and running
-`docker compose up -d` applies it:
+Two places:
+
+- **`config/boson.yaml`**: runtime settings (registration, channel rules,
+  email, IRC options, voice rooms, the directory's identity, the admin
+  panel's options). The admin panel edits it, you can too (`sudo`, it
+  belongs to uid 65532), and every service reloads it live. A key there wins
+  over the matching `.env` variable, which is only its default. See
+  [docs/config.md](docs/config.md).
+- **`.env`** (see `.env.example`): secrets and deployment values (hosts,
+  images, ports, tokens). Changing it takes `docker compose up -d`.
+
+**Upgrading an existing install:** run `scripts/migrate-config.sh` once
+after pulling, so settings you changed in the admin panel before (stored in
+auth's and the directory's databases) move into the file; otherwise they
+fall back to their `.env` defaults. Details in [docs/config.md](docs/config.md).
+
+Config files are generated inside the containers at every start, so changing
+`.env` and running `docker compose up -d` applies it:
 
 - **Ergo:** `images/ergo/helper/ircd.yaml.tmpl`, rendered by
   `boson-ergo render` (Go template). Server name = `IRC_HOST`, cloaks

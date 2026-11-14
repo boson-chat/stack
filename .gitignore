@@ -9,3 +9,6 @@
 !/traefik/dynamic/README.md
 !/traefik/dynamic/stack.yml
 !/traefik/dynamic/directory.yml
+# The stack config file is install-specific (scripts/setup.sh creates it)
+/config/*
+!/config/boson.example.yaml

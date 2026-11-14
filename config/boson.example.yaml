@@ -1,0 +1,135 @@
+# boson stack config: config/boson.yaml (docs/config.md)
+#
+# One file for the whole stack's NON-SECRET settings. Every service reads
+# its own section (auth:, irc:, voice:, directory:, admin:, plus network:)
+# and picks up changes within a few seconds: no restart, except for the
+# few keys marked "restart" below (the admin panel offers the restart).
+#
+# Precedence: a value here > the service's env var (.env) > built-in
+# default. A key that's absent (or commented out) means "use the env value".
+# Removing a key resets it to that default.
+#
+# The admin panel edits this file (Network settings, Directory, Voice, IRC,
+# Config file pages). It keeps your comments, key order and unknown keys,
+# and notes who saved last in a comment on the `version:` line. You can also
+# edit it by hand; it belongs to uid 65532 (config-init sets that on every
+# `docker compose up`), so use sudo:
+#
+#   sudo $EDITOR config/boson.yaml
+#
+# A file that doesn't parse is never used: every service keeps its last good
+# config and logs the error with its line; the admin panel shows it in a
+# banner until it's fixed.
+#
+# Secrets (passwords, tokens, keys, SMTP_USER/SMTP_PASSWORD, DSNs) never go
+# here: they stay in .env. So do deployment values: hostnames, images,
+# published ports, internal URLs.
+#
+# Below is a commented-out reference of every key. The admin panel adds the
+# sections it sets right under `version:`; to set something by hand, add it
+# there too (or uncomment it here: keep the two-space indent).
+
+version: 1
+
+# ---- network: the whole stack --------------------------------------------------
+# network:
+#   # The network's display name: sign-in pages and emails (auth), the IRC
+#   # network name (ergo), the directory's default name.
+#   # Default: NETWORK_NAME.
+#   name: Boson
+
+# ---- auth: accounts, sign-up and channel rules (auth service) --------------------
+# Without this file auth keeps these in its database (admin panel: Network
+# settings); with it, the database copy is read-only and this file wins.
+# auth:
+#   # Who can create an account: open | invite | closed.
+#   # Default: REGISTRATION.
+#   registration: open
+#   # New accounts must verify their email before signing in.
+#   # Default: REQUIRE_EMAIL_VERIFICATION.
+#   require_email_verification: true
+#   # Let people connect to IRC with just a nickname (no account).
+#   # Default: true (IRC_REQUIRE_SASL=true on ergo turns guests off).
+#   guest_access: true
+#   # Who can create text channels: registered | admins.
+#   # Default: IRC_CHANNEL_CREATION (ergo) / registered.
+#   channel_creation: registered
+#   # Who can create voice rooms: admins | founders | registered.
+#   # Default: VOICE_CHANNEL_CREATION (quicvoiced) / admins.
+#   voice_channel_creation: admins
+#   # ChanServ registers a channel to the signed-in user who creates it.
+#   channel_auto_register: true
+#   # Unregister channels idle this many days; 0 = never (max 3650).
+#   channel_expiry_days: 0
+#   # Extra browser origins allowed to call auth with credentials and to be
+#   # SSO return_to targets (e.g. the directory web UI).
+#   # Default: AUTH_CORS_ALLOWED_ORIGINS.
+#   cors_allowed_origins: [https://directory.example.com]
+#   # Outgoing email. SMTP_USER / SMTP_PASSWORD stay in .env.
+#   # Defaults: SMTP_HOST, SMTP_PORT, SMTP_FROM, SMTP_TLS (starttls | tls | none).
+#   smtp:
+#     host: smtp.example.com
+#     port: 587
+#     from: "Boson <hi@example.com>"
+#     tls: starttls
+
+# ---- irc: Ergo (rendered into ircd.yaml by the boson-ergo helper) ----------------
+# irc:
+#   # Plain-text IRC listener (no TLS). restart: it's a listener.
+#   # Default: IRC_PLAINTEXT.
+#   plaintext: false
+#   # Its port inside the container. restart. Publishing it on the host is
+#   # still compose's job (IRC_PLAINTEXT_PORT in .env).
+#   plaintext_port: 6667
+#   # IPs/CIDRs that may connect without signing in while guest access is off.
+#   # Default: IRC_REQUIRE_SASL_EXEMPT.
+#   require_sasl_exempt: [127.0.0.1/32]
+#   # How often network roles are re-read from auth, in seconds (ergo and
+#   # RoleServ). Default: ROLES_POLL_SECONDS (10).
+#   roles_poll_seconds: 10
+
+# ---- voice: quicvoiced ----------------------------------------------------------
+# voice:
+#   # Static voice rooms, in display order: id (lowercase, a-z 0-9 -) and name.
+#   # Default: VOICE_ROOMS ("general:General").
+#   rooms:
+#     - { id: general, name: General }
+#   # true = only listed rooms and ones created through the API can be
+#   # joined; false = any name makes an ad-hoc room.
+#   # Default: VOICE_ROOMS_STRICT.
+#   rooms_strict: true
+#   # Voice rooms one user may create. Default: VOICE_ROOMS_MAX_PER_USER (10).
+#   max_rooms_per_user: 10
+
+# ---- directory: the stack's own directory (directory profile) --------------------
+# Without this file the directory keeps these in its database (admin panel:
+# Directory); with it, this file wins.
+# directory:
+#   # Shown in /.well-known/boson-directory.json.
+#   # Defaults: DIRECTORY_NAME, DIRECTORY_OPERATOR, DIRECTORY_CONTACT.
+#   name: Boson directory
+#   operator: Boson
+#   contact: hi@example.com
+#   # Include the boson main directory's listings (each re-checked against
+#   # its own DNS). Default: DIRECTORY_INCLUDE_MAIN.
+#   include_main: true
+#   # The main directory. Default: DIRECTORY_MAIN_PEER.
+#   main_peer_url: https://directory.boson.chat
+#   # How often peers are synced (5m … 24h).
+#   sync_every: 10m
+#   # Other directories to federate with. Default: DIRECTORY_PEERS. Peers
+#   # added in the panel are kept in the directory's peer table as before.
+#   peers: [https://dir.example.net]
+
+# ---- admin: the admin panel itself -----------------------------------------------
+# admin:
+#   # Register / edit this network's listing in the boson directory from the
+#   # Directory page. Default: ADMIN_DIRECTORY_REGISTRATION (true).
+#   directory_registration: true
+#   # The IRC hostname the Directory page lists and checks.
+#   # Default: IRC_HOST (the admin's IRC_CHECK_SERVER_NAME).
+#   directory_hostname: irc.example.com
+#   # Certificates the Overview watches: host:port, optionally
+#   # @dial-host:dial-port to reach it from inside the stack. Up to 20.
+#   # Default: ADMIN_TLS_CHECK_HOSTS (voice, auth, admin via traefik; IRC).
+#   tls_check_hosts: [irc.example.com:6697, voice.example.com:443@traefik:443]

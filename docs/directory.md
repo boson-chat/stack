@@ -139,8 +139,10 @@ boson.chat account: the panel signs its requests with a network key
 hostname; the directory stores only its hash) and the page walks you
 through the `_boson.<IRC_HOST>` TXT record and the check. To list it in your
 own directory instead, set `ADMIN_DIRECTORY_API_URL=http://directory:8080`.
-`ADMIN_DIRECTORY_REGISTRATION=false` turns registration off (the page then
-only reports whether the network is listed).
+`admin.directory_registration: false` in `config/boson.yaml` (default
+`ADMIN_DIRECTORY_REGISTRATION`) turns registration off (the page then only
+reports whether the network is listed); `admin.directory_hostname` picks the
+hostname it lists (default `IRC_HOST`). Both can be changed from the panel.
 
 With `ADMIN_DIRECTORY_LOCAL_URL=http://directory:8080` and
 `DIRECTORY_INTERNAL_TOKEN`, the page also shows "Your own directory" (the
@@ -149,7 +151,10 @@ interval, and its peers), and each user's page lists the networks they
 registered there. Both need admin ≥ 1.5.0 (the `/v1` directory API);
 changing the settings and managing peers from the panel needs admin ≥
 1.7.0 with directory ≥ 1.4.0 (older directories get a note, and the switch
-only toggles an existing main peer).
+only toggles an existing main peer). With `config/boson.yaml`
+([docs/config.md](config.md)) the name, operator, contact, sync interval and
+include-main switch live in its `directory:` section instead of the
+directory's database; the panel writes them there.
 
 ## Legacy `/servers` route
 
