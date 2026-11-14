@@ -35,9 +35,13 @@ jobs:
         env:
           COMPOSE_PROFILES: irc,voice,auth,metrics,wellknown
         run: docker compose up -d --build --wait --wait-timeout 300
-      - name: Auth signup + IRC SASL (PLAIN, wrong password, OAUTHBEARER) + voice token
+      - name: Auth signup + IRC SASL (PLAIN, wrong password, OAUTHBEARER) + channel creation + voice token
         run: |
-          python3 scripts/smoke-irc.py --print-voice-token > smoke.out
+          # The policy Ergo rendered (from auth's channel_creation, or IRC_CHANNEL_CREATION).
+          policy=registered
+          docker compose exec -T ergo grep -q 'operator-only-creation: true' /ircd/ircd.yaml && policy=admins
+          echo "channel_creation=$policy"
+          python3 scripts/smoke-irc.py --print-voice-token --channel-creation "$policy" > smoke.out
           sed -E 's/^(VOICE_TOKEN ).*/\1<redacted>/' smoke.out
           awk '/^VOICE_TOKEN /{print $2}' smoke.out > voice-token && rm smoke.out
       - name: Voice room list (https://voice.localhost/v1/rooms) and discovery doc
@@ -52,6 +56,53 @@ jobs:
           c -fD headers https://localhost/.well-known/boson.json |
             python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["version"]==1 and d["voice"]["addr"]=="voice.localhost:7700" and d["auth"]["url"]=="https://auth.localhost" and d["irc"]["host"]=="irc.localhost", d; print(d)'
           grep -qi '^access-control-allow-origin: \*' headers && grep -qi '^content-type: application/json' headers
+      - name: Ergo API is internal only and answers with the token
+        run: |
+          tok=$(sed -n 's/^ERGO_API_TOKEN=//p' .env)
+          [ -n "$tok" ] || { echo "setup.sh did not write ERGO_API_TOKEN"; exit 1; }
+          net=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$(docker compose ps -q ergo)")
+          w() { docker run --rm --network "$net" busybox:1.37.0 wget -qO- -T 5 "$@"; }
+          w --header "Authorization: Bearer $tok" --post-data '{}' http://ergo:8089/v1/status |
+            python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["success"], d; print("ergo api:", d["version"])'
+          if w --post-data '{}' http://ergo:8089/v1/status 2>/dev/null; then echo "API answered without a token"; exit 1; fi
+          if curl -s -m 3 http://127.0.0.1:8089/ >/dev/null; then echo "Ergo API is published on the host"; exit 1; fi
+          if curl -sk -m 3 --cacert local-certs/ca.pem https://irc.localhost/v1/status -o /dev/null -w '%{http_code}' | grep -q 200; then echo "Ergo API routed by Traefik"; exit 1; fi
+          echo ok
+      - name: Voice channels API (quicvoice >= 1.5.0; skipped on older images)
+        run: |
+          c() { curl -sS --cacert local-certs/ca.pem "$@"; }
+          tok=$(cat voice-token)
+          code=$(c -o body -w '%{http_code}' -X POST https://voice.localhost/v1/rooms \
+            -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' -d '{"name":"Smoke Room"}')
+          if [ "$code" = 405 ]; then echo "quicvoiced has no POST /v1/rooms (< 1.5.0): skipped"; exit 0; fi
+          # The smoke user is a regular user; the default policy (auth or
+          # VOICE_CHANNEL_CREATION=admins) decides. Either way the answer
+          # must agree with GET /v1/rooms' permissions.
+          c -f -H "Authorization: Bearer $tok" https://voice.localhost/v1/rooms > list
+          python3 - "$code" <<'PY'
+          import json, sys
+          code = int(sys.argv[1]); body = json.load(open("body")); perms = json.load(open("list"))["permissions"]
+          print("POST /v1/rooms:", code, body); print("permissions:", perms)
+          assert perms["create_scope"] in ("any", "founded_channels", "none"), perms
+          if perms["create_scope"] == "any":
+              assert code == 201 and body["kind"] == "dynamic" and body["can_manage"], body
+          else:
+              assert code == 403 and body["code"] == "forbidden", body
+          PY
+          if [ "$code" = 201 ]; then
+            id=$(python3 -c 'import json; print(json.load(open("body"))["id"])')
+            [ "$(c -o /dev/null -w '%{http_code}' -X DELETE "https://voice.localhost/v1/rooms/$id" -H "Authorization: Bearer $tok")" = 204 ]
+          fi
+          echo ok
+      - name: channel_creation=admins reaches Ergo (env fallback; only when auth has no settings API)
+        run: |
+          docker compose exec -T ergo rm -f /ircd/boson-settings.json
+          IRC_CHANNEL_CREATION=admins COMPOSE_PROFILES=irc,voice,auth,metrics,wellknown docker compose up -d --wait --wait-timeout 180 ergo
+          if docker compose exec -T ergo grep -q 'operator-only-creation: true' /ircd/ircd.yaml; then
+            python3 scripts/smoke-irc.py --channel-creation admins
+          else
+            echo "auth served channel_creation itself (not admins): skipped"
+          fi
       - name: VictoriaMetrics scrapes auth, quicvoiced and traefik
         env:
           COMPOSE_PROFILES: irc,voice,auth,metrics

@@ -1,8 +1,10 @@
 #!/bin/sh
-# Renders /ircd/ircd.yaml from the environment, waits for the TLS cert that
-# certsync hands over, then runs Ergo as PID 1. A background loop sends
-# SIGHUP (rehash: reloads config + TLS without dropping clients) whenever
-# certsync replaces the certificate.
+# Renders /ircd/ircd.yaml from the environment (and the auth service's
+# channel_creation setting), waits for the TLS cert that certsync hands over,
+# then runs Ergo as PID 1. Background loops send SIGHUP (rehash: reloads
+# config + TLS without dropping clients) whenever certsync replaces the
+# certificate, and re-render + SIGHUP when channel_creation changes
+# (boson-ergo watch-settings, every SETTINGS_POLL_SECONDS, default 30).
 set -eu
 
 CERT_DIR=${CERT_DIR:-/certs}
@@ -45,5 +47,9 @@ fi
 		fi
 	done
 ) &
+
+if [ "${IRC_WATCH_SETTINGS:-true}" = true ]; then
+	/usr/local/bin/boson-ergo watch-settings &
+fi
 
 exec "$@"

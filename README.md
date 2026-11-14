@@ -10,7 +10,7 @@ voice, and automatic TLS, wired together for your own domain.
 | `ergo` | `irc` | IRC server ([Ergo](https://ergo.chat) 2.19) with built-in NickServ/ChanServ, history, always-on clients. Logins are checked against the auth service | 6697 (TLS), 6667 (optional), `wss://IRC_HOST/webirc` |
 | `auth` | `auth` | Accounts ([boson-chat/auth](https://github.com/boson-chat/auth)): sign-up, login, sessions, password reset, signed tokens for voice and IRC | via Traefik at `https://AUTH_HOST` |
 | `postgres` | `auth` | Database for `auth` (Postgres 18) | internal |
-| `quicvoiced` | `voice` | Voice rooms over QUIC ([boson-chat/quicvoice](https://github.com/boson-chat/quicvoice)); accepts tokens from `auth`. Channels from `VOICE_ROOMS`; room list API at `https://VOICE_HOST/v1/rooms` | 7700/udp, via Traefik at `https://VOICE_HOST` |
+| `quicvoiced` | `voice` | Voice rooms over QUIC ([boson-chat/quicvoice](https://github.com/boson-chat/quicvoice)); accepts tokens from `auth`. Static channels from `VOICE_ROOMS` plus channels created through the rooms API at `https://VOICE_HOST/v1/rooms` (optionally under an IRC channel, lockable to IRC roles) | 7700/udp, via Traefik at `https://VOICE_HOST` |
 | `victoriametrics` | `metrics` | Scrapes `/metrics` of traefik, auth, quicvoiced (and admin), 90-day retention. Internal only, at `http://victoriametrics:8428` | internal |
 | `admin` | `admin` | **Slot for the upcoming admin panel** (not released yet; off by default) | via Traefik at `https://ADMIN_HOST` |
 | `webroot` | `webroot` | Optional: serves a host directory at `http://WEBROOT_HOST/.well-known/acme-challenge/` for a certbot outside the stack | via Traefik |
@@ -80,7 +80,17 @@ There is one account per person, held by the auth service:
 
 Ergo keeps channel registrations, always-on state, history and its own
 per-account settings; passwords live only in the auth service. Ergo's IRC
-operator account is separate (`OPER_NAME` / `OPER_PASSWORD_HASH`, `/OPER`).
+operator account is separate (`OPER_NAME` / `OPER_PASSWORD_HASH`, `/OPER`):
+auth admins are not IRC operators (Ergo can't bind opers to accounts), but
+they are admins for voice channels.
+
+**Network settings from the admin panel** (auth service,
+`/internal/v1/settings`) apply at runtime: `channel_creation`
+(`registered | admins`) is polled by `boson-ergo watch-settings` every
+`SETTINGS_POLL_SECONDS` (30), which re-renders `ircd.yaml` and rehashes Ergo
+on a change; `voice_channel_creation` (`admins | founders | registered`) is
+read by quicvoiced (cached 30 s). See
+[docs/irc-channels.md](docs/irc-channels.md) and [docs/voice.md](docs/voice.md).
 
 The auth internal listener (`:8081`: `/internal/v1/*`, `/metrics`) is only
 reachable inside the compose network; Traefik routes only the public
@@ -89,17 +99,24 @@ to its public API (`:8090`), never to `:8080` (`/metrics`).
 
 ## Voice channels and discovery
 
-- `VOICE_ROOMS` (default `general:General`) lists the voice channels as
-  `id:Display Name`, comma-separated, in display order.
-  `VOICE_ROOMS_STRICT=true` (default) refuses any other room.
-- `https://VOICE_HOST/v1/rooms` returns them with their live participants
-  (voice token required).
+- `VOICE_ROOMS` (default `general:General`) lists the static voice channels
+  as `id:Display Name`, comma-separated, in display order.
+  `VOICE_ROOMS_STRICT=true` (default) refuses any room not in the registry.
+- Dynamic voice channels: `POST/PATCH/DELETE https://VOICE_HOST/v1/rooms`,
+  optionally under an IRC channel and locked to IRC roles (founder, op,
+  voice, …) that quicvoiced looks up through Ergo's internal API
+  (`ERGO_API_TOKEN`). Stored in the `voice_data` volume. Who may create them
+  is the auth setting `voice_channel_creation`. Needs quicvoice >= 1.5.0.
+- `https://VOICE_HOST/v1/rooms` returns all of them with their live
+  participants and what the caller may do (voice token required).
 - The boson client finds a server from its domain via
   `https://DOMAIN/.well-known/boson.json`. If `DOMAIN` points at this
   server, the `wellknown` profile serves it (add `DOMAIN` to `CERT_HOSTS`);
   if your website lives elsewhere, publish the same file there.
 
 Details, the JSON formats and examples: [docs/voice.md](docs/voice.md).
+Text channel creation policy, IRC roles and channel locks (exact Ergo
+commands): [docs/irc-channels.md](docs/irc-channels.md).
 
 ## Profiles
 
@@ -187,8 +204,9 @@ and `../auth` exists.
 ### Data
 
 Named volumes: `traefik_acme` (certificates), `certs_irc`/`certs_voice`
-(exported copies), `ergo_db` (Ergo accounts, channels, history),
-`pg_data` (auth database), `vm_data` (metrics). Back up `ergo_db`,
+(exported copies), `ergo_db` (Ergo accounts, channels, history, last
+known `channel_creation`), `voice_data` (voice channel registry), `pg_data`
+(auth database), `vm_data` (metrics). Back up `ergo_db`, `voice_data`,
 `pg_data` and your `.env` (`AUTH_KEY_ENCRYPTION_KEY` encrypts the signing
 keys in the database).
 

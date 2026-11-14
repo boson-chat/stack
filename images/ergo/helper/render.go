@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -34,6 +35,15 @@ type renderData struct {
 	PersistentHistory bool
 	HistoryExpire     string
 	LogLevel          string
+	// Text channel creation (channel_creation from the auth service).
+	ChannelCreation      channelPolicy
+	OperatorOnlyCreation bool
+	// Ergo HTTP API (internal network only), for quicvoiced's founder/role
+	// lookups. Empty token = API off.
+	APIToken    string
+	APIListener string
+	// accounts.require-sasl: every client must log in (IRC_REQUIRE_SASL).
+	RequireSASL bool
 }
 
 var bcryptRe = regexp.MustCompile(`^\$2[aby]\$\d\d\$[./A-Za-z0-9]{53}$`)
@@ -73,6 +83,12 @@ func buildData(get func(string) string) (renderData, error) {
 		PersistentHistory: boolEnv(get, "IRC_PERSISTENT_HISTORY", true),
 		HistoryExpire:     strEnv(get, "IRC_HISTORY_EXPIRE", "1w"),
 		LogLevel:          strEnv(get, "IRC_LOG_LEVEL", "info"),
+		APIToken:          strEnv(get, "ERGO_API_TOKEN", ""),
+		APIListener:       strEnv(get, "ERGO_API_LISTENER", ":8089"),
+		RequireSASL:       boolEnv(get, "IRC_REQUIRE_SASL", false),
+	}
+	if d.APIToken != "" && (len(d.APIToken) < 32 || strings.ContainsAny(d.APIToken, " \t\r\n")) {
+		return d, fmt.Errorf("ERGO_API_TOKEN must be at least 32 printable characters without spaces (openssl rand -hex 32)")
 	}
 	if d.IRCHost == "" {
 		return d, fmt.Errorf("IRC_HOST is not set (see .env.example)")
@@ -106,44 +122,63 @@ func q(v any) string {
 	return string(b)
 }
 
-func render(get func(string) string, tmplPath, dir string) error {
+// render writes ircd.yaml and ergo.motd for policy. changed reports whether
+// ircd.yaml's content changed (only then does Ergo need a rehash).
+func render(get func(string) string, tmplPath, dir string, policy channelPolicy) (changed bool, err error) {
 	d, err := buildData(get)
 	if err != nil {
-		return err
+		return false, err
 	}
+	d.ChannelCreation = policy
+	d.OperatorOnlyCreation = policy == policyAdmins
 	src := defaultTemplate
 	if tmplPath != "" {
 		b, err := os.ReadFile(tmplPath)
 		if err != nil {
-			return err
+			return false, err
 		}
 		src = string(b)
 	}
-	if err := writeTemplate(filepath.Join(dir, "ircd.yaml"), src, d, 0o600); err != nil {
-		return err
+	changed, err = writeTemplate(filepath.Join(dir, "ircd.yaml"), src, d, 0o600)
+	if err != nil {
+		return false, err
 	}
 	motd := motdTemplate
 	if p := get("IRC_MOTD_FILE"); p != "" {
 		b, err := os.ReadFile(p)
 		if err != nil {
-			return err
+			return false, err
 		}
 		motd = string(b)
 	}
-	return writeTemplate(filepath.Join(dir, "ergo.motd"), motd, d, 0o644)
+	_, err = writeTemplate(filepath.Join(dir, "ergo.motd"), motd, d, 0o644)
+	return changed, err
 }
 
-func writeTemplate(path, src string, d renderData, mode os.FileMode) error {
+// writeTemplate renders src to path atomically, skipping the write when the
+// content is unchanged.
+func writeTemplate(path, src string, d renderData, mode os.FileMode) (changed bool, err error) {
 	t, err := template.New(filepath.Base(path)).Funcs(template.FuncMap{"q": q}).Option("missingkey=error").Parse(src)
 	if err != nil {
-		return err
+		return false, err
 	}
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, d); err != nil {
+		return false, err
+	}
+	if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, buf.Bytes()) {
+		return false, nil
+	}
+	return true, writeFileAtomic(path, buf.Bytes(), mode)
+}
+
+func writeFileAtomic(path string, b []byte, mode os.FileMode) error {
 	tmp := path + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
 	if err != nil {
 		return err
 	}
-	if err := t.Execute(f, d); err != nil {
+	if _, err := f.Write(b); err != nil {
 		f.Close()
 		return err
 	}
