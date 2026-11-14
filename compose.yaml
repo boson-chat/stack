@@ -18,6 +18,10 @@ networks:
     ipam:
       config:
         - subnet: ${STACK_SUBNET:-10.203.53.0/24}
+  # Only the admin panel and the Docker socket proxy are on it; internal, so
+  # it has no route out.
+  docker-proxy:
+    internal: true
 
 services:
   traefik:
@@ -325,14 +329,57 @@ services:
       # host:port to report, @ where to dial it from inside the network.
       TLS_CHECK_HOSTS: >-
         ${ADMIN_TLS_CHECK_HOSTS:-${VOICE_HOST}:443@traefik:443,${AUTH_HOST}:443@traefik:443,${ADMIN_HOST:-admin.localhost}:443@traefik:443,${IRC_HOST}:6697}
+      # Services control (restart/stop/start, logs) through docker-proxy below.
+      # Empty ADMIN_DOCKER_PROXY_URL= turns it off.
+      DOCKER_PROXY_URL: ${ADMIN_DOCKER_PROXY_URL-http://docker-proxy:2375}
+      DOCKER_PROJECT: boson
+      DOCKER_PROTECTED_SERVICES: admin,traefik
+      # Users' boson profiles (avatar, handle, listed servers) from the api
+      # profile. Set ADMIN_BOSON_API_URL= (empty) without it.
+      BOSON_API_URL: ${ADMIN_BOSON_API_URL-http://api:3000}
+      # Self-hosted directory registration needs api.boson.chat support; off.
+      DIRECTORY_REGISTRATION: "false"
+    networks: [default, docker-proxy]
     labels:
       - traefik.enable=true
+      # Two networks: tell Traefik which one reaches the panel.
+      - traefik.docker.network=boson_default
       - traefik.http.routers.admin.rule=Host(`${ADMIN_HOST:-admin.${DOMAIN:-localhost}}`)
       - traefik.http.routers.admin.entrypoints=websecure
       - traefik.http.routers.admin.tls=true
       - traefik.http.services.admin.loadbalancer.server.port=8080
     # Note: ADMIN_HOST must be in CERT_HOSTS so Traefik gets its certificate.
     depends_on: [auth]
+
+  # The admin panel's only door to Docker: a socket proxy that allows listing
+  # and inspecting containers, their logs and stats, and start/stop/restart,
+  # nothing else (no exec, create, delete, images, volumes, events), and only
+  # for the host named "admin". The panel itself never mounts the socket and
+  # limits actions to this compose project.
+  docker-proxy:
+    <<: *restart
+    profiles: [admin]
+    image: wollomatic/socket-proxy:1.13.2
+    # nobody + the host's docker group, so it can open the socket read/write
+    # without root. scripts/setup.sh fills DOCKER_GID (getent group docker).
+    user: "65534:${DOCKER_GID:-999}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 64m
+    command:
+      - -loglevel=info
+      - -listenip=0.0.0.0
+      - -allowfrom=admin
+      - -watchdoginterval=600
+      - -stoponwatchdog
+      - -shutdowngracetime=5
+      - '-allowGET=(/v1\.[0-9]+)?/(_ping|version|containers/json|containers/[a-zA-Z0-9_.-]+/(json|logs|stats))'
+      - '-allowHEAD=(/v1\.[0-9]+)?/_ping'
+      - '-allowPOST=(/v1\.[0-9]+)?/containers/[a-zA-Z0-9_.-]+/(start|stop|restart)'
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [docker-proxy]
 
   # ---- api (optional): the boson backend API --------------------------------
   # Server directory, profiles, nick claims and avatars for the boson client
