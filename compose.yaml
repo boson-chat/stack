@@ -132,8 +132,12 @@ services:
       AUTH_SETTINGS_URL: http://auth:8081/internal/v1/settings
       IRC_CHANNEL_CREATION: ${IRC_CHANNEL_CREATION:-registered}
       SETTINGS_POLL_SECONDS: ${SETTINGS_POLL_SECONDS:-30}
-      # true = every IRC client must log in (no guests).
+      # Guests (no account) follow auth's guest_access setting (admin panel),
+      # polled like channel_creation; IRC_REQUIRE_SASL=true (no guests) is
+      # the default with an auth older than 1.8. IRC_REQUIRE_SASL_EXEMPT:
+      # IPs/CIDRs that may skip the login while guests are off.
       IRC_REQUIRE_SASL: ${IRC_REQUIRE_SASL:-false}
+      IRC_REQUIRE_SASL_EXEMPT: ${IRC_REQUIRE_SASL_EXEMPT:-}
       # Ergo's HTTP API on :8089 for quicvoiced (founder checks, channel
       # roles), RoleServ and the role sync. Compose network only: not
       # published, not routed. Empty = off.

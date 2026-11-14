@@ -17,6 +17,12 @@ in compose.yaml): a logged-in user's new channel is registered to them on JOIN,
 up to max-channels-per-account (15); a guest's isn't; unused registered
 channels expire (with a warning first) while a used one stays; a user deleted
 in auth loses their Ergo account and channels, a disabled one keeps them.
+
+Guest access (docs/irc-channels.md): with guest_access true a guest
+connects; set to false (fake: /test/state, real: PATCH /v1/admin/settings)
+Ergo is rehashed with require-sasl and refuses new guests (FAIL
+ACCOUNT_REQUIRED) while SASL users, RoleServ, connected guests and the admin
+panel's CAP LS health probe keep working; back to true lets guests in again.
 """
 import base64, json, os, socket, subprocess, sys, time, urllib.request
 
@@ -319,6 +325,67 @@ out = cs(frank, "INFO #frank-3")
 check("expiry: #frank-3 is no longer registered", "is not registered" in out, out)
 out = cs(frank, "INFO #frank-1")
 check("expiry: the busy #frank-1 is still registered", "Founder: frank" in out, out)
+
+# ---- guest access ------------------------------------------------------------
+def guest_attempt(nick):
+    """A client without SASL: 'welcome' (001) or the refusal line."""
+    s = socket.create_connection(IRC, timeout=10); buf = b""
+    s.sendall(f"NICK {nick}\r\nUSER {nick} 0 * :{nick}\r\n".encode())
+    end = time.time() + 10
+    try:
+        while time.time() < end:
+            d = s.recv(65536)
+            if not d: return "closed"
+            buf += d
+            for l in buf.decode(errors="replace").split("\r\n"):
+                if " 001 " in l: return "welcome"
+                if "ACCOUNT_REQUIRED" in l: return l
+        return "timeout"
+    finally:
+        s.close()
+def cap_ls_probe():
+    """What the admin panel's IRC health check does first: CAP LS before registering."""
+    s = socket.create_connection(IRC, timeout=10)
+    try:
+        s.sendall(b"CAP LS 302\r\n"); buf = b""
+        while b" LS " not in buf:
+            d = s.recv(65536)
+            if not d: return False
+            buf += d
+        return True
+    finally:
+        s.close()
+def set_guest_access(on):
+    if MODE == "real":
+        st, body = http("PATCH", AUTH_PUBLIC + "/v1/admin/settings", {"guest_access": on}, owner_token)
+        check(f"admin API: guest_access={on}", st == 200 and (body or {}).get("guest_access") is on, body)
+    else:
+        http("POST", AUTH_TEST + "/test/state", {"settings": {"guest_access": on}})
+
+GUESTS = MODE == "fake" or "guest_access" in (http("GET", AUTH_PUBLIC + "/v1/config")[1] or {})
+if not GUESTS:
+    print("SKIP guest access: this auth has no guest_access setting (auth < 1.8)", flush=True)
+else:
+    check("guest_access true: a guest is welcomed", guest_attempt("guest2") == "welcome")
+    set_guest_access(False)
+    got = eventually(lambda: (lambda r: r if r != "welcome" else None)(guest_attempt("guest3")), 20, 2)
+    check("guest_access false: a new guest is refused (FAIL * ACCOUNT_REQUIRED)",
+          got and "FAIL * ACCOUNT_REQUIRED" in got and "You must log in with SASL" in got, got)
+    check("guest_access false: the admin panel's health probe still gets CAP LS", cap_ls_probe())
+    b2 = Client("bob", PW["bob"], nick="bob2")
+    check("guest_access false: SASL login still works", b2.ok() and any(" 376 " in l or " 422 " in l for l in b2.burst), b2.burst[-3:])
+    r = compose("restart", "roleserv")
+    def rs_list():
+        try: out = " ".join(b2.roleserv("LIST", 1.0))
+        except TimeoutError: return None  # RoleServ not back yet (401, no NOTICE)
+        return out if "Owner" in out else None
+    out = eventually(rs_list, 30, 2) or ""
+    check("guest_access false: RoleServ reconnects (SASL on the services listener) and answers", r.returncode == 0 and "Owner" in out, out)
+    guest.drain(0.2); guest.send("PRIVMSG #guest-chan :still connected"); guest.send("PING :guestcheck")
+    check("guest_access false: an already connected guest stays", any("guestcheck" in l for l in guest.drain(2)))
+    set_guest_access(True)
+    got = eventually(lambda: guest_attempt("guest4") == "welcome", 20, 2)
+    check("guest_access true again: guests are welcomed", got)
 
 # RoleServ's account can't be taken over through auth
 rs = Client("RoleServ", "anything", nick="RoleServ", register=False)

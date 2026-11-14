@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -47,8 +48,10 @@ type renderData struct {
 	// lookups. Empty token = API off.
 	APIToken    string
 	APIListener string
-	// accounts.require-sasl: every client must log in (IRC_REQUIRE_SASL).
-	RequireSASL bool
+	// accounts.require-sasl: every client must log in (guest_access false
+	// in auth, else IRC_REQUIRE_SASL), except from RequireSASLExempt.
+	RequireSASL       bool
+	RequireSASLExempt []string
 	// Network roles with irc.oper, as oper classes (docs/roles.md).
 	RoleClasses []roles.OperClass
 	// Oper class RoleServ grants itself (nofakelag, via account_grants).
@@ -97,6 +100,7 @@ func buildData(get func(string) string) (renderData, error) {
 		APIToken:          strEnv(get, "ERGO_API_TOKEN", ""),
 		APIListener:       strEnv(get, "ERGO_API_LISTENER", ":8089"),
 		RequireSASL:       boolEnv(get, "IRC_REQUIRE_SASL", false),
+		RequireSASLExempt: []string{"localhost"},
 		ServiceClass:      serviceClass,
 		ServicesListener:  strEnv(get, "IRC_SERVICES_LISTENER", ":6680"),
 	}
@@ -120,6 +124,19 @@ func buildData(get func(string) string) (renderData, error) {
 	if d.CloakNetname == "" {
 		d.CloakNetname = "irc"
 	}
+	if v := get("IRC_REQUIRE_SASL_EXEMPT"); v != "" {
+		d.RequireSASLExempt = nil
+		for _, n := range strings.Split(v, ",") {
+			n = strings.TrimSpace(n)
+			if n == "" {
+				continue
+			}
+			if !validNet(n) {
+				return d, fmt.Errorf("IRC_REQUIRE_SASL_EXEMPT: %q is not an IP, CIDR or localhost", n)
+			}
+			d.RequireSASLExempt = append(d.RequireSASLExempt, n)
+		}
+	}
 	if v := get("IRC_WEBSOCKET_ORIGINS"); v != "" {
 		for _, o := range strings.Split(v, ",") {
 			if o = strings.TrimSpace(o); o != "" {
@@ -130,6 +147,19 @@ func buildData(get func(string) string) (renderData, error) {
 		d.WebSocketOrigins = []string{"https://" + dom, "https://*." + dom}
 	}
 	return d, nil
+}
+
+// validNet reports whether s is something Ergo's require-sasl.exempted
+// accepts: localhost, an IP or a CIDR.
+func validNet(s string) bool {
+	if s == "localhost" {
+		return true
+	}
+	if _, err := netip.ParsePrefix(s); err == nil {
+		return true
+	}
+	_, err := netip.ParseAddr(s)
+	return err == nil
 }
 
 // q quotes a value as a YAML double-quoted scalar (JSON strings are valid YAML).
@@ -149,6 +179,7 @@ func render(get func(string) string, tmplPath, dir string, st netSettings, class
 	d.RoleClasses = classes
 	d.ChannelCreation = st.ChannelCreation
 	d.OperatorOnlyCreation = st.ChannelCreation == policyAdmins
+	d.RequireSASL = requireSASL(get, st)
 	if d.ChannelAutoRegister, d.ChannelExpireAfter, err = channelLifecycle(get, st); err != nil {
 		return false, err
 	}

@@ -96,7 +96,8 @@ acting API). Ergo is built with a small patch for this
 
 **Network settings from the admin panel** (auth service,
 `/internal/v1/settings`) apply at runtime: `channel_creation`
-(`registered | admins`) is polled by `boson-ergo watch-settings` every
+(`registered | admins`), the channel lifecycle settings and `guest_access`
+(whether people can use IRC without an account) are polled by `boson-ergo watch-settings` every
 `SETTINGS_POLL_SECONDS` (30), which re-renders `ircd.yaml` and rehashes Ergo
 on a change; `voice_channel_creation` (`admins | founders | registered`) is
 read by quicvoiced (cached 30 s). See
@@ -220,7 +221,7 @@ and `../auth` exists.
 
 Named volumes: `traefik_acme` (certificates), `certs_irc`/`certs_voice`
 (exported copies), `ergo_db` (Ergo accounts, channels, history, last
-known `channel_creation`), `voice_data` (voice channel registry), `pg_data`
+known network settings), `voice_data` (voice channel registry), `pg_data`
 (auth, api and directory databases), `directory_media` (directory icons and
 banners), `vm_data` (metrics). Back up `ergo_db`, `voice_data`, `pg_data`,
 `directory_media` and your `.env` (`AUTH_KEY_ENCRYPTION_KEY` encrypts the signing
