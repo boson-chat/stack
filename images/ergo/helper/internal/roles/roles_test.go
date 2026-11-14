@@ -116,13 +116,15 @@ func TestClientRolesETag(t *testing.T) {
 			_, _ = w.Write([]byte(`{"user_id":"usr_1","username":"carl","disabled":true,"irc":{"oper_class":null,"whois_line":null,"vhost":"users/carl"},"roles":[],"permissions":["channel.create"]}`))
 		case "/internal/v1/users/ghost/irc":
 			w.WriteHeader(404)
-			_, _ = w.Write([]byte(`{"error":"no such user","code":"not_found"}`))
+			// auth 1.5 shape: the code only in "error".
+			_, _ = w.Write([]byte(`{"error":"not_found","message":"no such user"}`))
 		case "/internal/v1/acting/roles":
 			if r.Header.Get("X-Acting-Account") != "alice" {
 				t.Errorf("acting account %q", r.Header.Get("X-Acting-Account"))
 			}
 			w.WriteHeader(403)
-			_, _ = w.Write([]byte(`{"error":"you can only manage roles below your own","code":"role_hierarchy"}`))
+			// auth 1.6 shape: code in both "error" and "code", text in "message".
+			_, _ = w.Write([]byte(`{"error":"role_hierarchy","code":"role_hierarchy","message":"you can only manage roles below your own"}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -148,7 +150,7 @@ func TestClientRolesETag(t *testing.T) {
 	}
 	_, err = c.CreateRole(ctx, "alice", "DJ")
 	var api *APIError
-	if !errors.As(err, &api) || api.Status != 403 || api.Message == "" {
+	if !errors.As(err, &api) || api.Status != 403 || api.Code != "role_hierarchy" || api.Message != "you can only manage roles below your own" {
 		t.Errorf("want APIError 403, got %v", err)
 	}
 	if _, err := c.Me(ctx, "alice"); !errors.Is(err, ErrUnsupported) {

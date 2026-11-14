@@ -160,7 +160,8 @@ out = " ".join(bob.roleserv("ROLES alice"))
 check("RoleServ ROLES alice", "Admin" in out, out)
 out = " ".join(bob.roleserv("HELP"))
 check("RoleServ HELP (no roles.manage: read-only commands)", "LIST" in out and "ASSIGN" not in out, out)
-if MODE == "real":
+FULL = MODE == "fake" or os.environ.get("AUTH_FULL") == "1"  # auth with acting API + members + grants
+if not FULL:
     out = " ".join(alice.roleserv("ASSIGN bob Moderator"))
     check("RoleServ writes wait for auth's acting API", "isn't available on this network yet" in out, out)
     out = " ".join(alice.roleserv("WHO Admin"))
@@ -177,7 +178,8 @@ else:
     got = bob.drain(2)
     check("bob opered up live by the assignment (no reconnect)", bob.opered(got), got)
     host, l313 = alice.whois("bob")
-    check("WHOIS bob now: mod/bob + 'is a Moderator'", host == "mod/bob" and l313 == "is a Moderator", (host, l313))
+    check("WHOIS bob now: 'is a Moderator'" + (" + mod/bob" if MODE == "fake" else ""),
+          (host == "mod/bob" or MODE == "real") and l313 == "is a Moderator", (host, l313))
     out = alice.roleserv("REMOVE bob Moderator")
     got = bob.drain(2)
     check("RoleServ REMOVE: bob de-opered live", any("MODE bob -o" in l for l in got), got)
@@ -201,7 +203,21 @@ got = eventually(lambda: [l for l in erin.drain(1) if "MODE erin -o" in l], 15)
 check("erin de-opered live when Moderator stops being an oper role", bool(got), got)
 
 # ---- membership changes ------------------------------------------------------
-if MODE == "real":
+if MODE == "real" and FULL:
+    r = compose("exec", "-T", "auth", "./auth", "user", "set-roles", "dave")
+    check("auth CLI: dave loses DJ", r.returncode == 0 and "roles=" in r.stdout, r.stdout + r.stderr)
+    host = eventually(lambda: (lambda h, l: h if h != "dj/dave" else None)(*bob.whois("dave")), 15)
+    check("dave loses DJ (CLI): vhost removed live via the grants feed", host and host != "dj/dave", host)
+    r = compose("exec", "-T", "auth", "./auth", "user", "set-roles", "bob", "Admin")
+    got = eventually(lambda: [l for l in bob.drain(1) if " 381 " in l], 15)
+    check("bob gets Admin (CLI): opered up live via the grants feed", bool(got), got)
+    st, body = http("GET", AUTH_PUBLIC + "/v1/admin/users?q=dave", token=owner_token)
+    did = next(u["id"] for u in body["users"] if u["username"] == "dave")
+    st, _ = http("POST", AUTH_PUBLIC + f"/v1/admin/users/{did}/disable", token=owner_token)
+    check("admin API: disable dave", st == 200, st)
+    d2 = Client("dave", PW["dave"], nick="dave2", register=False)
+    check("disabled dave can't log in", not d2.ok(), d2.sasl)
+elif MODE == "real":
     r = compose("exec", "-T", "auth", "./auth", "user", "set-roles", "dave")
     check("auth CLI: dave loses DJ", r.returncode == 0 and "roles=" in r.stdout, r.stdout + r.stderr)
     host, _ = bob.whois("dave")
