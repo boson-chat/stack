@@ -232,6 +232,10 @@ services:
       PUBLIC_URL: https://${AUTH_HOST}
       ISSUER: https://${AUTH_HOST}
       APP_URL: ${AUTH_APP_URL:-https://${AUTH_HOST}}
+      # Extra browser origins allowed to call auth with credentials/tokens and
+      # to be SSO return_to targets, e.g. the directory web UI
+      # (https://directory.example.com). Comma-separated.
+      CORS_ALLOWED_ORIGINS: ${AUTH_CORS_ALLOWED_ORIGINS:-}
       DATABASE_URL: postgres://auth:${POSTGRES_PASSWORD}@postgres:5432/auth?sslmode=disable
       AUTH_KEY_ENCRYPTION_KEY: ${AUTH_KEY_ENCRYPTION_KEY:?run scripts/setup.sh}
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?run scripts/setup.sh}
@@ -353,7 +357,7 @@ services:
   admin:
     <<: *restart
     profiles: [admin]
-    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.5.0}
+    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.6.0}
     environment:
       ENV: production
       PUBLIC_URL: https://${ADMIN_HOST:-admin.${DOMAIN:-localhost}}
@@ -529,7 +533,7 @@ services:
   directory:
     <<: *restart
     profiles: [directory]
-    image: ${DIRECTORY_IMAGE:-harbor.floret.dev/boson/directory:1.1.0}
+    image: ${DIRECTORY_IMAGE:-harbor.floret.dev/boson/directory:1.3.0}
     environment:
       ENV: ${DIRECTORY_ENV:-production}
       LOG_LEVEL: ${DIRECTORY_LOG_LEVEL:-info}
