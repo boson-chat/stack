@@ -179,7 +179,7 @@ services:
     profiles: [auth]
     # Releases: harbor.floret.dev/boson/auth:<version>. To run an unreleased
     # checkout instead, add compose.auth-src.yaml (see README).
-    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.0.0}
+    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.4.0}
     environment:
       ENV: production
       LOG_LEVEL: ${AUTH_LOG_LEVEL:-info}
@@ -305,7 +305,7 @@ services:
   admin:
     <<: *restart
     profiles: [admin]
-    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.0.0}
+    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.3.0}
     environment:
       ENV: production
       PUBLIC_URL: https://${ADMIN_HOST:-admin.${DOMAIN:-localhost}}
