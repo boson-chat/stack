@@ -1,0 +1,40 @@
+# A boson-chat/auth checkout with network roles (>= 1.5.0): AUTH_SRC.
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment: {POSTGRES_USER: auth, POSTGRES_PASSWORD: auth, POSTGRES_DB: auth}
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "auth", "-d", "auth"]
+      interval: 1s
+      retries: 30
+  auth:
+    build:
+      context: ${AUTH_SRC:?set AUTH_SRC to a boson-chat/auth checkout}
+      args: {VERSION: local}
+    image: boson-roles-test-auth:local
+    environment:
+      ENV: production
+      PUBLIC_URL: http://auth.test
+      ISSUER: http://auth.test
+      DATABASE_URL: postgres://auth:auth@postgres:5432/auth?sslmode=disable
+      AUTH_KEY_ENCRYPTION_KEY: ${AUTH_KEK:?}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?}
+      INTERNAL_ACTING_TOKEN: ${ACTING_TOKEN:?}
+      REQUIRE_EMAIL_VERIFICATION: "false"
+      COOKIE_SECURE: "false"
+    ports:
+      - "127.0.0.1:${TEST_AUTH_PUBLIC_PORT:-28080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+  # distroless auth has no shell for a healthcheck: Ergo waits for this.
+  auth-ready:
+    image: busybox:1.37.0
+    command: ["sh", "-c", "until wget -qO- http://auth:8081/readyz; do sleep 1; done"]
+    depends_on: [auth]
+  ergo:
+    depends_on:
+      auth:
+        condition: service_started
+      auth-ready:
+        condition: service_completed_successfully

@@ -49,6 +49,16 @@ of its parent IRC channel, or an auth admin. Deleting kicks everyone in it
 "Auth admin" = voice token `role` `moderator`/`admin`, which the auth service
 gives its admins. They pass every lock.
 
+**Network roles** (auth 1.5+ voice tokens with `perms`/`roles`;
+quicvoice with role claims, boson-chat/quicvoice#7): `voice.create` is needed
+to create (in addition to the policy: `registered` ⇒ `voice.create`;
+`founders` ⇒ founder of the parent with `voice.create`, or
+`voice.manage_any`; `admins` ⇒ `voice.manage_any`), `voice.manage_any`
+manages any channel, `voice.bypass_locks` passes every lock, and channels
+can be locked to network roles with `allowed_roles: ["DJ", ...]`. Tokens
+without `perms` keep the rules above. See [roles.md](roles.md) for how the
+same roles show on IRC.
+
 ### Roles and locks
 
 A dynamic channel with a parent can require an IRC role to join

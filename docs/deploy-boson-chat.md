@@ -298,9 +298,11 @@ Clean up afterwards: disable host certbot for the IRC name
   on old cloaks don't match anymore.
 - **Bans aren't imported:** UnrealIRCd TKLs (G/K/Z-lines) and Anope AKILLs
   need re-adding with Ergo's `UBAN ADD` / `KLINE` / `DLINE`.
-- **Opers:** one oper from `OPER_NAME`/`OPER_PASSWORD_HASH` (bcrypt via
-  `ergo genpasswd`, class `server-admin`: kill, ban, sajoin, samode,
-  vhosts, rehash, accreg, chanreg, ...). Unreal's operclasses, snomask
+- **Opers:** staff are IRC operators through their network roles (auth
+  1.5+, see [roles.md](roles.md)): opered up at login, no `/OPER`. One
+  emergency `/OPER` login stays, from `OPER_NAME`/`OPER_PASSWORD_HASH`
+  (bcrypt via `ergo genpasswd`, class `boson.server-admin`: kill, ban,
+  sajoin, samode, vhosts, rehash, accreg, chanreg, ...). Unreal's operclasses, snomask
   names and `/OPER` mask restrictions don't carry over; there is no
   OperServ (Ergo's equivalents are server commands: `UBAN`, `DEFCON`,
   `SAMODE`, `NS SAREGISTER`, `CS ...`). Opers also need an auth account (or

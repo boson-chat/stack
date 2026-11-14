@@ -1,0 +1,15 @@
+services:
+  auth:
+    image: python:3.13-alpine
+    command: ["python3", "-u", "/fakeauth.py"]
+    environment:
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?}
+      INTERNAL_ACTING_TOKEN: ${ACTING_TOKEN:?}
+    ports:
+      - "127.0.0.1:${TEST_AUTH_PORT:-28081}:8081"
+    volumes:
+      - ./fakeauth.py:/fakeauth.py:ro
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/v1/roles')"]
+      interval: 1s
+      retries: 30

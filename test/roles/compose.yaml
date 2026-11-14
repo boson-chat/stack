@@ -1,0 +1,60 @@
+# Roles smoke test against a real Ergo (the patched stack image), with either
+# the fake auth (compose.fake.yaml: the whole requested contract, RoleServ
+# writes included) or a real auth checkout (compose.real.yaml). Run with
+# test/roles/run.sh fake|real; nothing here is published beyond loopback.
+name: boson-roles-test
+
+x-ergo-env: &ergo-env
+  IRC_HOST: irc.test
+  DOMAIN: test
+  NETWORK_NAME: Boson
+  AUTH_HOST: auth.test
+  OPER_NAME: admin
+  OPER_PASSWORD_HASH: "$$2a$$04$$0123456789abcdefghijkuSmS9NIl9AOvb4uP8ir2gQoodvhXAvg."
+  IRC_PLAINTEXT: "true"
+  IRC_WEBSOCKET: "false"
+  AUTH_VERIFY_URL: http://auth:8081/internal/v1/verify-password
+  AUTH_SETTINGS_URL: http://auth:8081/internal/v1/settings
+  AUTH_JWKS_URL: http://auth:8080/.well-known/jwks.json
+  AUTH_ISSUER: http://auth.test
+  AUTH_INTERNAL_URL: http://auth:8081
+  AUTH_PUBLIC_URL: http://auth:8080
+  INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?}
+  ERGO_API_TOKEN: ${ERGO_API_TOKEN:?}
+  ERGO_API_URL: http://127.0.0.1:8089
+  ROLES_POLL_SECONDS: "2"
+  SETTINGS_POLL_SECONDS: "2"
+
+services:
+  ergo:
+    build: ../../images/ergo
+    image: boson-roles-test-ergo:local
+    ports:
+      - "127.0.0.1:${TEST_IRC_PORT:-26667}:6667"
+    environment: *ergo-env
+    volumes:
+      - ${TEST_CERTS:?}:/certs:ro
+    depends_on:
+      auth:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "netstat -ltn | grep -q ':6667 '"]
+      interval: 2s
+      retries: 60
+
+  roleserv:
+    image: boson-roles-test-ergo:local
+    entrypoint: ["/usr/local/bin/boson-ergo"]
+    command: ["roleserv"]
+    environment:
+      ROLESERV_IRC_ADDR: ergo:6680
+      ERGO_API_URL: http://ergo:8089
+      ERGO_API_TOKEN: ${ERGO_API_TOKEN:?}
+      AUTH_INTERNAL_URL: http://auth:8081
+      AUTH_PUBLIC_URL: http://auth:8080
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?}
+      AUTH_ACTING_TOKEN: ${ACTING_TOKEN:?}
+      ROLES_POLL_SECONDS: "2"
+    depends_on:
+      ergo:
+        condition: service_healthy
