@@ -160,6 +160,8 @@ umask 077
 	echo "INTERNAL_API_TOKEN=$(openssl rand -hex 32)"
 	echo "ERGO_API_TOKEN=$(openssl rand -hex 32)"
 	echo "ADMIN_SESSION_KEY=$(openssl rand -base64 32)"
+	# The admin panel's Docker socket proxy runs as nobody:<docker group>.
+	echo "DOCKER_GID=$( (getent group docker 2>/dev/null || true) | cut -d: -f3 | grep . || stat -c %g /var/run/docker.sock 2>/dev/null || echo 999)"
 	echo "API_DB_PASSWORD=$(rand 40)"
 	echo "VOICE_JWT_SECRET=$(rand 64)"
 	echo "VOICE_ROOMS=$VOICE_ROOMS"

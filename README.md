@@ -12,7 +12,8 @@ voice, and automatic TLS, wired together for your own domain.
 | `postgres` | `auth` | Database for `auth` (Postgres 18) | internal |
 | `quicvoiced` | `voice` | Voice rooms over QUIC ([boson-chat/quicvoice](https://github.com/boson-chat/quicvoice)); accepts tokens from `auth`. Static channels from `VOICE_ROOMS` plus channels created through the rooms API at `https://VOICE_HOST/v1/rooms` (optionally under an IRC channel, lockable to IRC roles) | 7700/udp, via Traefik at `https://VOICE_HOST` |
 | `victoriametrics` | `metrics` | Scrapes `/metrics` of traefik, auth, quicvoiced (and admin), 90-day retention. Internal only, at `http://victoriametrics:8428` | internal |
-| `admin` | `admin` | **Slot for the upcoming admin panel** (not released yet; off by default) | via Traefik at `https://ADMIN_HOST` |
+| `admin` | `admin` | The admin panel ([boson-chat/admin](https://github.com/boson-chat/admin)): users, invites, sign-in providers, network settings, audit log, stack health, and services control (restart/stop/start, logs) | via Traefik at `https://ADMIN_HOST` |
+| `docker-proxy` | `admin` | [Socket proxy](https://github.com/wollomatic/socket-proxy) that is the admin panel's only access to Docker: list/inspect containers, logs, stats, start/stop/restart; nothing else, only from `admin`, on an internal network | internal |
 | `webroot` | `webroot` | Optional: serves a host directory at `http://WEBROOT_HOST/.well-known/acme-challenge/` for a certbot outside the stack | via Traefik |
 | `wellknown` | `wellknown` | Optional: serves `https://DOMAIN/.well-known/boson.json` (client discovery: IRC, auth and voice endpoints), generated from `.env`. Only when `DOMAIN` points at this server | via Traefik |
 
