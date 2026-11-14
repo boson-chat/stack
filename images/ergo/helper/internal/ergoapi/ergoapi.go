@@ -133,3 +133,11 @@ func (c *Client) AccountOf(ctx context.Context, nick string) (account string, on
 	}
 	return out.Account, out.Present, nil
 }
+
+// EraseAccount calls POST /v1/ns/unregister with erase (patched Ergo): the
+// account is deleted (its name can be registered again), its clients are
+// disconnected and the channels it founded are unregistered.
+// ACCOUNT_DOES_NOT_EXIST if there is no such account.
+func (c *Client) EraseAccount(ctx context.Context, account string) error {
+	return c.call(ctx, "/v1/ns/unregister", map[string]any{"accountName": account, "erase": true}, nil)
+}

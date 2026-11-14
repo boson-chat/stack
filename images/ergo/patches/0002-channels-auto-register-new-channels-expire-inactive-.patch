@@ -1,0 +1,1061 @@
+From 9619d06f3a03190a296ebcc50662e4d214723891 Mon Sep 17 00:00:00 2001
+From: James Trotter <james@jamesat.dev>
+Date: Sat, 14 Nov 2026 07:55:24 -0500
+Subject: [PATCH 2/3] channels: auto-register new channels, expire inactive
+ registrations
+
+Two new options under channels.registration:
+
+auto-register: a channel created by a logged-in client (by joining it) is
+registered to their account at once, as if they had sent /CS REGISTER, with
+the same restrictions (enabled, operator-only, max-channels-per-account)
+and the usual ChanServ notice and +q.
+
+expire-after: a registered channel with no JOIN, PRIVMSG or NOTICE for that
+long is unregistered (logged, LocalChannels snomask, NOTICE to the founder
+if online). The founder is warned up to a week before: once on the periodic
+check if online, and at every login during the warning period. Operators
+with chanreg can exempt a channel with /CS SET #channel EXPIRY OFF;
+/CS GET #channel EXPIRY shows when it will expire.
+
+Activity is tracked in memory on every message and stored with the
+channel registration (LastActivity) at most once an hour per channel.
+Registrations from before this change start their clock at the first
+check. Both options default to off.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ default.yaml              |  11 ++
+ docs/MANUAL.md            |   4 +
+ irc/channel.go            |  22 +++
+ irc/channelexpiry.go      | 231 ++++++++++++++++++++++
+ irc/channelexpiry_test.go | 392 ++++++++++++++++++++++++++++++++++++++
+ irc/channelmanager.go     |   4 +
+ irc/channelreg.go         |   4 +
+ irc/chanserv.go           |  68 ++++++-
+ irc/config.go             |   7 +
+ irc/handlers.go           |   1 +
+ irc/server.go             |   2 +
+ traditional.yaml          |  11 ++
+ 12 files changed, 748 insertions(+), 9 deletions(-)
+ create mode 100644 irc/channelexpiry.go
+ create mode 100644 irc/channelexpiry_test.go
+
+diff --git a/default.yaml b/default.yaml
+index ea1e5029..21bdb9e0 100644
+--- a/default.yaml
++++ b/default.yaml
+@@ -694,6 +694,17 @@ channels:
+         # how many channels can each account register?
+         max-channels-per-account: 15
+ 
++        # automatically register new channels to the account of the user who
++        # created them (by joining them)? this follows the restrictions above,
++        # e.g., when `operator-only` is enabled, only operators' new channels are
++        # registered
++        auto-register: false
++
++        # unregister channels that have had no activity (JOIN, PRIVMSG, or NOTICE)
++        # for this long; founders are warned a week in advance. operators can
++        # exempt a channel with /CS SET #channel EXPIRY OFF. (0 to disable)
++        expire-after: 0
++
+     # as a crude countermeasure against spambots, anonymous connections younger
+     # than this value will get an empty response to /LIST (a time period of 0 disables)
+     list-delay: 0s
+diff --git a/docs/MANUAL.md b/docs/MANUAL.md
+index 15cda167..3d260737 100644
+--- a/docs/MANUAL.md
++++ b/docs/MANUAL.md
+@@ -366,6 +366,10 @@ For example, `/CS REGISTER #channel` will register the channel `#channel` to my
+ 
+ If your friends have registered accounts, you can automatically grant them operator permissions when they join the channel. For more details, see `/CS HELP AMODE`.
+ 
++Server administrators can make this automatic: with `channels.registration.auto-register` enabled, a new channel is registered to your account as soon as you create it by joining it (while logged in), subject to the same restrictions as `/CS REGISTER` (`operator-only`, `max-channels-per-account`).
++
++With `channels.registration.expire-after` set (e.g., `90d`), registered channels that have had no activity (nobody joining or sending a `PRIVMSG` or `NOTICE` to them) for that long are unregistered automatically, which frees the name for someone else. The founder gets a notice from ChanServ a week before (if they're online, and again whenever they log in during that week); using the channel restarts the clock. `/CS GET #channel EXPIRY` shows when a channel will expire, and operators with the `chanreg` capability can exempt a channel with `/CS SET #channel EXPIRY OFF`.
++
+ 
+ ## Language
+ 
+diff --git a/irc/channel.go b/irc/channel.go
+index e5e0215c..8c8bb686 100644
+--- a/irc/channel.go
++++ b/irc/channel.go
+@@ -14,6 +14,7 @@ import (
+ 	"time"
+ 
+ 	"sync"
++	"sync/atomic"
+ 
+ 	"github.com/ergochat/irc-go/ircmsg"
+ 
+@@ -29,6 +30,8 @@ type ChannelSettings struct {
+ 	History     HistoryStatus
+ 	QueryCutoff HistoryCutoff
+ 	StoreEvents StoreEvents
++	// exempt from channels.registration.expire-after (CS SET EXPIRY OFF)
++	NoExpire bool `json:",omitempty"`
+ }
+ 
+ // Channel represents a channel that clients can join.
+@@ -61,6 +64,10 @@ type Channel struct {
+ 	// these caches are paired to allow iteration over channel members without holding the lock
+ 	membersCache    []*Client
+ 	memberDataCache []*memberData
++	// unix nanoseconds of the last activity, see channelexpiry.go
++	lastActivity atomic.Int64
++	// the lastActivity value the founder was last warned about
++	expiryWarned atomic.Int64
+ }
+ 
+ // NewChannel creates a new channel from a `Server` and a `name`
+@@ -130,6 +137,9 @@ func (channel *Channel) applyRegInfo(chanReg RegisteredChannel) {
+ 	channel.settings = chanReg.Settings
+ 	channel.forward = chanReg.Forward
+ 	channel.metadata = chanReg.Metadata
++	if !chanReg.LastActivity.IsZero() {
++		channel.lastActivity.Store(chanReg.LastActivity.UnixNano())
++	}
+ 
+ 	for _, mode := range chanReg.Modes {
+ 		channel.flags.SetMode(mode, true)
+@@ -168,6 +178,7 @@ func (channel *Channel) ExportRegistration() (info RegisteredChannel) {
+ 
+ 	info.Settings = channel.settings
+ 	info.Metadata = channel.metadata
++	info.LastActivity = channel.LastActivity()
+ 
+ 	return
+ }
+@@ -318,6 +329,8 @@ func (channel *Channel) SetRegistered(founder string) error {
+ 	channel.registeredFounder = founder
+ 	channel.registeredTime = time.Now().UTC()
+ 	channel.accountToUMode[founder] = modes.ChannelFounder
++	// the expiration clock starts at registration
++	channel.lastActivity.Store(channel.registeredTime.UnixNano())
+ 	return nil
+ }
+ 
+@@ -862,6 +875,11 @@ func (channel *Channel) Join(client *Client, key string, isSajoin bool, rb *Resp
+ 	var message utils.SplitMessage
+ 	respectAuditorium := givenMode == modes.Mode(0) && channel.flags.HasMode(modes.Auditorium)
+ 	message = utils.MakeMessage("")
++	// fake persistent joins of always-on clients don't count as activity
++	if rb != nil {
++		channel.noteActivity()
++	}
++
+ 	// no history item for fake persistent joins
+ 	if rb != nil && !respectAuditorium {
+ 		histItem := history.Item{
+@@ -1361,6 +1379,10 @@ func (channel *Channel) SendSplitMessage(command string, minPrefixMode modes.Mod
+ 		return
+ 	}
+ 
++	if histType != history.Tagmsg {
++		channel.noteActivity()
++	}
++
+ 	details := client.Details()
+ 	isBot := client.HasMode(modes.Bot)
+ 	chname := channel.Name()
+diff --git a/irc/channelexpiry.go b/irc/channelexpiry.go
+new file mode 100644
+index 00000000..329f6242
+--- /dev/null
++++ b/irc/channelexpiry.go
+@@ -0,0 +1,231 @@
++// Copyright (c) 2026 The Ergo contributors
++// released under the MIT license
++
++package irc
++
++import (
++	"fmt"
++	"time"
++
++	"github.com/ergochat/irc-go/ircfmt"
++
++	"github.com/ergochat/ergo/irc/modes"
++	"github.com/ergochat/ergo/irc/sno"
++)
++
++// Lifecycle of channel registrations:
++//
++//   - channels.registration.auto-register: a channel created by a logged-in
++//     client (by joining it) is registered to their account right away, as if
++//     they had run /CS REGISTER.
++//   - channels.registration.expire-after: a registered channel that has seen no
++//     JOIN, PRIVMSG or NOTICE for that long is unregistered. Its founder is
++//     warned beforehand (on the next check if they're online, and at every
++//     login during the warning period otherwise). Operators with the chanreg
++//     capability can exempt a channel with /CS SET #channel EXPIRY OFF.
++//
++// Activity is tracked in memory on every message and written back to the
++// database at most once per channelActivityResolution per channel.
++
++const (
++	// maximum interval between expiration checks, and maximum staleness of
++	// the stored last-activity time
++	channelActivityResolution = time.Hour
++	// how long before expiration the founder is warned
++	channelExpiryWarning = 7 * 24 * time.Hour
++)
++
++// channelActivityInterval is how stale a stored last-activity time may get, and
++// how often expiration is checked: an hour, or less for short expire-after
++// values (which are mostly useful for testing).
++func channelActivityInterval(expireAfter time.Duration) time.Duration {
++	if expireAfter <= 0 {
++		return channelActivityResolution
++	}
++	return min(channelActivityResolution, max(expireAfter/10, time.Second))
++}
++
++// channelExpiryWarningPeriod is how long before expiration the founder is warned.
++func channelExpiryWarningPeriod(expireAfter time.Duration) time.Duration {
++	return min(channelExpiryWarning, expireAfter/4)
++}
++
++func (channel *Channel) LastActivity() time.Time {
++	if ns := channel.lastActivity.Load(); ns != 0 {
++		return time.Unix(0, ns).UTC()
++	}
++	return time.Time{}
++}
++
++// noteActivity records a JOIN or message. It's cheap enough to call for every
++// message: the registration is only written back when the stored time is
++// more than channelActivityInterval old.
++func (channel *Channel) noteActivity() {
++	expireAfter := time.Duration(channel.server.Config().Channels.Registration.ExpireAfter)
++	now := time.Now().UnixNano()
++	last := channel.lastActivity.Load()
++	if now-last < int64(channelActivityInterval(expireAfter)) {
++		return
++	}
++	if channel.lastActivity.CompareAndSwap(last, now) {
++		channel.MarkDirty(IncludeActivity) // no-op for unregistered channels
++	}
++}
++
++type channelExpiryStatus uint
++
++const (
++	channelNotExpiring channelExpiryStatus = iota
++	channelExpiringSoon
++	channelExpired
++)
++
++// channelExpiry decides what happens to a registered channel whose last
++// activity was at lastActivity, and when it will expire.
++func channelExpiry(expireAfter time.Duration, exempt bool, lastActivity, now time.Time) (status channelExpiryStatus, expiresAt time.Time) {
++	if expireAfter <= 0 || exempt || lastActivity.IsZero() {
++		return channelNotExpiring, time.Time{}
++	}
++	expiresAt = lastActivity.Add(expireAfter)
++	switch {
++	case !now.Before(expiresAt):
++		status = channelExpired
++	case !now.Before(expiresAt.Add(-channelExpiryWarningPeriod(expireAfter))):
++		status = channelExpiringSoon
++	}
++	return
++}
++
++// formatChannelExpiry formats a duration for humans, approximately ("90 days").
++func formatChannelExpiry(d time.Duration) string {
++	const day = 24 * time.Hour
++	switch {
++	case d == day:
++		return "1 day"
++	case d%day == 0 || d >= 2*day:
++		return fmt.Sprintf("%d days", (d+day/2)/day)
++	case d >= 2*time.Hour:
++		return fmt.Sprintf("%d hours", (d+time.Hour/2)/time.Hour)
++	default:
++		return d.Round(time.Second).String()
++	}
++}
++
++func (server *Server) periodicChannelExpiry() {
++	interval := channelActivityResolution
++	defer func() {
++		// reschedule whether or not there was a panic
++		time.AfterFunc(interval, server.periodicChannelExpiry)
++	}()
++
++	defer server.HandlePanic(nil)
++
++	config := server.Config()
++	interval = channelActivityInterval(time.Duration(config.Channels.Registration.ExpireAfter))
++	server.performChannelExpiry(config, time.Now().UTC())
++}
++
++func (server *Server) performChannelExpiry(config *Config, now time.Time) {
++	expireAfter := time.Duration(config.Channels.Registration.ExpireAfter)
++	for _, channel := range server.channels.registeredChannels() {
++		lastActivity := channel.LastActivity()
++		if lastActivity.IsZero() {
++			// registered before activity was tracked: start the clock now
++			channel.lastActivity.CompareAndSwap(0, now.UnixNano())
++			channel.MarkDirty(IncludeActivity)
++			continue
++		}
++		status, expiresAt := channelExpiry(expireAfter, channel.Settings().NoExpire, lastActivity, now)
++		switch status {
++		case channelExpired:
++			server.expireChannel(channel, expireAfter)
++		case channelExpiringSoon:
++			if channel.expiryWarned.Load() != lastActivity.UnixNano() {
++				clients := server.accounts.AccountToClients(channel.Founder())
++				for _, client := range clients {
++					client.Send(nil, chanservService.prefix, "NOTICE", client.Nick(), channelExpiryWarningText(client, channel.Name(), lastActivity, expiresAt, now))
++				}
++				if len(clients) != 0 {
++					channel.expiryWarned.Store(lastActivity.UnixNano())
++				}
++			}
++		}
++	}
++}
++
++func channelExpiryWarningText(client *Client, chname string, lastActivity, expiresAt, now time.Time) string {
++	return fmt.Sprintf(client.t("Channel %[1]s has had no activity since %[2]s and will be unregistered in %[3]s (%[4]s) unless someone joins it or talks in it"),
++		chname, lastActivity.Format(time.RFC1123), formatChannelExpiry(expiresAt.Sub(now)), expiresAt.Format(time.RFC1123))
++}
++
++func (server *Server) expireChannel(channel *Channel, expireAfter time.Duration) {
++	founder, chname := channel.Founder(), channel.Name()
++	if err := server.channels.SetUnregistered(channel.NameCasefolded(), founder); err != nil {
++		server.logger.Error("services", "couldn't expire channel", chname, err.Error())
++		return
++	}
++	idle := formatChannelExpiry(expireAfter)
++	server.logger.Info("services", fmt.Sprintf("Channel %s expired after %s without activity, unregistered (founder: %s)", chname, idle, founder))
++	server.snomasks.Send(sno.LocalChannels, fmt.Sprintf(ircfmt.Unescape("Channel $c[grey][$r%s$c[grey]] expired after %s without activity and was unregistered (founder: $c[grey][$r%s$c[grey]])"), chname, idle, founder))
++	for _, client := range server.accounts.AccountToClients(founder) {
++		client.Send(nil, chanservService.prefix, "NOTICE", client.Nick(), fmt.Sprintf(client.t("Channel %[1]s was unregistered because it had no activity for %[2]s"), chname, idle))
++	}
++}
++
++// warnOfChannelExpiry reminds a client who just logged in about the channels
++// they founded that are about to expire.
++func (server *Server) warnOfChannelExpiry(client *Client, rb *ResponseBuffer) {
++	config := server.Config()
++	expireAfter := time.Duration(config.Channels.Registration.ExpireAfter)
++	account := client.Account()
++	if expireAfter <= 0 || account == "" {
++		return
++	}
++	now := time.Now().UTC()
++	for _, cfname := range server.channels.ChannelsForAccount(account, true) {
++		channel := server.channels.Get(cfname)
++		if channel == nil {
++			continue
++		}
++		lastActivity := channel.LastActivity()
++		if status, expiresAt := channelExpiry(expireAfter, channel.Settings().NoExpire, lastActivity, now); status == channelExpiringSoon {
++			rb.Add(nil, chanservService.prefix, "NOTICE", client.Nick(), channelExpiryWarningText(client, channel.Name(), lastActivity, expiresAt, now))
++			channel.expiryWarned.Store(lastActivity.UnixNano())
++		}
++	}
++}
++
++// registeredChannels returns all registered channels.
++func (cm *ChannelManager) registeredChannels() (result []*Channel) {
++	cm.RLock()
++	defer cm.RUnlock()
++	for _, entry := range cm.chans {
++		if entry.channel.Founder() != "" {
++			result = append(result, entry.channel)
++		}
++	}
++	return
++}
++
++// csAutoRegister registers a channel that client has just created by joining
++// it (channels.registration.auto-register), provided that client could have
++// registered it with /CS REGISTER.
++func csAutoRegister(server *Server, client *Client, channel *Channel, rb *ResponseBuffer) {
++	registration := server.Config().Channels.Registration
++	if !registration.Enabled || !registration.AutoRegister || client.Account() == "" {
++		return
++	}
++	if registration.OperatorOnly && !client.HasRoleCapabs("chanreg") {
++		return
++	}
++	if !channel.ClientIsAtLeast(client, modes.ChannelOperator) {
++		return // someone else created it after all
++	}
++	if chanLimitReached(client) {
++		chanservService.Notice(rb, fmt.Sprintf(client.t("Channel %s was not registered automatically, because you have already registered the maximum number of channels"), channel.Name()))
++		return
++	}
++	if err := csRegisterChannel(chanservService, server, client, channel, rb); err != nil {
++		server.logger.Debug("services", "couldn't auto-register channel", channel.Name(), err.Error())
++	}
++}
+diff --git a/irc/channelexpiry_test.go b/irc/channelexpiry_test.go
+new file mode 100644
+index 00000000..82f63743
+--- /dev/null
++++ b/irc/channelexpiry_test.go
+@@ -0,0 +1,392 @@
++// Copyright (c) 2026 The Ergo contributors
++// released under the MIT license
++
++package irc
++
++import (
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/tidwall/buntdb"
++
++	"github.com/ergochat/ergo/irc/bunt"
++	"github.com/ergochat/ergo/irc/custime"
++	"github.com/ergochat/ergo/irc/datastore"
++	"github.com/ergochat/ergo/irc/languages"
++	"github.com/ergochat/ergo/irc/logger"
++	"github.com/ergochat/ergo/irc/modes"
++	"github.com/ergochat/ergo/irc/utils"
++)
++
++const day = 24 * time.Hour
++
++func TestChannelActivityInterval(t *testing.T) {
++	cases := []struct {
++		expireAfter, want time.Duration
++	}{
++		{0, time.Hour},
++		{90 * day, time.Hour},
++		{10 * time.Hour, time.Hour},
++		{5 * time.Hour, 30 * time.Minute},
++		{20 * time.Second, 2 * time.Second},
++		{2 * time.Second, time.Second},
++	}
++	for _, c := range cases {
++		if got := channelActivityInterval(c.expireAfter); got != c.want {
++			t.Errorf("channelActivityInterval(%v) = %v, want %v", c.expireAfter, got, c.want)
++		}
++	}
++	if got := channelExpiryWarningPeriod(90 * day); got != 7*day {
++		t.Errorf("warning period for 90 days: %v", got)
++	}
++	if got := channelExpiryWarningPeriod(20 * time.Second); got != 5*time.Second {
++		t.Errorf("warning period for 20s: %v", got)
++	}
++}
++
++func TestChannelExpiry(t *testing.T) {
++	now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
++	cases := []struct {
++		name         string
++		expireAfter  time.Duration
++		exempt       bool
++		lastActivity time.Time
++		want         channelExpiryStatus
++	}{
++		{"disabled", 0, false, now.Add(-1000 * day), channelNotExpiring},
++		{"exempt", 30 * day, true, now.Add(-1000 * day), channelNotExpiring},
++		{"untracked", 30 * day, false, time.Time{}, channelNotExpiring},
++		{"active", 30 * day, false, now.Add(-time.Hour), channelNotExpiring},
++		{"just before the warning", 30 * day, false, now.Add(-23*day + time.Minute), channelNotExpiring},
++		{"warning starts", 30 * day, false, now.Add(-23 * day), channelExpiringSoon},
++		{"about to expire", 30 * day, false, now.Add(-30*day + time.Minute), channelExpiringSoon},
++		{"expires", 30 * day, false, now.Add(-30 * day), channelExpired},
++		{"long gone", 30 * day, false, now.Add(-300 * day), channelExpired},
++	}
++	for _, c := range cases {
++		status, expiresAt := channelExpiry(c.expireAfter, c.exempt, c.lastActivity, now)
++		if status != c.want {
++			t.Errorf("%s: got status %d, want %d", c.name, status, c.want)
++		}
++		if status != channelNotExpiring && !expiresAt.Equal(c.lastActivity.Add(c.expireAfter)) {
++			t.Errorf("%s: expiresAt %v", c.name, expiresAt)
++		}
++	}
++}
++
++func TestFormatChannelExpiry(t *testing.T) {
++	cases := map[time.Duration]string{
++		day:                              "1 day",
++		90 * day:                         "90 days",
++		7*day - time.Minute:              "7 days",
++		6*day + 11*time.Hour:             "6 days",
++		36 * time.Hour:                   "36 hours",
++		3 * time.Hour:                    "3 hours",
++		90 * time.Minute:                 "1h30m0s",
++		20 * time.Second:                 "20s",
++		20*time.Second + time.Nanosecond: "20s",
++	}
++	for d, want := range cases {
++		if got := formatChannelExpiry(d); got != want {
++			t.Errorf("formatChannelExpiry(%v) = %q, want %q", d, got, want)
++		}
++	}
++}
++
++func TestRegisteredChannelLastActivity(t *testing.T) {
++	// records written before activity tracking deserialize with a zero time
++	var old RegisteredChannel
++	if err := old.Deserialize([]byte(`{"Name":"#old","Founder":"alice","Settings":{"History":0,"QueryCutoff":0,"StoreEvents":0}}`)); err != nil {
++		t.Fatal(err)
++	}
++	if !old.LastActivity.IsZero() || old.Settings.NoExpire {
++		t.Errorf("unexpected %#v", old)
++	}
++
++	when := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
++	reg := RegisteredChannel{Name: "#new", Founder: "alice", LastActivity: when, Settings: ChannelSettings{NoExpire: true}}
++	b, err := reg.Serialize()
++	if err != nil {
++		t.Fatal(err)
++	}
++	var back RegisteredChannel
++	if err := back.Deserialize(b); err != nil {
++		t.Fatal(err)
++	}
++	if !back.LastActivity.Equal(when) || !back.Settings.NoExpire {
++		t.Errorf("round trip lost fields: %s", b)
++	}
++}
++
++func channelExpiryTestServer(t *testing.T, expireAfter time.Duration, regs ...RegisteredChannel) *Server {
++	t.Helper()
++	lm, err := languages.NewManager(false, "", "")
++	if err != nil {
++		t.Fatal(err)
++	}
++	config := &Config{languageManager: lm}
++	config.Channels.Registration.Enabled = true
++	config.Channels.Registration.ExpireAfter = custime.Duration(expireAfter)
++	server := &Server{name: "ergo.test"}
++	server.defcon.Store(5)
++	server.config.Store(config)
++	if server.logger, err = logger.NewManager(nil); err != nil {
++		t.Fatal(err)
++	}
++	server.snomasks.Initialize()
++	db, err := buntdb.Open(":memory:")
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { db.Close() })
++	server.dstore = bunt.NewBuntdbDatastore(db, server.logger)
++	for _, reg := range regs {
++		reg.UUID = utils.GenerateUUIDv4()
++		reg.Settings.History = HistoryDefault
++		b, err := reg.Serialize()
++		if err != nil {
++			t.Fatal(err)
++		}
++		if err := server.dstore.Set(datastore.TableChannels, reg.UUID, b, time.Time{}); err != nil {
++			t.Fatal(err)
++		}
++	}
++	if err := server.channels.Initialize(server, config); err != nil {
++		t.Fatal(err)
++	}
++	return server
++}
++
++func storedChannel(t *testing.T, server *Server, name string) (reg RegisteredChannel, found bool) {
++	t.Helper()
++	all, err := FetchAndDeserializeAll[RegisteredChannel](datastore.TableChannels, server.dstore, server.logger)
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, r := range all {
++		if r.Name == name {
++			return r, true
++		}
++	}
++	return
++}
++
++func eventually(t *testing.T, what string, cond func() bool) {
++	t.Helper()
++	for i := 0; i < 200; i++ {
++		if cond() {
++			return
++		}
++		time.Sleep(10 * time.Millisecond)
++	}
++	t.Errorf("timed out waiting for: %s", what)
++}
++
++func TestPerformChannelExpiry(t *testing.T) {
++	now := time.Now().UTC().Truncate(time.Second)
++	registered := now.Add(-400 * day)
++	reg := func(name string, lastActivity time.Time, exempt bool) RegisteredChannel {
++		return RegisteredChannel{Name: name, Founder: "alice", RegisteredAt: registered, LastActivity: lastActivity,
++			Settings: ChannelSettings{NoExpire: exempt}}
++	}
++	server := channelExpiryTestServer(t, 30*day,
++		reg("#idle", now.Add(-31*day), false),
++		reg("#quiet", now.Add(-25*day), false),
++		reg("#busy", now.Add(-time.Hour), false),
++		reg("#exempt", now.Add(-300*day), true),
++		reg("#legacy", time.Time{}, false),
++	)
++
++	server.performChannelExpiry(server.Config(), now)
++
++	if server.channels.Get("#idle") != nil {
++		t.Errorf("#idle should have been unregistered and cleaned up")
++	}
++	eventually(t, "#idle deleted from the database", func() bool {
++		_, found := storedChannel(t, server, "#idle")
++		return !found
++	})
++	for _, name := range []string{"#quiet", "#busy", "#exempt", "#legacy"} {
++		if ch := server.channels.Get(name); ch == nil || ch.Founder() != "alice" {
++			t.Errorf("%s should still be registered", name)
++		}
++	}
++	// the clock starts now for channels registered before tracking, and that is persisted
++	if got := server.channels.Get("#legacy").LastActivity(); !got.Equal(now) {
++		t.Errorf("#legacy last activity %v, want %v", got, now)
++	}
++	eventually(t, "#legacy last activity persisted", func() bool {
++		r, _ := storedChannel(t, server, "#legacy")
++		return r.LastActivity.Equal(now)
++	})
++
++	// 7 days later #quiet expires too; #legacy is now in its warning period
++	server.performChannelExpiry(server.Config(), now.Add(7*day))
++	if server.channels.Get("#quiet") != nil {
++		t.Errorf("#quiet should have expired")
++	}
++	if server.channels.Get("#legacy") == nil || server.channels.Get("#exempt") == nil {
++		t.Errorf("#legacy and #exempt should still be registered")
++	}
++
++	// with expiration off nothing expires
++	server.Config().Channels.Registration.ExpireAfter = 0
++	server.performChannelExpiry(server.Config(), now.Add(1000*day))
++	if server.channels.Get("#legacy") == nil || server.channels.Get("#busy") == nil {
++		t.Errorf("channels expired with expire-after 0")
++	}
++}
++
++func TestNoteActivity(t *testing.T) {
++	server := channelExpiryTestServer(t, 30*day, RegisteredChannel{Name: "#chan", Founder: "alice", RegisteredAt: time.Now().Add(-day)})
++	channel := server.channels.Get("#chan")
++	if !channel.LastActivity().IsZero() {
++		t.Fatalf("unexpected last activity %v", channel.LastActivity())
++	}
++
++	channel.noteActivity()
++	first := channel.LastActivity()
++	if time.Since(first) > time.Minute {
++		t.Fatalf("activity not recorded: %v", first)
++	}
++	eventually(t, "activity persisted", func() bool {
++		r, _ := storedChannel(t, server, "#chan")
++		return r.LastActivity.Equal(first)
++	})
++
++	// within the resolution, nothing changes (and nothing is written)
++	channel.noteActivity()
++	if !channel.LastActivity().Equal(first) {
++		t.Errorf("activity updated within the resolution")
++	}
++
++	// a stale time is refreshed
++	stale := time.Now().Add(-2 * time.Hour).UnixNano()
++	channel.lastActivity.Store(stale)
++	channel.noteActivity()
++	if channel.lastActivity.Load() == stale {
++		t.Errorf("stale activity not refreshed")
++	}
++}
++
++func TestSetRegisteredStartsExpiryClock(t *testing.T) {
++	server := channelExpiryTestServer(t, 30*day)
++	channel := NewChannel(server, "#new", "#new", false, RegisteredChannel{})
++	channel.lastActivity.Store(time.Now().Add(-100 * day).UnixNano())
++	if err := channel.SetRegistered("bob"); err != nil {
++		t.Fatal(err)
++	}
++	if time.Since(channel.LastActivity()) > time.Minute {
++		t.Errorf("registration should reset the last activity, got %v", channel.LastActivity())
++	}
++	if channel.ExportRegistration().LastActivity.IsZero() {
++		t.Errorf("last activity not exported")
++	}
++}
++
++func autoRegisterTestClient(server *Server, nick, account string) (*Client, *ResponseBuffer) {
++	client := &Client{server: server, nick: nick, nickCasefolded: nick, account: account, accountName: account}
++	session := &Session{client: client}
++	client.sessions = []*Session{session}
++	server.clients.byNick[nick] = client
++	return client, NewResponseBuffer(session)
++}
++
++// creates a channel the way JOIN does: client is its only member, with +o
++func autoRegisterTestChannel(server *Server, client *Client, name string) *Channel {
++	channel := NewChannel(server, name, name, false, RegisteredChannel{})
++	server.channels.Lock()
++	server.channels.chans[name] = &channelManagerEntry{channel: channel, pendingJoins: 1}
++	server.channels.Unlock()
++	channel.members.Add(client)
++	channel.members[client].modes.SetMode(modes.ChannelOperator, true)
++	channel.regenerateMembersCache()
++	return channel
++}
++
++func noticesContain(rb *ResponseBuffer, text string) bool {
++	for _, msg := range rb.messages {
++		if msg.Command == "NOTICE" && strings.Contains(msg.Params[len(msg.Params)-1], text) {
++			return true
++		}
++	}
++	return false
++}
++
++func TestAutoRegister(t *testing.T) {
++	server := channelExpiryTestServer(t, 0)
++	server.clients.Initialize()
++	chanservService.prefix = "ChanServ!ChanServ@localhost"
++	config := server.Config()
++	config.Channels.Registration.MaxChannelsPerAccount = 2
++
++	alice, rb := autoRegisterTestClient(server, "alice", "alice")
++
++	// off by default
++	first := autoRegisterTestChannel(server, alice, "#first")
++	csAutoRegister(server, alice, first, rb)
++	if first.Founder() != "" {
++		t.Fatalf("registered with auto-register off")
++	}
++
++	config.Channels.Registration.AutoRegister = true
++	csAutoRegister(server, alice, first, rb)
++	if first.Founder() != "alice" {
++		t.Fatalf("#first not registered to alice")
++	}
++	if !noticesContain(rb, "Channel #first successfully registered") {
++		t.Errorf("no ChanServ notice: %v", rb.messages)
++	}
++	if mode := first.HighestUserMode(alice); mode != modes.ChannelFounder {
++		t.Errorf("alice should be founder (+q), has %v", mode)
++	}
++	if reg, found := storedChannel(t, server, "#first"); !found || reg.Founder != "alice" {
++		t.Errorf("registration not stored")
++	}
++
++	// a guest's channel isn't registered
++	guest, guestRB := autoRegisterTestClient(server, "guest", "")
++	guestChannel := autoRegisterTestChannel(server, guest, "#guest")
++	csAutoRegister(server, guest, guestChannel, guestRB)
++	if guestChannel.Founder() != "" || len(guestRB.messages) != 0 {
++		t.Errorf("guest channel registered: %q, %v", guestChannel.Founder(), guestRB.messages)
++	}
++
++	// someone who isn't a channel operator (didn't create it) isn't its founder
++	bob, bobRB := autoRegisterTestClient(server, "bob", "bob")
++	notOp := autoRegisterTestChannel(server, guest, "#notop")
++	notOp.members.Add(bob)
++	notOp.regenerateMembersCache()
++	csAutoRegister(server, bob, notOp, bobRB)
++	if notOp.Founder() != "" {
++		t.Errorf("registered to a non-operator")
++	}
++
++	// max-channels-per-account is respected, with a notice
++	second := autoRegisterTestChannel(server, alice, "#second")
++	csAutoRegister(server, alice, second, rb)
++	third := autoRegisterTestChannel(server, alice, "#third")
++	rb = NewResponseBuffer(alice.Sessions()[0])
++	csAutoRegister(server, alice, third, rb)
++	if second.Founder() != "alice" || third.Founder() != "" {
++		t.Errorf("limit not respected: #second %q, #third %q", second.Founder(), third.Founder())
++	}
++	if !noticesContain(rb, "maximum number of channels") {
++		t.Errorf("no limit notice: %v", rb.messages)
++	}
++
++	// operator-only registration: only opers with chanreg
++	config.Channels.Registration.OperatorOnly = true
++	carol, carolRB := autoRegisterTestClient(server, "carol", "carol")
++	opOnly := autoRegisterTestChannel(server, carol, "#oponly")
++	csAutoRegister(server, carol, opOnly, carolRB)
++	if opOnly.Founder() != "" {
++		t.Errorf("registered under operator-only")
++	}
++	carol.oper = &Oper{Class: &OperClass{Capabilities: utils.HashSet[string]{"chanreg": {}}}}
++	csAutoRegister(server, carol, opOnly, carolRB)
++	if opOnly.Founder() != "carol" {
++		t.Errorf("chanreg oper's channel not registered under operator-only")
++	}
++}
+diff --git a/irc/channelmanager.go b/irc/channelmanager.go
+index 205de870..c3dea00d 100644
+--- a/irc/channelmanager.go
++++ b/irc/channelmanager.go
+@@ -148,6 +148,10 @@ func (cm *ChannelManager) Join(client *Client, name string, key string, isSajoin
+ 
+ 	err, forward = channel.Join(client, key, isSajoin || newChannel, rb)
+ 
++	if err == nil && newChannel && !isSajoin && rb != nil {
++		csAutoRegister(server, client, channel, rb)
++	}
++
+ 	cm.maybeCleanup(channel, true)
+ 
+ 	return
+diff --git a/irc/channelreg.go b/irc/channelreg.go
+index 3e61e460..5cbf2f97 100644
+--- a/irc/channelreg.go
++++ b/irc/channelreg.go
+@@ -22,6 +22,7 @@ const (
+ 	IncludeModes
+ 	IncludeLists
+ 	IncludeSettings
++	IncludeActivity
+ )
+ 
+ // this is an OR of all possible flags
+@@ -65,6 +66,9 @@ type RegisteredChannel struct {
+ 	Settings ChannelSettings
+ 	// Metadata set using the METADATA command
+ 	Metadata map[string]string
++	// LastActivity is the approximate time of the last JOIN, PRIVMSG or NOTICE,
++	// for channels.registration.expire-after (zero if not tracked yet)
++	LastActivity time.Time
+ }
+ 
+ func (r *RegisteredChannel) Serialize() ([]byte, error) {
+diff --git a/irc/chanserv.go b/irc/chanserv.go
+index 786abc43..cc28fbea 100644
+--- a/irc/chanserv.go
++++ b/irc/chanserv.go
+@@ -189,6 +189,12 @@ QUIT) are stored in your channel's history. Your options are:
+ 1. 'all'         [store all events, the default]
+ 2. 'no-joins'    [don't store JOIN/PART/QUIT]
+ 3. 'none'        [don't store any events, including TOPIC/KICK]`,
++				`$bEXPIRY$b
++'expiry' controls whether the channel is unregistered automatically after a
++period without activity, if the server is configured to do so. Only server
++operators can change it. Your options are:
++1. 'on'   [expire the channel when it is unused, the default]
++2. 'off'  [never expire the channel]`,
+ 			},
+ 			enabled:   chanregEnabled,
+ 			minParams: 3,
+@@ -433,16 +439,25 @@ func csRegisterHandler(service *ircService, server *Server, client *Client, comm
+ 		return
+ 	}
+ 
+-	account := client.Account()
+ 	if !checkChanLimit(service, client, rb) {
+ 		return
+ 	}
+ 
++	if err := csRegisterChannel(service, server, client, channelInfo, rb); err != nil {
++		service.Notice(rb, err.Error())
++	}
++}
++
++// csRegisterChannel registers a channel to client's account and gives them
++// founder status, for /CS REGISTER and channels.registration.auto-register.
++func csRegisterChannel(service *ircService, server *Server, client *Client, channelInfo *Channel, rb *ResponseBuffer) error {
++	account := client.Account()
++	channelName := channelInfo.Name()
++
+ 	// this provides the synchronization that allows exactly one registration of the channel:
+ 	err := server.channels.SetRegistered(channelName, account)
+ 	if err != nil {
+-		service.Notice(rb, err.Error())
+-		return
++		return err
+ 	}
+ 
+ 	service.Notice(rb, fmt.Sprintf(client.t("Channel %s successfully registered"), channelName))
+@@ -461,19 +476,23 @@ func csRegisterHandler(service *ircService, server *Server, client *Client, comm
+ 	if applied {
+ 		announceCmodeChanges(channelInfo, modes.ModeChanges{change}, service.prefix, "*", "", false, rb)
+ 	}
++	return nil
+ }
+ 
+ // check whether a client has already registered too many channels
+ func checkChanLimit(service *ircService, client *Client, rb *ResponseBuffer) (ok bool) {
+-	account := client.Account()
+-	channelsAlreadyRegistered := client.server.channels.ChannelsForAccount(account, true)
+-	ok = len(channelsAlreadyRegistered) < client.server.Config().Channels.Registration.MaxChannelsPerAccount || client.HasRoleCapabs("chanreg")
++	ok = !chanLimitReached(client)
+ 	if !ok {
+ 		service.Notice(rb, client.t("You have already registered the maximum number of channels; try dropping some with /CS UNREGISTER"))
+ 	}
+ 	return
+ }
+ 
++func chanLimitReached(client *Client) bool {
++	channelsAlreadyRegistered := client.server.channels.ChannelsForAccount(client.Account(), true)
++	return len(channelsAlreadyRegistered) >= client.server.Config().Channels.Registration.MaxChannelsPerAccount && !client.HasRoleCapabs("chanreg")
++}
++
+ func csPrivsCheck(service *ircService, channel RegisteredChannel, client *Client, rb *ResponseBuffer) (success bool) {
+ 	founder := channel.Founder
+ 	if founder == "" {
+@@ -804,7 +823,7 @@ func csInfoHandler(service *ircService, server *Server, client *Client, command
+ 	service.Notice(rb, fmt.Sprintf(client.t("Registered at: %s"), chinfo.RegisteredAt.Format(time.RFC1123)))
+ }
+ 
+-func displayChannelSetting(service *ircService, settingName string, settings ChannelSettings, client *Client, rb *ResponseBuffer) {
++func displayChannelSetting(service *ircService, settingName string, channel *Channel, settings ChannelSettings, client *Client, rb *ResponseBuffer) {
+ 	config := client.server.Config()
+ 
+ 	switch strings.ToLower(settingName) {
+@@ -821,6 +840,20 @@ func displayChannelSetting(service *ircService, settingName string, settings Cha
+ 		service.Notice(rb, fmt.Sprintf(client.t("Given current server settings, the channel history query cutoff setting is: %s"), historyCutoffToString(effectiveValue)))
+ 	case "store-events":
+ 		service.Notice(rb, fmt.Sprintf(client.t("The stored channel setting for store-events is: %s"), storeEventsToString(settings.StoreEvents)))
++	case "expiry":
++		expireAfter := time.Duration(config.Channels.Registration.ExpireAfter)
++		if settings.NoExpire {
++			service.Notice(rb, client.t("The stored channel setting for expiry is: off (this channel never expires)"))
++		} else {
++			service.Notice(rb, client.t("The stored channel setting for expiry is: on"))
++		}
++		if expireAfter <= 0 {
++			service.Notice(rb, client.t("Channel expiration is disabled on this server"))
++		} else if !settings.NoExpire {
++			_, expiresAt := channelExpiry(expireAfter, false, channel.LastActivity(), time.Now().UTC())
++			service.Notice(rb, fmt.Sprintf(client.t("Channels are unregistered after %[1]s without activity; unless it is used, this one will be unregistered at %[2]s"),
++				formatChannelExpiry(expireAfter), expiresAt.Format(time.RFC1123)))
++		}
+ 	default:
+ 		service.Notice(rb, client.t("Invalid params"))
+ 	}
+@@ -838,7 +871,7 @@ func csGetHandler(service *ircService, server *Server, client *Client, command s
+ 		return
+ 	}
+ 
+-	displayChannelSetting(service, setting, channel.Settings(), client, rb)
++	displayChannelSetting(service, setting, channel, channel.Settings(), client, rb)
+ }
+ 
+ func csSetHandler(service *ircService, server *Server, client *Client, command string, params []string, rb *ResponseBuffer) {
+@@ -878,14 +911,31 @@ func csSetHandler(service *ircService, server *Server, client *Client, command s
+ 			break
+ 		}
+ 		channel.SetSettings(settings)
++	case "expiry":
++		if !client.HasRoleCapabs("chanreg") {
++			err = errInsufficientPrivs
++			break
++		}
++		var expire bool
++		if strings.ToLower(value) == "default" {
++			expire = true
++		} else if expire, err = utils.StringToBool(value); err != nil {
++			err = errInvalidParams
++			break
++		}
++		settings.NoExpire = !expire
++		channel.SetSettings(settings)
++		server.logger.Info("services", fmt.Sprintf("Client %s set expiry of channel %s to %t", client.Nick(), channel.Name(), expire))
+ 	}
+ 
+ 	switch err {
+ 	case nil:
+ 		service.Notice(rb, client.t("Successfully changed the channel settings"))
+-		displayChannelSetting(service, setting, settings, client, rb)
++		displayChannelSetting(service, setting, channel, settings, client, rb)
+ 	case errInvalidParams:
+ 		service.Notice(rb, client.t("Invalid parameters"))
++	case errInsufficientPrivs:
++		service.Notice(rb, client.t("Insufficient privileges"))
+ 	default:
+ 		server.logger.Error("internal", "CS SET error:", err.Error())
+ 		service.Notice(rb, client.t("An error occurred"))
+diff --git a/irc/config.go b/irc/config.go
+index c667108e..c41ce939 100644
+--- a/irc/config.go
++++ b/irc/config.go
+@@ -692,6 +692,10 @@ type Config struct {
+ 			Enabled               bool
+ 			OperatorOnly          bool `yaml:"operator-only"`
+ 			MaxChannelsPerAccount int  `yaml:"max-channels-per-account"`
++			// register a new channel to the account of the client that created it:
++			AutoRegister bool `yaml:"auto-register"`
++			// unregister channels that have had no activity for this long (0 to disable):
++			ExpireAfter custime.Duration `yaml:"expire-after"`
+ 		}
+ 		ListDelay        time.Duration    `yaml:"list-delay"`
+ 		InviteExpiration custime.Duration `yaml:"invite-expiration"`
+@@ -1735,6 +1739,9 @@ func LoadConfig(filename string) (config *Config, err error) {
+ 	if config.Channels.Registration.MaxChannelsPerAccount == 0 {
+ 		config.Channels.Registration.MaxChannelsPerAccount = 15
+ 	}
++	if config.Channels.Registration.ExpireAfter < 0 {
++		return nil, errors.New("channels.registration.expire-after must not be negative")
++	}
+ 
+ 	config.Server.Compatibility.forceTrailing = utils.BoolDefaultTrue(config.Server.Compatibility.ForceTrailing)
+ 	config.Server.Compatibility.allowTruncation = utils.BoolDefaultTrue(config.Server.Compatibility.AllowTruncation)
+diff --git a/irc/handlers.go b/irc/handlers.go
+index d903879a..284deeb1 100644
+--- a/irc/handlers.go
++++ b/irc/handlers.go
+@@ -129,6 +129,7 @@ func sendSuccessfulAccountAuth(service *ircService, client *Client, rb *Response
+ 			rb.Add(nil, details.nickMask, "ACCOUNT", details.accountName)
+ 		}
+ 		client.server.sendLoginSnomask(details.nickMask, details.accountName)
++		client.server.warnOfChannelExpiry(client, rb)
+ 	}
+ 
+ 	// #1479: for Tor clients, replace the hostname with the always-on cloak here
+diff --git a/irc/server.go b/irc/server.go
+index c119d313..1953a57c 100644
+--- a/irc/server.go
++++ b/irc/server.go
+@@ -151,6 +151,7 @@ func NewServer(config *Config, logger *logger.Manager) (*Server, error) {
+ 
+ 	time.AfterFunc(alwaysOnMaintenanceInterval, server.periodicAlwaysOnMaintenance)
+ 	time.AfterFunc(pushMaintenanceInterval, server.periodicPushMaintenance)
++	time.AfterFunc(channelActivityInterval(time.Duration(config.Channels.Registration.ExpireAfter)), server.periodicChannelExpiry)
+ 
+ 	return server, nil
+ }
+@@ -538,6 +539,7 @@ func (server *Server) playRegistrationBurst(session *Session) {
+ 	}
+ 	server.Lusers(c, rb)
+ 	server.MOTD(c, rb)
++	server.warnOfChannelExpiry(c, rb)
+ 	rb.Send(true)
+ 
+ 	modestring := c.ModeString()
+diff --git a/traditional.yaml b/traditional.yaml
+index 8b9c396d..8ec4ca4d 100644
+--- a/traditional.yaml
++++ b/traditional.yaml
+@@ -665,6 +665,17 @@ channels:
+         # how many channels can each account register?
+         max-channels-per-account: 15
+ 
++        # automatically register new channels to the account of the user who
++        # created them (by joining them)? this follows the restrictions above,
++        # e.g., when `operator-only` is enabled, only operators' new channels are
++        # registered
++        auto-register: false
++
++        # unregister channels that have had no activity (JOIN, PRIVMSG, or NOTICE)
++        # for this long; founders are warned a week in advance. operators can
++        # exempt a channel with /CS SET #channel EXPIRY OFF. (0 to disable)
++        expire-after: 0
++
+     # as a crude countermeasure against spambots, anonymous connections younger
+     # than this value will get an empty response to /LIST (a time period of 0 disables)
+     list-delay: 0s
+-- 
+2.56.0
+

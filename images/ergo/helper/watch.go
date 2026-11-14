@@ -14,7 +14,11 @@ import (
 // watcher is `boson-ergo watch-settings`: it keeps Ergo in line with the
 // auth service at runtime.
 //
-//   - channel_creation (every settingsEvery): re-render + rehash on change
+//   - network settings (every settingsEvery: channel_creation,
+//     channel_auto_register, channel_expiry_days): re-render + rehash on change
+//   - removed accounts (every settingsEvery, needs ERGO_API_TOKEN and auth's
+//     /internal/v1/irc/accounts/removed): erase deleted users' Ergo accounts,
+//     which unregisters the channels they founded
 //   - roles (every tick, ETag): re-render the role oper classes + rehash
 //   - IRC grants (every tick, ETag, needs ERGO_API_TOKEN and auth's
 //     /internal/v1/irc/grants): push each changed user's oper class and
@@ -32,8 +36,12 @@ type watcher struct {
 	logf          func(string, ...any)
 	settingsEvery time.Duration
 
-	policy           channelPolicy
+	settingsKnown    bool
+	netSettings      netSettings
 	lastSettings     time.Time
+	removed          *roles.Client
+	removedLogged    bool
+	removedState     removedState
 	rolesCache       rolesCache
 	grants           grantsSnapshot
 	grantsSupported  bool
@@ -56,8 +64,12 @@ func newWatcher(get func(string) string, tmplPath, dir string, settingsEvery tim
 	if tok := get("ERGO_API_TOKEN"); tok != "" {
 		w.ergo = ergoapi.New(strEnv(get, "ERGO_API_URL", defaultErgoAPIURL), tok)
 	}
-	if p, ok := loadCachedPolicy(dir); ok {
-		w.policy = p
+	if st, ok := loadCachedSettings(dir); ok {
+		w.netSettings, w.settingsKnown = st, true
+	}
+	if w.ergo != nil {
+		w.removed = newRolesClient(get)
+		w.removedState = loadRemovedState(dir)
 	}
 	return w
 }
@@ -78,19 +90,22 @@ func (w *watcher) run(ctx context.Context, interval time.Duration) {
 func (w *watcher) tick(ctx context.Context) {
 	if w.lastSettings.IsZero() || time.Since(w.lastSettings) >= w.settingsEvery {
 		w.lastSettings = time.Now()
-		if p, err := w.settings.fetch(ctx); err != nil {
-			if w.policy != "" {
-				w.logf("channel_creation: %v (keeping %q)", err, w.policy)
+		if st, err := w.settings.fetch(ctx); err != nil {
+			if w.settingsKnown {
+				w.logf("network settings: %v (keeping %s)", err, w.netSettings)
 			}
 		} else {
-			if p != w.policy && w.policy != "" {
-				w.logf("channel_creation is now %q", p)
+			if w.settingsKnown && !st.equal(w.netSettings) {
+				w.logf("network settings are now %s", st)
 			}
-			w.policy = p
-			saveCachedPolicy(w.dir, p)
+			w.netSettings, w.settingsKnown = st, true
+			saveCachedSettings(w.dir, st)
+		}
+		if w.removed != nil {
+			w.syncRemoved(ctx)
 		}
 	}
-	if w.policy == "" {
+	if !w.settingsKnown {
 		return // nothing known yet; render already used the env fallback
 	}
 
@@ -118,7 +133,7 @@ func (w *watcher) tick(ctx context.Context) {
 		w.logf("roles: %v", err)
 		return
 	}
-	changed, err := render(w.get, w.tmplPath, w.dir, w.policy, classes)
+	changed, err := render(w.get, w.tmplPath, w.dir, w.netSettings, classes)
 	if err != nil {
 		w.logf("re-render: %v", err)
 		return

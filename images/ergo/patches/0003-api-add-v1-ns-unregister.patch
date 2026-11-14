@@ -1,0 +1,103 @@
+From 4d5b53e8124eb4585bc8c839102ed6c4e46e9ab6 Mon Sep 17 00:00:00 2001
+From: James Trotter <james@jamesat.dev>
+Date: Sat, 14 Nov 2026 07:58:04 -0500
+Subject: [PATCH 3/3] api: add /v1/ns/unregister
+
+Unregisters (or, with "erase", erases) an account with the semantics of
+NS UNREGISTER / NS ERASE: its clients are disconnected and the channels it
+founded are unregistered. Lets an external account system drop deleted
+accounts.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ docs/API.md | 13 +++++++++++++
+ irc/api.go  | 42 ++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 55 insertions(+)
+
+diff --git a/docs/API.md b/docs/API.md
+index c52602eb..71adb5bd 100644
+--- a/docs/API.md
++++ b/docs/API.md
+@@ -201,6 +201,19 @@ The response is a JSON object with fields:
+ 
+ Note: this endpoint was previously named `/v1/saregister`. The old name is still accepted for backwards compatibility.
+ 
++`/v1/ns/unregister`
++-------------------
++
++This endpoint unregisters an account, with the same semantics as `NS UNREGISTER` (or `NS ERASE`): the account's clients are disconnected and the channels it founded are unregistered. The request is a JSON object with fields:
++
++* `accountName`: string, name of the account
++* `erase`: boolean, optional: also delete the record that keeps an unregistered account's name reserved, allowing it to be registered again (like `NS ERASE`)
++
++The response is a JSON object with fields:
++
++* `success`: whether the account was unregistered
++* `errorCode`: string, optional, machine-readable description of the error. Possible values include: `ACCOUNT_DOES_NOT_EXIST`, `UNKNOWN_ERROR`.
++
+ `/v1/rehash`
+ ------------
+ 
+diff --git a/irc/api.go b/irc/api.go
+index 5e5b85f2..afded580 100644
+--- a/irc/api.go
++++ b/irc/api.go
+@@ -43,6 +43,7 @@ func newAPIHandler(server *Server) http.Handler {
+ 	api.mux.HandleFunc("POST /v1/ns/saregister", api.handleSaregister)
+ 	api.mux.HandleFunc("POST /v1/ns/saget", api.handleNsSaget)
+ 	api.mux.HandleFunc("POST /v1/ns/saset", api.handleNsSaset)
++	api.mux.HandleFunc("POST /v1/ns/unregister", api.handleNsUnregister)
+ 
+ 	// account-bound oper status and vhosts from an external system:
+ 	api.mux.HandleFunc("POST /v1/account_grants", api.handleAccountGrants)
+@@ -254,6 +255,47 @@ func (a *ergoAPI) handleNsPasswd(w http.ResponseWriter, r *http.Request) {
+ 	a.writeJSONResponse(response, w, r)
+ }
+ 
++type apiNsUnregisterRequest struct {
++	AccountName string `json:"accountName"`
++	Erase       bool   `json:"erase"`
++}
++
++// handleNsUnregister unregisters (or erases) an account, with the same
++// semantics as NS UNREGISTER / NS ERASE: the account's clients are
++// disconnected and its channels are unregistered.
++func (a *ergoAPI) handleNsUnregister(w http.ResponseWriter, r *http.Request) {
++	var request apiNsUnregisterRequest
++	if err := a.decodeJSONRequest(&request, w, r); err != nil {
++		return
++	}
++
++	var response apiGenericResponse
++	_, err := a.server.accounts.LoadAccount(request.AccountName)
++	if err == nil || (err == errAccountDoesNotExist && request.Erase) {
++		// ERASE also removes the records of an already unregistered account
++		if unregisterErr := a.server.accounts.Unregister(request.AccountName, request.Erase); unregisterErr != nil && err == nil {
++			err = unregisterErr
++		}
++	}
++	switch err {
++	case nil:
++		response.Success = true
++		verb := "unregistered"
++		if request.Erase {
++			verb = "erased"
++		}
++		a.server.logger.Info("api", verb, "account", request.AccountName)
++		a.server.snomasks.Send(sno.LocalAccounts, fmt.Sprintf("API %s account %s", verb, request.AccountName))
++	case errAccountDoesNotExist:
++		response.ErrorCode = "ACCOUNT_DOES_NOT_EXIST"
++	default:
++		a.server.logger.Error("api", "could not unregister account:", err.Error())
++		response.ErrorCode = "UNKNOWN_ERROR"
++	}
++
++	a.writeJSONResponse(response, w, r)
++}
++
+ // convert to/from the "default"/"off"/"on" vocabulary used by the
+ // /v1/ns/saget and /v1/ns/saset API endpoints
+ func apiPersistentStatusToString(status PersistentStatus) string {
+-- 
+2.56.0
+
