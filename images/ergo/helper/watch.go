@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/boson-chat/stack/images/ergo/helper/internal/ergoapi"
@@ -48,6 +49,11 @@ type watcher struct {
 	grantsSupported  bool
 	grantsLogged     bool
 	serviceAccountOK bool
+
+	// cfg: the config file overlay behind get (nil = env only). reloads:
+	// the config watcher asks the run loop to re-render now and waits.
+	cfg     *overlay
+	reloads chan chan error
 }
 
 func newWatcher(get func(string) string, tmplPath, dir string, settingsEvery time.Duration, rehash func() error,
@@ -55,7 +61,7 @@ func newWatcher(get func(string) string, tmplPath, dir string, settingsEvery tim
 	w := &watcher{
 		get: get, tmplPath: tmplPath, dir: dir,
 		settings: newSettingsClient(get), rehash: rehash, logf: logf, settingsEvery: settingsEvery,
-		grantsSupported: true,
+		grantsSupported: true, reloads: make(chan chan error),
 	}
 	if rolesEnabled(get) {
 		w.roles = newRolesClient(get)
@@ -82,10 +88,85 @@ func (w *watcher) run(ctx context.Context, interval time.Duration) {
 		select {
 		case <-ctx.Done():
 			return
+		case done := <-w.reloads:
+			done <- w.applyConfig()
 		case <-t.C:
+			w.tick(ctx)
 		}
-		w.tick(ctx)
+		if w.cfg != nil {
+			// The poll intervals can come from the config file.
+			w.settingsEvery = secondsFrom(w.get, "SETTINGS_POLL_SECONDS", 30)
+			if next := pollInterval(w.get); next != interval {
+				interval = next
+				t.Reset(interval)
+			}
+		}
 	}
+}
+
+// pollInterval: the watch-settings tick, ROLES_POLL_SECONDS (with roles on)
+// or SETTINGS_POLL_SECONDS, whichever is shorter.
+func pollInterval(get func(string) string) time.Duration {
+	settingsEvery := secondsFrom(get, "SETTINGS_POLL_SECONDS", 30)
+	interval := secondsFrom(get, "ROLES_POLL_SECONDS", 10)
+	if !rolesEnabled(get) || settingsEvery < interval {
+		interval = settingsEvery
+	}
+	return interval
+}
+
+// applyConfig re-renders ircd.yaml now (after a config file change) and
+// rehashes Ergo if it changed. Runs on the run loop. Before auth has
+// answered, the env fallback policy is used, as `render` did.
+func (w *watcher) applyConfig() error {
+	st := w.netSettings
+	if !w.settingsKnown {
+		st = fallbackSettings(w.get, func(string, ...any) {})
+	}
+	classes, err := classesFor(w.get, w.rolesCache)
+	if err != nil {
+		return err
+	}
+	changed, err := render(w.get, w.tmplPath, w.dir, st, classes)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	w.logf("config file changed ircd.yaml, rehashing ergo")
+	if err := w.rehash(); err != nil {
+		return fmt.Errorf("rehash: %w", err)
+	}
+	return nil
+}
+
+// loadConfigFile is the config watcher's loader: parse and validate the
+// file, then have the run loop render and rehash with it. On an error the
+// previous values stay.
+func (w *watcher) loadConfigFile(ctx context.Context, data []byte) ([]string, error) {
+	vals, err := parseStackConfig(data)
+	if err != nil {
+		return nil, err
+	}
+	prev := w.cfg.swap(vals)
+	done := make(chan error, 1)
+	select {
+	case w.reloads <- done:
+	case <-ctx.Done():
+		w.cfg.set(prev)
+		return nil, ctx.Err()
+	}
+	select {
+	case err = <-done:
+	case <-time.After(configApplyWaitTimeout):
+		err = errors.New("timed out applying the config")
+	}
+	if err != nil {
+		w.cfg.set(prev)
+		return nil, err
+	}
+	return w.cfg.restartRequired(), nil
 }
 
 func (w *watcher) tick(ctx context.Context) {

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -22,14 +23,16 @@ var defaultTemplate string
 var motdTemplate string
 
 type renderData struct {
-	NetworkName       string
-	IRCHost           string
-	AuthHost          string
-	AuthVerifyURL     string
-	OperName          string
-	OperPasswordHash  string
-	TLSCert, TLSKey   string
-	Plaintext         bool
+	NetworkName      string
+	IRCHost          string
+	AuthHost         string
+	AuthVerifyURL    string
+	OperName         string
+	OperPasswordHash string
+	TLSCert, TLSKey  string
+	Plaintext        bool
+	// Plaintext listener port (IRC_PLAINTEXT_LISTEN_PORT / irc.plaintext_port).
+	PlaintextPort     int
 	WebSocket         bool
 	WebSocketOrigins  []string
 	StackSubnet       string
@@ -103,6 +106,17 @@ func buildData(get func(string) string) (renderData, error) {
 		RequireSASLExempt: []string{"localhost"},
 		ServiceClass:      serviceClass,
 		ServicesListener:  strEnv(get, "IRC_SERVICES_LISTENER", ":6680"),
+	}
+	d.PlaintextPort = 6667
+	if v := strEnv(get, "IRC_PLAINTEXT_LISTEN_PORT", ""); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 65535 {
+			return d, fmt.Errorf("IRC_PLAINTEXT_LISTEN_PORT must be a port number, got %q", v)
+		}
+		d.PlaintextPort = n
+	}
+	if d.Plaintext && (d.PlaintextPort == 6697 || d.PlaintextPort == 8097 || strings.HasSuffix(d.ServicesListener, ":"+strconv.Itoa(d.PlaintextPort))) {
+		return d, fmt.Errorf("plaintext port %d is already used by another listener", d.PlaintextPort)
 	}
 	if strings.EqualFold(d.ServicesListener, "off") {
 		d.ServicesListener = ""

@@ -327,14 +327,17 @@ out = cs(frank, "INFO #frank-1")
 check("expiry: the busy #frank-1 is still registered", "Founder: frank" in out, out)
 
 # ---- guest access ------------------------------------------------------------
-def guest_attempt(nick):
+def guest_attempt(nick, addr=IRC):
     """A client without SASL: 'welcome' (001) or the refusal line."""
-    s = socket.create_connection(IRC, timeout=10); buf = b""
+    try: s = socket.create_connection(addr, timeout=10)
+    except OSError as e: return repr(e)
+    buf = b""
     s.sendall(f"NICK {nick}\r\nUSER {nick} 0 * :{nick}\r\n".encode())
     end = time.time() + 10
     try:
         while time.time() < end:
-            d = s.recv(65536)
+            try: d = s.recv(65536)
+            except OSError as e: return repr(e)
             if not d: return "closed"
             buf += d
             for l in buf.decode(errors="replace").split("\r\n"):
@@ -386,6 +389,95 @@ else:
     set_guest_access(True)
     got = eventually(lambda: guest_attempt("guest4") == "welcome", 20, 2)
     check("guest_access true again: guests are welcomed", got)
+
+# ---- stack config file (BOSON_CONFIG) ---------------------------------------
+# run.sh starts Ergo with irc.plaintext: true in the file and IRC_PLAINTEXT=false
+# in the env, so every check above already ran on a listener only the file
+# turned on. Here the file is rewritten (atomically, like the admin panel)
+# and boson-ergo must re-render ircd.yaml and rehash the real Ergo.
+CONFIG = os.path.join(os.environ["TEST_CONFIG_DIR"], "boson.yaml")
+STATUS = f"http://127.0.0.1:{os.environ.get('TEST_STATUS_PORT', '28098')}/internal/config/status"
+IRC_ALT = ("127.0.0.1", int(os.environ.get("TEST_IRC_ALT_PORT", "26668")))
+def write_config(text):
+    tmp = CONFIG + ".tmp"
+    with open(tmp, "w") as f: f.write(text)
+    os.chmod(tmp, 0o644); os.replace(tmp, CONFIG)
+def config_status():
+    try: return http("GET", STATUS)[1] or {}
+    except OSError: return {}
+def applied_after(t0):
+    """Status once the file written after t0 was applied (or failed)."""
+    def done():
+        st = config_status()
+        la, mt = parse_ts(st.get("loaded_at")), parse_ts(st.get("file_mtime"))
+        if st.get("ok") is False:  # a failure counts only for a file written after t0
+            return st if mt and mt >= t0 else None
+        return st if la and la >= t0 else None
+    # fsnotify, or the 10 s mtime poll (Docker Desktop bind mounts)
+    return eventually(done, 25, 0.5) or config_status()
+def utcnow(): return time.time()
+def parse_ts(v):
+    """RFC 3339 (Go's, nanoseconds trimmed) to epoch seconds; None if unset."""
+    if not v: return None
+    import datetime
+    base, _, frac = v.rstrip("Z").partition(".")
+    t = datetime.datetime.strptime(base, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc).timestamp()
+    return t + (float("0." + frac) if frac else 0)
+
+st = config_status()
+check("config status: served by boson-ergo, file loaded", st.get("ok") is True and st.get("path") == "/config/boson.yaml"
+      and st.get("loaded_at") and st.get("file_mtime") and st.get("restart_required") == [], st)
+check("config file beats env: plaintext listener on (IRC_PLAINTEXT=false)", guest_attempt("cfg0") == "welcome")
+
+# Listener change: plaintext moves to 6668, rehashed without a restart.
+t0 = utcnow()
+write_config("version: 1\nnetwork: {name: Boson}\nirc:\n  plaintext: true\n  plaintext_port: 6668\n")
+st = applied_after(t0)
+check("config reload: plaintext_port 6668 applied", st.get("ok") is True and st.get("restart_required") == [], st)
+got = eventually(lambda: guest_attempt("cfg1", IRC_ALT) == "welcome", 10, 1)
+check("config reload: Ergo listens on the new plaintext port (rehash)", got)
+check("config reload: the old plaintext port is closed", guest_attempt("cfg2") != "welcome")
+check("config reload: connected clients stay", (lambda: (frank.send("PING :cfgcheck"), any("cfgcheck" in l for l in frank.drain(2)))[1])())
+
+# Back to 6667 (the rest of the run and the healthcheck use it).
+t0 = utcnow()
+write_config("version: 1\nnetwork: {name: Boson}\nirc:\n  plaintext: true\n")
+st = applied_after(t0)
+got = eventually(lambda: guest_attempt("cfg3") == "welcome", 10, 1)
+check("config reload: plaintext back on 6667", st.get("ok") is True and got, st)
+
+# require_sasl_exempt: with guests off, exempting every address lets a guest in.
+if GUESTS:
+    set_guest_access(False)
+    got = eventually(lambda: (lambda r: r if r != "welcome" else None)(guest_attempt("cfg4")), 20, 2)
+    check("exempt list: guest refused while guests are off", got and "ACCOUNT_REQUIRED" in got, got)
+    t0 = utcnow()
+    write_config("version: 1\nirc:\n  plaintext: true\n  require_sasl_exempt: [0.0.0.0/0, \"::/0\"]\n")
+    st = applied_after(t0)
+    got = eventually(lambda: guest_attempt("cfg5") == "welcome", 10, 1)
+    check("exempt list from the config file: guest let in (rehash)", st.get("ok") is True and got, st)
+    t0 = utcnow()
+    write_config("version: 1\nirc:\n  plaintext: true\n")
+    applied_after(t0)
+    got = eventually(lambda: guest_attempt("cfg6") != "welcome", 10, 1)
+    check("exempt list removed: back to IRC_REQUIRE_SASL_EXEMPT's default, guest refused", got)
+    set_guest_access(True)
+    eventually(lambda: guest_attempt("cfg7") == "welcome", 20, 2)
+
+# Invalid file: last good config stays, the error has a line and column.
+write_config("version: 1\nirc:\n  plaintext: false\n  require_sasl_exempt: [nope]\n")
+st = eventually(lambda: (lambda s: s if s.get("ok") is False else None)(config_status()), 25, 0.5) or {}
+check("invalid config file: ok=false with line/column", st.get("error_line") == 4 and st.get("error_column") and "nope" in st.get("error", ""), st)
+check("invalid config file: Ergo keeps the last good config (plaintext still on)", guest_attempt("cfg8") == "welcome")
+
+# Restart-only key: reported, not rendered.
+t0 = utcnow()
+write_config("version: 1\nirc:\n  plaintext: true\n  persistent_history: false\n")
+st = applied_after(t0)
+check("persistent_history change: restart_required", st.get("ok") is True and st.get("restart_required") == ["irc.persistent_history"], st)
+r = compose("exec", "-T", "ergo", "grep", "-c", "database-path", "/ircd/ircd.yaml")
+check("persistent_history change: ircd.yaml keeps the running value", r.returncode == 0, r.stdout + r.stderr)
+write_config("version: 1\nnetwork: {name: Boson}\nirc:\n  plaintext: true\n")
 
 # RoleServ's account can't be taken over through auth
 rs = Client("RoleServ", "anything", nick="RoleServ", register=False)

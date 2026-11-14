@@ -9,12 +9,17 @@ mode=${1:-fake}
 case $mode in fake|real) ;; *) echo "usage: $0 fake|real" >&2; exit 2 ;; esac
 
 tmp=$(mktemp -d)
-export TEST_CERTS="$tmp/certs" INTERNAL_API_TOKEN=$(openssl rand -hex 32) ERGO_API_TOKEN=$(openssl rand -hex 32) \
+export TEST_CERTS="$tmp/certs" TEST_CONFIG_DIR="$tmp/config" INTERNAL_API_TOKEN=$(openssl rand -hex 32) ERGO_API_TOKEN=$(openssl rand -hex 32) \
   ACTING_TOKEN=$(openssl rand -hex 32) AUTH_KEK=$(openssl rand -base64 32)
 mkdir -p "$TEST_CERTS"
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1 -subj /CN=irc.test \
   -keyout "$TEST_CERTS/privkey.pem" -out "$TEST_CERTS/fullchain.pem" 2>/dev/null
 chmod 644 "$TEST_CERTS"/*.pem
+# The stack config file (smoke-roles.py rewrites it). Plaintext is on here
+# and off in the env: Ergo only listens on 6667 if the file is read.
+mkdir -p "$TEST_CONFIG_DIR" && chmod 755 "$TEST_CONFIG_DIR"
+printf 'version: 1\nnetwork: {name: Boson}\nirc:\n  plaintext: true\n' > "$TEST_CONFIG_DIR/boson.yaml"
+chmod 644 "$TEST_CONFIG_DIR/boson.yaml"
 [ "$mode" = real ] && AUTH_SRC=$(cd "${AUTH_SRC:?set AUTH_SRC to a boson-chat/auth checkout}" && pwd) && export AUTH_SRC
 
 export COMPOSE="docker compose -f compose.yaml -f compose.$mode.yaml"
