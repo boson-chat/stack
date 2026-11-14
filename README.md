@@ -10,10 +10,11 @@ voice, and automatic TLS, wired together for your own domain.
 | `ergo` | `irc` | IRC server ([Ergo](https://ergo.chat) 2.19) with built-in NickServ/ChanServ, history, always-on clients. Logins are checked against the auth service | 6697 (TLS), 6667 (optional), `wss://IRC_HOST/webirc` |
 | `auth` | `auth` | Accounts ([boson-chat/auth](https://github.com/boson-chat/auth)): sign-up, login, sessions, password reset, signed tokens for voice and IRC | via Traefik at `https://AUTH_HOST` |
 | `postgres` | `auth` | Database for `auth` (Postgres 18) | internal |
-| `quicvoiced` | `voice` | Voice rooms over QUIC ([boson-chat/quicvoice](https://github.com/boson-chat/quicvoice)); accepts tokens from `auth` | 7700/udp |
+| `quicvoiced` | `voice` | Voice rooms over QUIC ([boson-chat/quicvoice](https://github.com/boson-chat/quicvoice)); accepts tokens from `auth`. Channels from `VOICE_ROOMS`; room list API at `https://VOICE_HOST/v1/rooms` | 7700/udp, via Traefik at `https://VOICE_HOST` |
 | `victoriametrics` | `metrics` | Scrapes `/metrics` of traefik, auth, quicvoiced (and admin), 90-day retention. Internal only, at `http://victoriametrics:8428` | internal |
 | `admin` | `admin` | **Slot for the upcoming admin panel** (not released yet; off by default) | via Traefik at `https://ADMIN_HOST` |
 | `webroot` | `webroot` | Optional: serves a host directory at `http://WEBROOT_HOST/.well-known/acme-challenge/` for a certbot outside the stack | via Traefik |
+| `wellknown` | `wellknown` | Optional: serves `https://DOMAIN/.well-known/boson.json` (client discovery: IRC, auth and voice endpoints), generated from `.env`. Only when `DOMAIN` points at this server | via Traefik |
 
 Planned: SSO (OIDC/SAML) in the auth service, video, the admin panel, and the
 desktop client configured from your domain.
@@ -73,7 +74,9 @@ There is one account per person, held by the auth service:
    access token); quicvoiced verifies it against
    `http://auth:8080/.well-known/jwks.json` (issuer `https://AUTH_HOST`,
    audience `quicvoice`). Legacy HS256 tokens signed with `VOICE_JWT_SECRET`
-   still work while it is set (`docker compose exec quicvoiced ./quicvoiced token --user alice --room lobby`).
+   still work while it is set (`docker compose exec quicvoiced ./quicvoiced token --user alice --room general`).
+   The same token lists the voice channels and who is in them:
+   `GET https://VOICE_HOST/v1/rooms` (see [docs/voice.md](docs/voice.md)).
 
 Ergo keeps channel registrations, always-on state, history and its own
 per-account settings; passwords live only in the auth service. Ergo's IRC
@@ -81,12 +84,28 @@ operator account is separate (`OPER_NAME` / `OPER_PASSWORD_HASH`, `/OPER`).
 
 The auth internal listener (`:8081`: `/internal/v1/*`, `/metrics`) is only
 reachable inside the compose network; Traefik routes only the public
-listener (`:8080`).
+listener (`:8080`). Likewise quicvoiced: Traefik routes `https://VOICE_HOST`
+to its public API (`:8090`), never to `:8080` (`/metrics`).
+
+## Voice channels and discovery
+
+- `VOICE_ROOMS` (default `general:General`) lists the voice channels as
+  `id:Display Name`, comma-separated, in display order.
+  `VOICE_ROOMS_STRICT=true` (default) refuses any other room.
+- `https://VOICE_HOST/v1/rooms` returns them with their live participants
+  (voice token required).
+- The boson client finds a server from its domain via
+  `https://DOMAIN/.well-known/boson.json`. If `DOMAIN` points at this
+  server, the `wellknown` profile serves it (add `DOMAIN` to `CERT_HOSTS`);
+  if your website lives elsewhere, publish the same file there.
+
+Details, the JSON formats and examples: [docs/voice.md](docs/voice.md).
 
 ## Profiles
 
 `COMPOSE_PROFILES` in `.env` picks what runs: `irc`, `voice`, `auth`,
-`metrics`, `admin`, `webroot` (traefik and certsync always run).
+`api`, `metrics`, `admin`, `webroot`, `wellknown` (traefik and certsync
+always run).
 `scripts/setup.sh` defaults to `irc,voice,auth`. Examples:
 
 - `voice,auth,metrics` runs accounts, voice and metrics next to an IRC
@@ -148,6 +167,8 @@ inside the containers at every start, so changing `.env` and running
   automatically unless `COMPOSE_FILE` is set, then list it there).
 - `webroot` profile: serves `WEBROOT_DIR` for a host certbot in webroot
   mode (`WEBROOT_HOST`); see `docs/deploy-boson-chat.md`.
+- `wellknown` profile: serves `https://DOMAIN/.well-known/boson.json`; see
+  `docs/voice.md`.
 
 ### Running an unreleased auth service
 
