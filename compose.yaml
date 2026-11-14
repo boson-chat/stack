@@ -438,7 +438,7 @@ services:
       # status listener (compose network only, never published).
       BOSON_CONFIG: /config/boson.yaml
       CONFIG_STATUS_TARGETS: >-
-        ${ADMIN_CONFIG_STATUS_TARGETS:-auth=http://auth:8081/internal/config/status,quicvoiced=http://quicvoiced:8080/internal/config/status,directory=http://directory:8081/internal/config/status,ergo=http://ergo:8098/internal/config/status}
+        ${ADMIN_CONFIG_STATUS_TARGETS:-auth=http://auth:8081/internal/config/status,quicvoiced=http://quicvoiced:8080/internal/config/status,directory=http://directory:8081/internal/config/status,ergo=http://ergo:8098/internal/config/status,api=http://api:3001/internal/config/status}
       PUBLIC_URL: https://${ADMIN_HOST:-admin.${DOMAIN:-localhost}}
       # Seals the admin's auth tokens in the session cookie (32 random bytes, base64).
       SESSION_KEY: ${ADMIN_SESSION_KEY:-}
@@ -469,6 +469,10 @@ services:
       # Users' boson profiles (avatar, handle) from the api
       # profile. Set ADMIN_BOSON_API_URL= (empty) without it.
       BOSON_API_URL: ${ADMIN_BOSON_API_URL-http://api:3000}
+      # The api's internal listener: the Nick claims page (status, test
+      # connection) and its config status. Empty without the api profile.
+      BOSON_API_INTERNAL_URL: ${ADMIN_BOSON_API_INTERNAL_URL-http://api:3001}
+      BOSON_API_INTERNAL_TOKEN: ${API_INTERNAL_TOKEN:-}
       # The directory this network is listed in (Directory page; network key
       # + DNS TXT proof). docs/directory.md.
       DIRECTORY_API_URL: ${ADMIN_DIRECTORY_API_URL-https://directory.boson.chat}
@@ -533,8 +537,9 @@ services:
   # ---- api (optional): the boson backend API --------------------------------
   # Profiles, nick claims and avatars for the boson client
   # (github.com/boson-chat/boson backend/). Uses the stack Postgres and the
-  # auth service. POP3_* (nick claims) and R2_* (avatars) are optional: empty
-  # disables that feature. See docs/api.md.
+  # auth service. Nick claims (docs/nick-claim.md) are off unless
+  # config/boson.yaml nick_claim.enabled (or NICK_CLAIM_ENABLED) says so;
+  # R2_* (avatars) is optional: empty disables it. See docs/api.md.
   api:
     <<: *restart
     profiles: [api]
@@ -553,13 +558,27 @@ services:
       DBUSERNAME: ${API_DB_USER:-api}
       DBPASSWORD: ${API_DB_PASSWORD:-}
       DBSSLMODE: disable
+      # config/boson.yaml (nick_claim:) wins over the env defaults below.
+      BOSON_CONFIG: /config/boson.yaml
+      # Internal listener (compose network only, never routed by Traefik):
+      # /internal/config/status and the admin panel's nick-claim endpoints
+      # (status, test connection). Calls need API_INTERNAL_TOKEN.
+      INTERNAL_PORT: "3001"
+      INTERNAL_TOKEN: ${API_INTERNAL_TOKEN:-}
+      # Nick claims (docs/nick-claim.md): DEFAULTS only, config/boson.yaml
+      # nick_claim.enabled / email_domain / rate_limit_per_hour / inbound.*
+      # win. Off unless one of them turns it on.
+      NICK_CLAIM_ENABLED: ${NICK_CLAIM_ENABLED:-false}
       NICK_CLAIM_EMAIL_DOMAIN: ${NICK_CLAIM_EMAIL_DOMAIN:-${DOMAIN:-}}
       NICK_CLAIM_RATE_LIMIT_PER_HOUR: ${NICK_CLAIM_RATE_LIMIT_PER_HOUR:-5}
+      # The inbound mailbox's password is a secret: it stays in .env.
+      NICK_CLAIM_POP3_PASSWORD: ${NICK_CLAIM_POP3_PASSWORD:-${POP3_PASSWORD:-}}
+      # Older env names, still read as defaults (nick_claim.inbound.* wins).
       PURELYMAIL_POP3_HOST: ${POP3_HOST:-}
       PURELYMAIL_POP3_PORT: ${POP3_PORT:-995}
       PURELYMAIL_POP3_USER: ${POP3_USER:-}
       PURELYMAIL_POP3_TLS: ${POP3_TLS:-true}
-      PURELYMAIL_POP3_PASSWORD: ${POP3_PASSWORD:-}
+      PURELYMAIL_POP3_PASSWORD: ${NICK_CLAIM_POP3_PASSWORD:-${POP3_PASSWORD:-}}
       CLOUDFLARE_R2_ACCESS_KEY: ${R2_ACCESS_KEY:-}
       CLOUDFLARE_R2_SECRET_KEY: ${R2_SECRET_KEY:-}
       CLOUDFLARE_R2_ENDPOINT: ${R2_ENDPOINT:-}
@@ -571,11 +590,15 @@ services:
       - traefik.http.routers.api.entrypoints=websecure
       - traefik.http.routers.api.tls=true
       - traefik.http.services.api.loadbalancer.server.port=3000
+    volumes:
+      - ./config:/config:ro
     # Note: API_HOST must be in CERT_HOSTS so Traefik gets its certificate.
     depends_on:
       postgres:
         condition: service_healthy
       api-migrate:
+        condition: service_completed_successfully
+      config-init:
         condition: service_completed_successfully
 
   # Applies the API's database migrations before it starts (exits when done).

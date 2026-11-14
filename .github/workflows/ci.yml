@@ -221,6 +221,34 @@ jobs:
           COMPOSE_PROFILES: auth,directory
         run: docker compose logs
 
+  nick-claim:
+    name: nick claims (api profile; off by default, hot reload, Mailpit POP3)
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_PROFILES: auth,api
+    steps:
+      - uses: actions/checkout@v4
+      - name: Local .env + the test mailbox's password (test/nickclaim/pop3-auth)
+        run: |
+          scripts/setup.sh --local
+          echo 'NICK_CLAIM_POP3_PASSWORD=smoke-pop3-password' >> .env
+      - name: Start traefik, certsync, postgres, auth, api, Mailpit (POP3)
+        run: |
+          docker compose up -d --wait --wait-timeout 300
+          docker compose -f compose.yaml -f test/nickclaim/compose.mailpit.yaml up -d --no-deps --wait mailpit
+      - name: Disabled by default (403 / status), enable in config/boson.yaml, worker polls Mailpit (skipped on an api without nick_claim)
+        run: |
+          python3 scripts/smoke-nick-claim.py | tee nick.out
+          if grep -q '^SKIP ' nick.out; then
+            echo "::notice::nick-claim smoke skipped: $(grep -m1 '^SKIP ' nick.out | cut -c6-) (runs once the backend release with nick_claim is the API_IMAGE default)"
+          fi
+          if grep -q '^NOTE ' nick.out; then
+            echo "::notice::$(grep -m1 '^NOTE ' nick.out | cut -c6-)"
+          fi
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs api api-migrate auth
+
   roles:
     name: network roles + channel lifecycle on a real Ergo (patched image + fake auth, RoleServ)
     runs-on: ubuntu-latest
@@ -238,7 +266,7 @@ jobs:
 
   publish:
     name: publish images to Harbor
-    needs: [helper, smoke, directory, roles, acme]
+    needs: [helper, smoke, directory, nick-claim, roles, acme]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:

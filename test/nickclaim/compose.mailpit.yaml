@@ -1,0 +1,24 @@
+# Mailpit for the nick-claim smoke test (scripts/smoke-nick-claim.py): a POP3
+# mailbox on the stack network (mailpit:1110, no TLS; login
+# reg@smoke.test / smoke-pop3-password from pop3-auth) that the api's worker
+# polls, and an SMTP sink on 127.0.0.1:1025 (host only) the test drops a
+# NickServ confirmation into. Test-only; never part of an install.
+#
+#   docker compose -f compose.yaml -f test/nickclaim/compose.mailpit.yaml up -d --no-deps --wait mailpit
+#
+# The smoke test points the api at it through config/boson.yaml
+# nick_claim.inbound; the password comes from NICK_CLAIM_POP3_PASSWORD (.env).
+services:
+  mailpit:
+    image: axllent/mailpit:v1.33.0
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+      MP_MAX_MESSAGES: "100"
+      MP_POP3_AUTH_FILE: /etc/mailpit/pop3-auth
+    volumes:
+      - ./test/nickclaim/pop3-auth:/etc/mailpit/pop3-auth:ro
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+    restart: "no"

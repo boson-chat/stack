@@ -2,8 +2,9 @@
 
 One YAML file holds the stack's **non-secret runtime settings**: who can
 register, channel rules, outgoing email (minus the password), IRC options,
-voice rooms, the stack directory's identity and peers, and the admin panel's
-own options. The admin panel edits it, you can edit it by hand, and every
+voice rooms, the stack directory's identity and peers, nick claims (the
+api's inbound mailbox, minus the password), and the admin panel's own
+options. The admin panel edits it, you can edit it by hand, and every
 service watches it and applies changes live.
 
 `.env` keeps everything else: secrets (passwords, tokens, keys, DSNs) and
@@ -32,7 +33,7 @@ serves them. [docs/branding.md](branding.md) covers branding and email
 customization.
 
 Mounts: `admin` mounts `./config` read-write, every other reader (`auth`,
-`ergo`, `roleserv`, `quicvoiced`, `directory`) mounts it read-only. It's the
+`ergo`, `roleserv`, `quicvoiced`, `directory`, `api`) mounts it read-only. It's the
 **directory** that's mounted, not the file: the panel saves by writing a
 temp file next to it and renaming it over `boson.yaml`, and a single-file
 bind mount would keep showing the old file.
@@ -44,7 +45,7 @@ means "use the env value, else the default". Removing a key resets it; the
 panel's **Reset to default** does exactly that.
 
 Each service reads only its own section (`auth:`, `branding:`, `irc:`,
-`voice:`, `directory:`, `admin:`, and the shared `network:`) and ignores keys it
+`voice:`, `directory:`, `nick_claim:`, `admin:`, and the shared `network:`) and ignores keys it
 doesn't know. `version: 1` is required at the top.
 
 ## Keys (schema v1)
@@ -91,13 +92,18 @@ admin needs to change it in the panel.
 | `directory.main_peer_url` | https URL | `DIRECTORY_MAIN_PEER` | live | directory | `directory.manage` |
 | `directory.sync_every` | duration, 5m–24h | `10m` | live | directory | `directory.manage` |
 | `directory.peers` | list of https URLs | `DIRECTORY_PEERS` | live | directory | `directory.manage` |
+| `nick_claim.enabled` | bool | `NICK_CLAIM_ENABLED` (`false`) | live (starts/stops the mailbox worker) | api | `settings.manage` (Nick claims page) |
+| `nick_claim.email_domain` | domain | `NICK_CLAIM_EMAIL_DOMAIN` (`DOMAIN`) | live (new claims) | api | `settings.manage` |
+| `nick_claim.rate_limit_per_hour` | int | `NICK_CLAIM_RATE_LIMIT_PER_HOUR` (`5`) | live | api | `settings.manage` |
+| `nick_claim.inbound.protocol` | `pop3` | `pop3` | live | api | `settings.manage` |
+| `nick_claim.inbound.host` / `.port` / `.tls` / `.user` | string / int / bool / string | `POP3_HOST` / `POP3_PORT` (`995`) / `POP3_TLS` (`true`) / `POP3_USER` | live (the worker reconnects) | api | `settings.manage` |
 | `admin.directory_registration` | bool | `ADMIN_DIRECTORY_REGISTRATION` | live | admin | `directory.manage` |
 | `admin.directory_hostname` | hostname | `IRC_HOST` (admin's `IRC_CHECK_SERVER_NAME`) | live | admin | `directory.manage` |
 | `admin.tls_check_hosts` | list of `host:port[@dial-host:port]`, ≤ 20 | `ADMIN_TLS_CHECK_HOSTS` | live | admin | `services.manage` |
 
 `auth → ergo` means auth owns the value and ergo/quicvoiced get it from
 auth's internal settings API as before. Secrets that used to sit next to
-these (`SMTP_USER`, `SMTP_PASSWORD`, tokens, keys) stay in `.env` and are
+these (`SMTP_USER`, `SMTP_PASSWORD`, `NICK_CLAIM_POP3_PASSWORD`, tokens, keys) stay in `.env` and are
 never written to this file. Peers added in the panel's Directory page are
 still kept in the directory's peer table (`directory.peers` only seeds it).
 
@@ -137,7 +143,10 @@ Every service answers on its internal listener (never routed by Traefik):
 
 `restart_required` lists keys that changed but only take effect after a
 restart (e.g. `irc.plaintext`). Ergo has no HTTP server of its own; the
-boson-ergo helper reports for it. The admin panel polls these after a save
+boson-ergo helper reports for it. The api answers on its internal port
+(`http://api:3001/internal/config/status`) and adds a `nick_claim` object:
+whether it's enabled and the mailbox worker's state
+([nick-claim.md](nick-claim.md#is-it-working)). The admin panel polls these after a save
 (`CONFIG_STATUS_TARGETS` in compose, overridable with
 `ADMIN_CONFIG_STATUS_TARGETS`) and shows per service: applied, needs a
 restart (with a **Restart** button through the Docker socket proxy,
@@ -158,11 +167,17 @@ docker compose up -d
 
 `migrate-config.sh` asks each enabled service for its current settings
 (`docker compose run --rm --no-deps -T <service> export-config`, a YAML
-fragment of its section built from its database and env) and merges them
+fragment of its section built from its database and env; the api prints
+`nick_claim:`) and merges them
 into the file with the admin image (`admin config merge /config/boson.yaml`,
 which keeps comments). Keys already in the file are kept; `--overwrite`
 lets the services' values win. Images too old to have `export-config` are
-skipped with a warning (their env values stay the defaults). Without the
+skipped with a warning (their env values stay the defaults). The api is
+the exception: an api without `export-config` but with `POP3_HOST` in `.env`
+gets `nick_claim.enabled: true` plus its `POP3_*` / `NICK_CLAIM_*` values
+written for it, because nick claims are now off unless turned on (the same
+happens when `export-config` exists: it runs with `NICK_CLAIM_ENABLED=true`
+unless `.env` sets that variable). Without the
 step nothing breaks: an absent key falls back to env, but values you only
 changed in the panel's database before would revert to their env defaults.
 
