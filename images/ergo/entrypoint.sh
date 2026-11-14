@@ -3,8 +3,10 @@
 # channel_creation setting), waits for the TLS cert that certsync hands over,
 # then runs Ergo as PID 1. Background loops send SIGHUP (rehash: reloads
 # config + TLS without dropping clients) whenever certsync replaces the
-# certificate, and re-render + SIGHUP when channel_creation changes
-# (boson-ergo watch-settings, every SETTINGS_POLL_SECONDS, default 30).
+# certificate, and re-render + rehash when channel_creation or the network
+# roles change (boson-ergo watch-settings: settings every
+# SETTINGS_POLL_SECONDS, default 30; roles every ROLES_POLL_SECONDS, default
+# 10), which also pushes role changes to connected users (docs/roles.md).
 set -eu
 
 CERT_DIR=${CERT_DIR:-/certs}

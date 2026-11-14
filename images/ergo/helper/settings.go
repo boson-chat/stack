@@ -19,7 +19,8 @@ import (
 //
 //	registered: channels.operator-only-creation false, registration.operator-only false
 //	admins:     both true: only opers with the chanreg capability (the
-//	            server-admin class) can create or ChanServ-register channels
+//	            emergency OPER_NAME oper, or a network role with irc.chanreg)
+//	            can create or ChanServ-register channels
 //
 // boson-ergo render fetches it once at start; boson-ergo watch-settings
 // polls it, re-renders ircd.yaml when the result changes and sends Ergo
@@ -127,43 +128,6 @@ func loadCachedPolicy(dir string) (channelPolicy, bool) {
 func saveCachedPolicy(dir string, p channelPolicy) {
 	b, _ := json.Marshal(map[string]string{"channel_creation": string(p)})
 	_ = writeFileAtomic(filepath.Join(dir, settingsCacheFile), append(b, '\n'), 0o600)
-}
-
-// watchSettings polls the policy every interval and, when the rendered
-// config changes, rewrites it and calls rehash. It returns when ctx ends.
-func watchSettings(ctx context.Context, get func(string) string, tmplPath, dir string, interval time.Duration,
-	c *settingsClient, rehash func() error, logf func(string, ...any)) {
-	last := channelPolicy("")
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-		}
-		p, err := c.fetch(ctx)
-		if err != nil {
-			// Keep whatever is rendered; auth may be restarting.
-			if last != "" {
-				logf("channel_creation: %v (keeping %q)", err, last)
-			}
-			continue
-		}
-		saveCachedPolicy(dir, p)
-		changed, err := render(get, tmplPath, dir, p)
-		if err != nil {
-			logf("re-render: %v", err)
-			continue
-		}
-		if changed {
-			logf("channel_creation is now %q: ircd.yaml updated, rehashing ergo", p)
-			if err := rehash(); err != nil {
-				logf("rehash: %v", err)
-			}
-		}
-		last = p
-	}
 }
 
 // sighup sends SIGHUP to pid (Ergo is PID 1 in the container).

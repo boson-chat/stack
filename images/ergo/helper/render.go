@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"text/template"
+
+	"github.com/boson-chat/stack/images/ergo/helper/internal/roles"
 )
 
 //go:embed ircd.yaml.tmpl
@@ -44,6 +46,12 @@ type renderData struct {
 	APIListener string
 	// accounts.require-sasl: every client must log in (IRC_REQUIRE_SASL).
 	RequireSASL bool
+	// Network roles with irc.oper, as oper classes (docs/roles.md).
+	RoleClasses []roles.OperClass
+	// Oper class RoleServ grants itself (nofakelag, via account_grants).
+	ServiceClass string
+	// Plaintext listener for in-stack services (RoleServ); "" = none.
+	ServicesListener string
 }
 
 var bcryptRe = regexp.MustCompile(`^\$2[aby]\$\d\d\$[./A-Za-z0-9]{53}$`)
@@ -86,6 +94,11 @@ func buildData(get func(string) string) (renderData, error) {
 		APIToken:          strEnv(get, "ERGO_API_TOKEN", ""),
 		APIListener:       strEnv(get, "ERGO_API_LISTENER", ":8089"),
 		RequireSASL:       boolEnv(get, "IRC_REQUIRE_SASL", false),
+		ServiceClass:      serviceClass,
+		ServicesListener:  strEnv(get, "IRC_SERVICES_LISTENER", ":6680"),
+	}
+	if strings.EqualFold(d.ServicesListener, "off") {
+		d.ServicesListener = ""
 	}
 	if d.APIToken != "" && (len(d.APIToken) < 32 || strings.ContainsAny(d.APIToken, " \t\r\n")) {
 		return d, fmt.Errorf("ERGO_API_TOKEN must be at least 32 printable characters without spaces (openssl rand -hex 32)")
@@ -122,13 +135,15 @@ func q(v any) string {
 	return string(b)
 }
 
-// render writes ircd.yaml and ergo.motd for policy. changed reports whether
-// ircd.yaml's content changed (only then does Ergo need a rehash).
-func render(get func(string) string, tmplPath, dir string, policy channelPolicy) (changed bool, err error) {
+// render writes ircd.yaml and ergo.motd for policy and the role oper
+// classes. changed reports whether ircd.yaml's content changed (only then
+// does Ergo need a rehash).
+func render(get func(string) string, tmplPath, dir string, policy channelPolicy, classes []roles.OperClass) (changed bool, err error) {
 	d, err := buildData(get)
 	if err != nil {
 		return false, err
 	}
+	d.RoleClasses = classes
 	d.ChannelCreation = policy
 	d.OperatorOnlyCreation = policy == policyAdmins
 	src := defaultTemplate

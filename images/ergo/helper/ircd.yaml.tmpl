@@ -22,6 +22,11 @@ server:
         # Plaintext IRC for legacy clients (IRC_PLAINTEXT=true).
         ":6667":
 {{- end }}
+{{- if .ServicesListener }}
+        # Plaintext for in-stack services (RoleServ) on the compose network.
+        # Not published on the host, not routed by Traefik.
+        {{ q .ServicesListener }}: {}
+{{- end }}
 {{- if .WebSocket }}
         # WebSocket for web clients. Plain ws inside the compose network;
         # Traefik terminates TLS and serves it as wss://{{ .IRCHost }}/webirc.
@@ -181,8 +186,9 @@ accounts:
 #   registered: anyone can create channels; logged-in users can register them
 #               with ChanServ (Ergo has no "logged-in only" creation switch,
 #               see IRC_REQUIRE_SASL).
-#   admins:     only opers with the chanreg capability (class server-admin,
-#               i.e. /OPER {{ .OperName }}) can create or register channels;
+#   admins:     only opers with the chanreg capability (the emergency
+#               /OPER {{ .OperName }}, or a network role with irc.chanreg)
+#               can create or register channels;
 #               they can hand them over with /msg ChanServ TRANSFER.
 channels:
     default-modes: +ntC
@@ -195,9 +201,12 @@ channels:
     list-delay: 0s
     invite-expiration: 24h
 
+# The stack's own classes have a "." in their names: network-role classes
+# are named after the role's slug ([a-z0-9_-]), so they can never collide.
 oper-classes:
-    "chat-moderator":
-        title: Chat Moderator
+    # The emergency /OPER {{ .OperName }} login (OPER_NAME / OPER_PASSWORD_HASH).
+    "boson.server-admin":
+        title: Server Admin
         capabilities:
             - "kill"
             - "ban"
@@ -208,10 +217,6 @@ oper-classes:
             - "samode"
             - "snomasks"
             - "roleplay"
-    "server-admin":
-        title: Server Admin
-        extends: "chat-moderator"
-        capabilities:
             - "rehash"
             - "accreg"
             - "chanreg"
@@ -219,19 +224,49 @@ oper-classes:
             - "defcon"
             - "massmessage"
             - "metadata"
+    # RoleServ (and other in-stack services) grant themselves this class
+    # through the API (POST /v1/account_grants), to reply without fakelag.
+    {{ q .ServiceClass }}:
+        title: Network Service
+        # (whoisline, not whois-line: Ergo 2.19's oper-classes key)
+        whoisline: "is a network service"
+        capabilities:
+            - "nofakelag"
+{{- if .RoleClasses }}
+    # Network roles with "IRC operator" on (auth service, admin panel or
+    # RoleServ), re-rendered by boson-ergo watch-settings when they change.
+    # Members are opered up at login (account-bound, no /OPER), see
+    # docs/roles.md.
+{{- range .RoleClasses }}
+    {{ q .Name }}:
+        title: {{ q .Title }}
+{{- if .WhoisLine }}
+        whoisline: {{ q .WhoisLine }}
+{{- end }}
+{{- if .Capabilities }}
+        capabilities:
+{{- range .Capabilities }}
+            - {{ q . }}
+{{- end }}
+{{- else }}
+        capabilities: []
+{{- end }}
+{{- end }}
+{{- end }}
 
 opers:
     {{ q .OperName }}:
-        class: "server-admin"
+        class: "boson.server-admin"
         hidden: true
         whois-line: "is a Network Administrator"
         # bcrypt, from `ergo genpasswd` (scripts/setup.sh)
         password: {{ q .OperPasswordHash }}
 
 {{- if .APIToken }}
-# HTTP API for quicvoiced (founder checks, channel roles): POST /v1/ns/info,
-# /v1/whois. Plain HTTP on the compose network only; never published or
-# routed by Traefik. Token: ERGO_API_TOKEN.
+# HTTP API for quicvoiced (founder checks, channel roles: POST /v1/ns/info,
+# /v1/whois), boson-ergo watch-settings and RoleServ (POST /v1/rehash,
+# /v1/account_grants: network roles). Plain HTTP on the compose network
+# only; never published or routed by Traefik. Token: ERGO_API_TOKEN.
 api:
     enabled: true
     listener: {{ q .APIListener }}
