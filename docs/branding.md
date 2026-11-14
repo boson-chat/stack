@@ -70,7 +70,9 @@ branding:
     panes.messages.image: messages.webp
 ```
 
-auth picks the change up within seconds. `config-init` makes hand-copied
+auth picks the change up within seconds. It reads the images when it loads
+the file, so to replace an image, give the new one a new name (or save
+`boson.yaml` again after copying it over the old one). `config-init` makes hand-copied
 files readable for auth and removable by the panel on the next
 `docker compose up`; until then make sure they're world-readable
 (`sudo chmod 644 config/branding/*`).
@@ -121,8 +123,8 @@ of their content and are cached for a long time. They're sent with
 ```yaml
 auth:
   email:
-    sender_name: "Example Chat"        # From display name; default network.name
-    accent: "#e11d48"                  # buttons and links
+    sender_name: "Example Chat"        # From display name; default: the auth.smtp.from name
+    accent: "#e11d48"                  # top border, buttons and links; default #3b5bdb
     footer: "Example Chat · example.com"
     logo: true                         # branding logo_wide, else logo
     templates:
@@ -131,6 +133,8 @@ auth:
         body: "Hi {{username}},\n\nConfirm your email: {{link}}\n\nThe link works for {{expires}}."
 ```
 
+- With an `auth.email` section (even an empty one) auth sends this branded
+  layout; without it, Boson's built-in emails.
 - Templates: `verification`, `password_reset`, `account_setup`, `invite`.
   Set any of them, and the subject or the body alone; the rest keeps Boson's
   wording. Removing one (or **Reset to default**) restores the default.
@@ -144,16 +148,18 @@ auth:
 - The sending address and server stay in `auth.smtp` / `SMTP_*`, and the
   SMTP password stays in `.env`.
 
-To try a template without the panel, use auth's internal API (compose
-network only, `INTERNAL_API_TOKEN` from `.env`):
+The panel's preview and test send are auth's internal API (compose network
+only, never routed by Traefik), called with an admin's access token
+(`settings.manage`). To try a template without the panel:
 
 ```sh
-tok=$(sed -n 's/^INTERNAL_API_TOKEN=//p' .env)
+tok=…  # an access token of an admin with settings.manage (POST https://AUTH_HOST/v1/login)
 docker run --rm --network boson_default curlimages/curl:8.22.0 -sS \
-  -H "X-Internal-Token: $tok" -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' \
   -d '{"template":"verification"}' http://auth:8081/internal/email/preview
 # → {"subject": "…", "html": "…", "text": "…"}; add "subject"/"body" to preview unsaved text.
-#   POST /internal/email/test {"template":"verification","to":"you@example.com"} sends one.
+#   POST /internal/email/test {"template":"verification","to":"you@example.com"} sends one
+#   (sample values, subject prefixed [Test]; rate-limited and audited).
 ```
 
 ## In the client

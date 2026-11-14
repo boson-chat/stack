@@ -65,7 +65,7 @@ admin needs to change it in the panel.
 | `auth.channel_expiry_days` | int, 0–3650 (0 = never) | `0` | live | auth → ergo | `settings.manage` |
 | `auth.cors_allowed_origins` | list of origins | `AUTH_CORS_ALLOWED_ORIGINS` | live | auth | `settings.manage` |
 | `auth.smtp.host` / `.port` / `.from` / `.tls` | string / int / string / `starttls` \| `tls` \| `none` | `SMTP_HOST` / `SMTP_PORT` / `SMTP_FROM` / `SMTP_TLS` | live | auth | `settings.manage` |
-| `auth.email.sender_name` / `.accent` / `.footer` / `.logo` | string / `#rrggbb` / string / bool | `network.name` / theme accent / none / `true` | live | auth | `settings.manage` (Emails page) |
+| `auth.email.sender_name` / `.accent` / `.footer` / `.logo` | string / `#rrggbb` / string / bool | the `auth.smtp.from` name / `#3b5bdb` / none / `true` | live | auth | `settings.manage` (Emails page) |
 | `auth.email.templates.<verification\|password_reset\|account_setup\|invite>.subject` / `.body` | string with `{{variables}}` | Boson's wording | live | auth | `settings.manage` (Emails page) |
 | `branding.theme` | boson-theme/1 without image URLs | Boson's built-in theme | live | auth | `settings.manage` (Branding page) |
 | `branding.images.<slot>` | file name in `config/branding/` | none | live | auth | `settings.manage` (Branding page) |

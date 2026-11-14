@@ -12,12 +12,15 @@ Mailpit next to it (test/branding/compose.mailpit.yaml).
 3. The assets: right Content-Type, nosniff, a long cache, the SVG's CSP, the
    same bytes as on disk; no way out of config/branding/ (../boson.yaml).
 4. Hot reload: a new accent in the file shows up, with a new ETag.
-5. POST http://auth:8081/internal/email/preview (X-Internal-Token): the
-   template's subject/body, variables filled in, unknown ones kept, HTML
-   escaped, footer and accent in the HTML; subject/body overrides.
+5. POST http://auth:8081/internal/email/preview as an admin (an Owner made
+   with `auth user create`, signed in through /v1/login; the endpoints need
+   settings.manage): the template's subject/body, variables filled in,
+   unknown ones kept, HTML escaped, footer and accent in the HTML;
+   subject/body overrides.
 6. POST /internal/email/test: the mail arrives in Mailpit with the sender
    name, subject and footer.
-Then puts config/boson.yaml back and removes the images it added.
+Then puts config/boson.yaml back and removes the images it added (the admin
+account stays; it's a throwaway stack).
 
 An auth without these endpoints (older than the branding release) is
 skipped: exit 0 with a SKIP line. --require turns that into a failure (CI
@@ -39,7 +42,6 @@ p.add_argument("--auth-host", default="auth.localhost")
 p.add_argument("--ca", default=os.path.join(ROOT, "local-certs", "ca.pem"),
                help="CA to verify TLS with (default: the local CA); 'none' skips verification")
 p.add_argument("--config-dir", default=os.path.join(ROOT, "config"))
-p.add_argument("--env-file", default=os.path.join(ROOT, ".env"), help="for INTERNAL_API_TOKEN")
 p.add_argument("--auth-internal", default="http://auth:8081", help="auth's internal listener, from the compose network")
 p.add_argument("--network", help="the compose network (default: auth's)")
 p.add_argument("--mailpit", default="http://127.0.0.1:8025", help="Mailpit's API; 'none' skips the test send")
@@ -72,21 +74,20 @@ class Conn(http.client.HTTPSConnection):
         raw = socket.create_connection((args.addr, self.port), self.timeout)
         self.sock = self._context.wrap_socket(raw, server_hostname=self.host)
 
-def public(path, headers=None):
-    """GET https://AUTH_HOST<path> -> (status, headers (lowercase keys), body bytes)."""
+def public(path, headers=None, method="GET", body=None):
+    """https://AUTH_HOST<path> -> (status, headers (lowercase keys), body bytes)."""
     c = Conn(args.auth_host, 443, context=ctx, timeout=15)
-    c.request("GET", path, headers={"User-Agent": "boson-stack-smoke", "Origin": "https://smoke.example", **(headers or {})})
+    hdrs = {"User-Agent": "boson-stack-smoke", "Origin": "https://smoke.example", **(headers or {})}
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode(); hdrs["Content-Type"] = "application/json"
+    c.request(method, path, body=data, headers=hdrs)
     r = c.getresponse(); body = r.read(); c.close()
     return r.status, {k.lower(): v for k, v in r.getheaders()}, body
 
 def jbody(b):
     try: return json.loads(b or b"null")
     except ValueError: return None
-
-def env_value(name):
-    for line in open(args.env_file):
-        if line.startswith(name + "="): return line.split("=", 1)[1].strip().strip("'\"")
-    return ""
 
 def docker(*a, stdin=None):
     return subprocess.run(["docker", *a], input=stdin, capture_output=True, check=False)
@@ -96,12 +97,12 @@ if not net:
     cid = subprocess.run(["docker", "compose", "ps", "-q", "auth"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
     net = docker("inspect", "-f", "{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}", cid).stdout.decode().split()[0] if cid else ""
     if not net: sys.exit("can't find auth's network (is the stack up? or pass --network)")
-TOKEN = env_value("INTERNAL_API_TOKEN")
 
-def internal(path, body):
+def internal(path, body, token=None):
     """POST <auth-internal><path> from inside the compose network -> (status, json|text)."""
+    auth = ["-H", f"Authorization: Bearer {token}"] if token else []
     r = docker("run", "--rm", "-i", "--network", net, "curlimages/curl:8.22.0", "-sS", "-m", "20",
-               "-o", "-", "-w", "\n%{http_code}", "-H", f"X-Internal-Token: {TOKEN}",
+               "-o", "-", "-w", "\n%{http_code}", *auth,
                "-H", "Content-Type: application/json", "--data-binary", "@-", args.auth_internal + path,
                stdin=json.dumps(body).encode())
     out = r.stdout.decode(errors="replace")
@@ -145,7 +146,7 @@ ACCENT1, ACCENT2 = "#e11d48", "#16a34a"
 SENDER, FOOTER = f"Smoke Chat {tag}", f"Smoke Chat footer {tag}"
 SUBJECT = "Welcome to {{network}} [smoke " + tag + "]"
 BODY = "Hi {{username}},\n\n<b>bold</b> & {{not_a_variable}}\n\nGo: {{link}}"
-TO = f"smoke-{tag}@example.test"
+TO = f"smoke-{tag}@example.com"
 
 def branding_yaml(accent):
     return (f"branding:\n"
@@ -207,6 +208,20 @@ def max_age(h):
     m = re.search(r"max-age=(\d+)", h.get("cache-control", ""))
     return int(m.group(1)) if m else 0
 
+def admin_token():
+    """An Owner account (auth's CLI in the auth container), signed in -> access token."""
+    user, pw = f"smokeadmin{tag}", secrets.token_urlsafe(18)
+    r = subprocess.run(["docker", "compose", "exec", "-T", "auth", "./auth", "user", "create", "--username", user,
+                        "--email", f"{user}@example.com", "--role", "owner", "--password-stdin"],
+                       cwd=ROOT, input=(pw + "\n").encode(), capture_output=True)
+    if r.returncode != 0:
+        print("auth user create:", r.stdout.decode(errors="replace"), r.stderr.decode(errors="replace"))
+        return None
+    st, _, b = public("/v1/login", method="POST", body={"login": user, "password": pw})
+    d = jbody(b) or {}
+    if st != 200: print("login:", st, d)
+    return d.get("access_token")
+
 def run():
     # 1. images + config
     put(os.path.join(BRAND, LOGO), logo_bytes)
@@ -219,16 +234,17 @@ def run():
     if st == 404:
         return skip(f"auth has no GET /v1/branding (older than the branding release; 404 after {args.timeout}s)")
     if not check("GET /v1/branding serves the file's theme", st == 200 and isinstance(doc, dict)
-                 and doc.get("colors", {}).get("accent", "").lower() == ACCENT1, f"{st} {doc}"):
+                 and doc.get("colors", {}).get("accent", "").lower() == ACCENT1, st if isinstance(doc, dict) else f"{st} {doc}"):
         return
-    check("version 1, base dark, radius 4", doc.get("version") == 1 and doc.get("base") == "dark" and doc.get("radius") == 4, doc)
+    print(json.dumps(doc))
+    check("version 1, base dark, radius 4", doc.get("version") == 1 and doc.get("base") == "dark" and doc.get("radius") == 4)
     check("panes kept", (doc.get("panes") or {}).get("channels", {}).get("bg", "").lower() == "#1c1917"
           and (doc.get("panes") or {}).get("messages", {}).get("position") == "top", doc.get("panes"))
     check("unknown theme key dropped", "smoke_unknown_key" not in doc, list(doc))
     check("JSON + CORS *", h.get("content-type", "").startswith("application/json")
           and h.get("access-control-allow-origin") == "*", {k: h.get(k) for k in ("content-type", "access-control-allow-origin")})
     etag = h.get("etag", "")
-    check("ETag", bool(etag), h)
+    check("ETag", bool(etag), etag or h)
     base = f"https://{args.auth_host}/v1/branding/assets/"
     logo, login = doc.get("logo", ""), doc.get("login_background", "")
     check("logo is an absolute asset URL", logo.startswith(base) and LOGO in logo, logo)
@@ -253,7 +269,7 @@ def run():
         st, h, b = public(asset_path(login))
         check("PNG served, same bytes", st == 200 and b == login_bytes, f"{st} {len(b)} bytes")
         check("PNG Content-Type + nosniff", h.get("content-type", "").startswith("image/png")
-              and h.get("x-content-type-options", "").lower() == "nosniff", h)
+              and h.get("x-content-type-options", "").lower() == "nosniff", {k: h.get(k) for k in ("content-type", "x-content-type-options")})
     for path in ("/v1/branding/assets/..%2Fboson.yaml", "/v1/branding/assets/%2e%2e/boson.yaml",
                  "/v1/branding/assets/../../boson.yaml", "/v1/branding/assets/%2e%2e%2fboson.yaml"):
         st, _, b = public(path)
@@ -270,31 +286,38 @@ def run():
     st2, _, _ = public("/v1/branding", {"If-None-Match": etag})
     check("old ETag -> 200", st2 == 200, st2)
 
-    # 5. email preview
+    # 5. email preview, as an admin (settings.manage)
     st, pv = internal("/internal/email/preview", {"template": "verification"})
     if st == 404:
         return skip("auth has no POST /internal/email/preview (older than the branding release)")
-    if not check("POST /internal/email/preview", st == 200 and isinstance(pv, dict), f"{st} {pv}"):
+    check("email preview needs a token", st == 401, st)
+    tok = admin_token()
+    if not check("admin signed in", bool(tok)):
+        return
+    st, pv = internal("/internal/email/preview", {"template": "verification"}, tok)
+    if not check("POST /internal/email/preview", st == 200 and isinstance(pv, dict), st if isinstance(pv, dict) else f"{st} {pv}"):
         return
     subj, html, text = pv.get("subject", ""), pv.get("html", ""), pv.get("text", "")
     check("subject from the template, {{network}} filled in", f"[smoke {tag}]" in subj and "{{network}}" not in subj, subj)
-    check("unknown {{variable}} kept as typed", "{{not_a_variable}}" in text, text)
+    check("unknown {{variable}} kept as typed", "{{not_a_variable}}" in text, text if "{{not_a_variable}}" not in text else "")
     check("template text is HTML-escaped", "<b>bold</b>" not in html and "&lt;b&gt;bold&lt;/b&gt;" in html,
           re.findall(r".{0,20}bold.{0,20}", html))
-    check("{{username}} / {{link}} filled in", "{{username}}" not in text and "{{link}}" not in text, text)
+    check("{{username}} / {{link}} filled in", "{{username}}" not in text and "{{link}}" not in text,
+          text.splitlines()[0] if text else "")
     check("footer in HTML and text", FOOTER in html and FOOTER in text, FOOTER)
     check("accent in the HTML", ACCENT1 in html.lower(), ACCENT1)
-    st, pv2 = internal("/internal/email/preview", {"template": "verification", "subject": "Draft {{network}} " + tag, "body": "Unsaved draft"})
+    st, pv2 = internal("/internal/email/preview", {"template": "verification", "subject": "Draft {{network}} " + tag, "body": "Unsaved draft"}, tok)
     check("preview with subject/body overrides", st == 200 and isinstance(pv2, dict) and pv2.get("subject", "").startswith("Draft ")
-          and "{{network}}" not in pv2.get("subject", "") and "Unsaved draft" in pv2.get("text", ""), pv2)
-    st, bad = internal("/internal/email/preview", {"template": "no_such_template"})
+          and "{{network}}" not in pv2.get("subject", "") and "Unsaved draft" in pv2.get("text", ""),
+          pv2.get("subject") if isinstance(pv2, dict) else f"{st} {pv2}")
+    st, bad = internal("/internal/email/preview", {"template": "no_such_template"}, tok)
     check("unknown template -> 4xx", 400 <= st < 500, st)
 
     # 6. test send -> Mailpit
     if args.mailpit == "none":
         return print("SKIP test send (--mailpit none)")
-    st, sent = internal("/internal/email/test", {"template": "verification", "to": TO})
-    check("POST /internal/email/test", 200 <= st < 300, f"{st} {sent}")
+    st, sent = internal("/internal/email/test", {"template": "verification", "to": TO}, tok)
+    check("POST /internal/email/test: sent", 200 <= st < 300 and isinstance(sent, dict) and sent.get("status") == "sent", f"{st} {sent}")
     msg, deadline = None, time.time() + 30
     while time.time() < deadline and not msg:
         try:

@@ -73,17 +73,19 @@ version: 1
 #     port: 587
 #     from: "Boson <hi@example.com>"
 #     tls: starttls
-#   # How the account emails look and read (docs/branding.md). Every key is
-#   # optional; absent = Boson's default look and wording. The admin panel's
-#   # Emails page edits this, with a preview and a "Send test" button.
+#   # How the account emails look and read (docs/branding.md). With this
+#   # section (even empty) auth sends its branded layout; without it, Boson's
+#   # built-in emails. Every key is optional. The admin panel's Emails page
+#   # edits it, with a preview and a "Send test" button.
 #   email:
-#     # The From display name. Default: network.name. The address itself is
-#     # auth.smtp.from (SMTP_FROM).
+#     # The From display name; also the name at the top when there's no logo.
+#     # Default: the name in auth.smtp.from (SMTP_FROM), which also gives the
+#     # address.
 #     sender_name: "Example Chat"
-#     # Buttons and links in the HTML part: #rrggbb. Default: the branding
-#     # theme's accent (branding.theme.colors.accent), else Boson's.
+#     # Top border, buttons and links in the HTML part: #rrggbb.
+#     # Default: Boson's (#3b5bdb).
 #     accent: "#7c3aed"
-#     # One line under every email (plain text, no HTML).
+#     # One line under every email (plain text, no HTML; {{network}} works).
 #     footer: "Example Chat · example.com"
 #     # Put the network's logo at the top: branding.images.logo_wide, else
 #     # branding.images.logo. false = no logo.
