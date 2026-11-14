@@ -8,3 +8,4 @@
 /traefik/dynamic/*
 !/traefik/dynamic/README.md
 !/traefik/dynamic/stack.yml
+!/traefik/dynamic/directory.yml

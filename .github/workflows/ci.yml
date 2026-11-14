@@ -120,6 +120,46 @@ jobs:
           COMPOSE_PROFILES: irc,voice,auth,metrics,wellknown
         run: docker compose logs
 
+  directory:
+    name: directory profile smoke (network key, fake DNS, paging, legacy /servers)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Directory image pullable? (skipped until the first release)
+        id: img
+        run: |
+          img=$(sed -n 's/^ *image: \${DIRECTORY_IMAGE:-\(.*\)}$/\1/p' compose.yaml)
+          [ -n "$img" ] || { echo "no DIRECTORY_IMAGE default in compose.yaml"; exit 1; }
+          if docker pull -q "$img"; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::$img can't be pulled (not released yet?): directory smoke skipped"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Local .env + test settings (fake DNS, legacy route on, no main peer)
+        if: steps.img.outputs.ok == 'true'
+        run: |
+          scripts/setup.sh --local
+          cat >> .env <<'EOF'
+          DIRECTORY_ENV=development
+          DIRECTORY_DNS_VERIFIER=fake
+          DIRECTORY_INCLUDE_MAIN=false
+          DIRECTORY_SERVES_LEGACY=true
+          EOF
+      - name: Start traefik, certsync, postgres, auth, directory
+        if: steps.img.outputs.ok == 'true'
+        env:
+          COMPOSE_PROFILES: auth,directory
+        run: docker compose up -d --build --wait --wait-timeout 300
+      - name: Register (network key), verify, page by next_cursor, legacy /servers, delete
+        if: steps.img.outputs.ok == 'true'
+        run: python3 scripts/smoke-directory.py
+      - name: Logs on failure
+        if: failure() && steps.img.outputs.ok == 'true'
+        env:
+          COMPOSE_PROFILES: auth,directory
+        run: docker compose logs
+
   roles:
     name: network roles + channel lifecycle on a real Ergo (patched image + fake auth, RoleServ)
     runs-on: ubuntu-latest
@@ -137,7 +177,7 @@ jobs:
 
   publish:
     name: publish images to Harbor
-    needs: [helper, smoke, roles, acme]
+    needs: [helper, smoke, directory, roles, acme]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:

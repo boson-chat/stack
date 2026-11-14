@@ -1,0 +1,19 @@
+# Part of the stack (don't edit). Rendered by Traefik with its own
+# environment (compose.yaml), like stack.yml.
+#
+# DIRECTORY_SERVES_LEGACY=true: https://API_HOST/servers* goes to the
+# directory profile instead of the api, so clients that still use the old
+# api directory (boson client <= 0.45, the website, old links) keep working
+# after the cutover (docs/directory.md). Off by default: then this file
+# defines nothing.
+{{- if eq (env "DIRECTORY_SERVES_LEGACY") "true" }}
+http:
+  routers:
+    directory-legacy:
+      entryPoints: [websecure]
+      rule: Host(`{{ env "API_HOST" }}`) && PathPrefix(`/servers`)
+      # Above the api router (Host(API_HOST), priority = rule length).
+      priority: 1000
+      service: directory@docker
+      tls: {}
+{{- end }}

@@ -1,5 +1,5 @@
 Traefik's file provider loads every file in this directory (and reloads on
-change). `stack.yml` is part of the stack; put install-specific routers,
+change). `stack.yml` and `directory.yml` are part of the stack; put install-specific routers,
 services and middlewares in your own `*.yml` files here (they are
 gitignored). Files are Go templates, so `{{ env "IRC_HOST" }}` works for
 variables passed to the `traefik` container.

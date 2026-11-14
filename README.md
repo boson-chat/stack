@@ -15,6 +15,7 @@ voice, and automatic TLS, wired together for your own domain.
 | `victoriametrics` | `metrics` | Scrapes `/metrics` of traefik, auth, quicvoiced (and admin), 90-day retention. Internal only, at `http://victoriametrics:8428` | internal |
 | `admin` | `admin` | The admin panel ([boson-chat/admin](https://github.com/boson-chat/admin)): users, invites, sign-in providers, network settings, audit log, stack health, and services control (restart/stop/start, logs) | via Traefik at `https://ADMIN_HOST` |
 | `docker-proxy` | `admin` | [Socket proxy](https://github.com/wollomatic/socket-proxy) that is the admin panel's only access to Docker: list/inspect containers, logs, stats, start/stop/restart; nothing else, only from `admin`, on an internal network | internal |
+| `directory` | `directory` | Optional: a boson network directory ([boson-chat/directory](https://github.com/boson-chat/directory)): website and paginated `/v1` API where networks list themselves (DNS-verified), federated with other directories; includes directory.boson.chat's listings by default ([docs/directory.md](docs/directory.md)) | via Traefik at `https://DIRECTORY_HOST` |
 | `webroot` | `webroot` | Optional: serves a host directory at `http://WEBROOT_HOST/.well-known/acme-challenge/` for a certbot outside the stack | via Traefik |
 | `wellknown` | `wellknown` | Optional: serves `https://DOMAIN/.well-known/boson.json` (client discovery: IRC, auth and voice endpoints), generated from `.env`. Only when `DOMAIN` points at this server | via Traefik |
 
@@ -132,8 +133,8 @@ IRC, RoleServ, and what the auth service provides for them:
 ## Profiles
 
 `COMPOSE_PROFILES` in `.env` picks what runs: `irc`, `voice`, `auth`,
-`api`, `metrics`, `admin`, `webroot`, `wellknown` (traefik and certsync
-always run).
+`api`, `directory`, `metrics`, `admin`, `webroot`, `wellknown` (traefik and
+certsync always run).
 `scripts/setup.sh` defaults to `irc,voice,auth`. Examples:
 
 - `voice,auth,metrics` runs accounts, voice and metrics next to an IRC
@@ -141,6 +142,9 @@ always run).
   server manages its own certificate).
 - `irc` without `auth`: Ergo starts, but nobody can log in (there is no
   local registration); run `auth` with it.
+- `directory` needs `auth` (its database is in the stack Postgres, and
+  owners sign in with the stack's accounts). See
+  [docs/directory.md](docs/directory.md).
 
 ## TLS and certificates
 
@@ -217,8 +221,9 @@ and `../auth` exists.
 Named volumes: `traefik_acme` (certificates), `certs_irc`/`certs_voice`
 (exported copies), `ergo_db` (Ergo accounts, channels, history, last
 known `channel_creation`), `voice_data` (voice channel registry), `pg_data`
-(auth database), `vm_data` (metrics). Back up `ergo_db`, `voice_data`,
-`pg_data` and your `.env` (`AUTH_KEY_ENCRYPTION_KEY` encrypts the signing
+(auth, api and directory databases), `directory_media` (directory icons and
+banners), `vm_data` (metrics). Back up `ergo_db`, `voice_data`, `pg_data`,
+`directory_media` and your `.env` (`AUTH_KEY_ENCRYPTION_KEY` encrypts the signing
 keys in the database).
 
 ## Notes

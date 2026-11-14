@@ -3,7 +3,7 @@
 # Configure in .env (see .env.example / scripts/setup.sh), then:
 #   docker compose up -d --build
 # Which parts run is chosen by COMPOSE_PROFILES in .env
-# (irc, voice, auth, api, metrics, admin, webroot, wellknown). traefik and
+# (irc, voice, auth, api, directory, metrics, admin, webroot, wellknown). traefik and
 # certsync always run.
 # Install-specific additions: traefik/dynamic/*.yml and compose.override.yaml.
 name: boson
@@ -65,6 +65,10 @@ services:
       # Read by traefik/dynamic/stack.yml.
       CERT_HOSTS: ${CERT_HOSTS:-${IRC_HOST:?set IRC_HOST in .env},${VOICE_HOST:?set VOICE_HOST in .env},${AUTH_HOST:?set AUTH_HOST in .env}}
       TLS_ISSUER: ${TLS_ISSUER}
+      # Read by traefik/dynamic/directory.yml: true = the directory profile
+      # answers https://API_HOST/servers* (the old api directory's paths).
+      DIRECTORY_SERVES_LEGACY: ${DIRECTORY_SERVES_LEGACY:-false}
+      API_HOST: ${API_HOST:-api.${DOMAIN:-localhost}}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik/dynamic:/etc/traefik/dynamic:ro
@@ -202,6 +206,10 @@ services:
       API_DB_PASSWORD: ${API_DB_PASSWORD:-}
       API_DB_USER: ${API_DB_USER:-api}
       API_DB_NAME: ${API_DB_NAME:-api}
+      # ... and the directory's (directory profile).
+      DIRECTORY_DB_PASSWORD: ${DIRECTORY_DB_PASSWORD:-}
+      DIRECTORY_DB_USER: ${DIRECTORY_DB_USER:-directory}
+      DIRECTORY_DB_NAME: ${DIRECTORY_DB_NAME:-directory}
     volumes:
       - pg_data:/var/lib/postgresql
       - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
@@ -377,8 +385,15 @@ services:
       # Users' boson profiles (avatar, handle, listed servers) from the api
       # profile. Set ADMIN_BOSON_API_URL= (empty) without it.
       BOSON_API_URL: ${ADMIN_BOSON_API_URL-http://api:3000}
-      # Self-hosted directory registration needs api.boson.chat support; off.
-      DIRECTORY_REGISTRATION: "false"
+      # The directory this network is listed in (Directory page; network key
+      # + DNS TXT proof). docs/directory.md.
+      DIRECTORY_API_URL: ${ADMIN_DIRECTORY_API_URL-https://directory.boson.chat}
+      DIRECTORY_REGISTRATION: ${ADMIN_DIRECTORY_REGISTRATION:-true}
+      # The stack's own directory (directory profile): the "include the boson
+      # main directory" switch, its peers, and users' listings. scripts/setup.sh
+      # sets ADMIN_DIRECTORY_LOCAL_URL=http://directory:8080 with the profile.
+      DIRECTORY_LOCAL_URL: ${ADMIN_DIRECTORY_LOCAL_URL:-}
+      DIRECTORY_INTERNAL_TOKEN: ${DIRECTORY_INTERNAL_TOKEN:-}
     networks: [default, docker-proxy]
     labels:
       - traefik.enable=true
@@ -481,6 +496,8 @@ services:
         condition: service_healthy
 
   # Scheduled jobs (DNS re-verification daily, server health every 15 min).
+  # Once the directory profile has taken over the server directory
+  # (docs/directory.md, "Cutover"), these jobs are no longer needed.
   api-cron:
     <<: *restart
     profiles: [api]
@@ -493,6 +510,71 @@ services:
     depends_on:
       api-migrate:
         condition: service_completed_successfully
+
+  # ---- directory (optional): a boson network directory -------------------------
+  # github.com/boson-chat/directory: the IRC network directory the boson app
+  # browses (directory.boson.chat is one). Website + /v1 API at DIRECTORY_HOST,
+  # own database in the stack Postgres (needs the auth profile), media in the
+  # directory_media volume. Includes directory.boson.chat's listings by default
+  # (DIRECTORY_INCLUDE_MAIN), each re-checked against its own DNS. The image
+  # applies its migrations at start. See docs/directory.md.
+  directory-media-init:
+    profiles: [directory]
+    image: busybox:1.37.0
+    command: ["sh", "-c", "chown 65532:65532 /media && chmod 750 /media"]
+    volumes:
+      - directory_media:/media
+    restart: "no"
+
+  directory:
+    <<: *restart
+    profiles: [directory]
+    image: ${DIRECTORY_IMAGE:-harbor.floret.dev/boson/directory:1.1.0}
+    environment:
+      ENV: ${DIRECTORY_ENV:-production}
+      LOG_LEVEL: ${DIRECTORY_LOG_LEVEL:-info}
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: postgres://${DIRECTORY_DB_USER:-directory}:${DIRECTORY_DB_PASSWORD:-}@postgres:5432/${DIRECTORY_DB_NAME:-directory}?sslmode=disable
+      # Owners sign in with this stack's accounts (bearer tokens via JWKS,
+      # the browser cookie flow at AUTH_HOST).
+      AUTH_ISSUER: https://${AUTH_HOST}
+      AUTH_JWKS_URL: http://auth:8080/.well-known/jwks.json
+      AUTH_PUBLIC_URL: https://${AUTH_HOST}
+      TRUSTED_PROXIES: ${STACK_SUBNET:-10.203.53.0/24}
+      # /.well-known/boson-directory.json: name, operator, contact.
+      DIRECTORY_NAME: ${DIRECTORY_NAME:-${NETWORK_NAME:-Boson} directory}
+      DIRECTORY_PUBLIC_URL: https://${DIRECTORY_HOST:-directory.${DOMAIN:-localhost}}
+      DIRECTORY_OPERATOR: ${NETWORK_NAME:-Boson}
+      DIRECTORY_CONTACT: ${DIRECTORY_CONTACT:-${ADMIN_EMAIL:-}}
+      # Federation: other directories to import (comma-separated URLs) and the
+      # built-in main peer, on unless DIRECTORY_INCLUDE_MAIN=false (also
+      # switchable at runtime in the admin panel / the directory's Peers page).
+      DIRECTORY_PEERS: ${DIRECTORY_PEERS:-}
+      DIRECTORY_MAIN_PEER: ${DIRECTORY_MAIN_PEER:-https://directory.boson.chat}
+      DIRECTORY_INCLUDE_MAIN: ${DIRECTORY_INCLUDE_MAIN:-true}
+      # Operator API token (X-Internal-Token) for the admin panel.
+      DIRECTORY_INTERNAL_TOKEN: ${DIRECTORY_INTERNAL_TOKEN:-}
+      # Icons and banners (local volume; S3/R2 optional, see the directory's docs).
+      MEDIA_DIR: /media
+      # Empty = real DNS (three public resolvers). "fake" = every TXT check
+      # passes; only honoured with DIRECTORY_ENV=development (CI).
+      DNS_VERIFIER: ${DIRECTORY_DNS_VERIFIER:-}
+    volumes:
+      - directory_media:/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      directory-media-init:
+        condition: service_completed_successfully
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.directory.rule=Host(`${DIRECTORY_HOST:-directory.${DOMAIN:-localhost}}`)
+      - traefik.http.routers.directory.entrypoints=websecure
+      - traefik.http.routers.directory.tls=true
+      - traefik.http.services.directory.loadbalancer.server.port=8080
+    # Note: DIRECTORY_HOST must be in CERT_HOSTS so Traefik gets its
+    # certificate. The legacy https://API_HOST/servers route is in
+    # traefik/dynamic/directory.yml (DIRECTORY_SERVES_LEGACY).
 
   # ---- webroot (optional) ---------------------------------------------------
   # Serves WEBROOT_DIR at http://WEBROOT_HOST/.well-known/acme-challenge/ for
@@ -559,3 +641,4 @@ volumes:
   voice_data:
   pg_data:
   vm_data:
+  directory_media:
