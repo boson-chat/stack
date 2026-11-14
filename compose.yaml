@@ -251,6 +251,13 @@ services:
       AUTH_URL: http://auth:8080
       AUTH_INTERNAL_URL: http://auth:8081
       METRICS_URL: ${ADMIN_METRICS_URL-http://victoriametrics:8428}
+      EDGE_NAME: Traefik
+      # IRC health (Ergo): set ADMIN_IRC_CHECK= (empty) without the irc profile.
+      IRC_CHECK: ${ADMIN_IRC_CHECK-ircs://ergo:6697}
+      IRC_CHECK_SERVER_NAME: ${IRC_HOST}
+      # Endpoints the admin's BROWSER times ("from you" latency); also its CSP connect-src.
+      PUBLIC_PROBE_TARGETS: >-
+        ${ADMIN_PUBLIC_PROBES:-auth=https://${AUTH_HOST}/healthz,quicvoiced=https://${VOICE_HOST}/healthz,irc=wss://${IRC_HOST}/webirc,api=https://${API_HOST:-api.localhost}/health}
       GRAFANA_URL: ${GRAFANA_URL:-}
       HEALTH_TARGETS: >-
         auth=http://auth:8081/healthz,auth=http://auth:8081/readyz,quicvoiced=http://quicvoiced:8080/healthz,victoriametrics=http://victoriametrics:8428/health${ADMIN_API_HEALTH-,api=http://api:3000/health}
