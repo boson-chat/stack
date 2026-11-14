@@ -7,9 +7,12 @@
    user gets RPL_LOGGEDIN (900) + RPL_SASLSUCCESS (903) and the welcome (001).
 4. SASL PLAIN with a wrong password fails (904).
 5. SASL OAUTHBEARER with the user's access token logs in too.
+6. With --channel-creation: the logged-in user creating a new channel works
+   (registered) or is refused with 403 (admins).
 
   scripts/smoke-irc.py [--addr 127.0.0.1] [--ca local-certs/ca.pem]
   scripts/smoke-irc.py --print-voice-token   # also print a voice token (for examples/bot)
+  scripts/smoke-irc.py --channel-creation admins
 """
 import argparse, base64, json, os, secrets, socket, ssl, sys, time
 
@@ -20,6 +23,8 @@ p.add_argument("--auth-host", default="auth.localhost")
 p.add_argument("--ca", default=os.path.join(os.path.dirname(__file__), "..", "local-certs", "ca.pem"),
                help="CA to verify TLS with (default: the local CA); 'none' skips verification")
 p.add_argument("--print-voice-token", action="store_true")
+p.add_argument("--channel-creation", choices=["registered", "admins"],
+               help="check that a logged-in user can (registered) or can't (admins) create a channel")
 args = p.parse_args()
 
 if args.ca == "none":
@@ -83,8 +88,8 @@ st, r = https("POST", "/v1/login", {"login": user, "password": password})
 check("login", st == 200 and isinstance(r, dict) and "access_token" in r, str(st))
 access = r.get("access_token") if isinstance(r, dict) else None
 
-def irc_session(mech, payload, nick):
-    """Connect, try SASL, return (numerics seen, lines)."""
+def irc_session(mech, payload, nick, join=None):
+    """Connect, try SASL (and JOIN join after the welcome), return (numerics seen, lines)."""
     raw = socket.create_connection((args.addr, 6697), timeout=20)
     s = ctx.wrap_socket(raw, server_hostname=args.irc_host)
     f = s.makefile("rb")
@@ -115,7 +120,9 @@ def irc_session(mech, payload, nick):
             send("CAP END")
         elif cmd in ("904", "905", "906", "908"):
             send("QUIT :sasl failed")
-        elif cmd == "001":
+        elif cmd == "001" and join:
+            send("JOIN " + join)
+        elif cmd == "001" or (join and (cmd in ("JOIN", "403", "405", "471", "473", "474", "475", "477"))):
             send("QUIT :done")
     s.close()
     return seen, lines
@@ -136,6 +143,17 @@ if access:
     seen, lines = irc_session("OAUTHBEARER", gs2, user)
     check("SASL OAUTHBEARER (auth access token)", "900" in seen and "903" in seen,
           "" if "900" in seen else " | ".join(lines[-3:]))
+
+# 6. channel creation policy (channel_creation from the auth service)
+if args.channel_creation:
+    chan = "#smoke-" + secrets.token_hex(3)
+    seen, lines = irc_session("PLAIN", f"\0{user}\0{password}".encode(), user, join=chan)
+    if args.channel_creation == "registered":
+        check(f"channel_creation=registered: user creates {chan}", "JOIN" in seen, " | ".join(lines[-2:]))
+    else:
+        denied = [l for l in lines if " 403 " in l]
+        check(f"channel_creation=admins: user can't create {chan} (403)", bool(denied) and "JOIN" not in seen,
+              denied[0] if denied else " | ".join(lines[-2:]))
 
 if args.print_voice_token and access:
     st, r = https("POST", "/v1/voice/token", {"rooms": []}, token=access)

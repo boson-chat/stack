@@ -123,8 +123,9 @@ accounts:
     # SCRAM needs Ergo to hold password hashes; the auth service holds them.
     advertise-scram: false
 
+    # IRC_REQUIRE_SASL=true: every client must log in (SASL or PASS).
     require-sasl:
-        enabled: false
+        enabled: {{ .RequireSASL }}
         exempted:
             - "localhost"
 
@@ -174,13 +175,22 @@ accounts:
         introspection-url: "http://auth:8080/unused"
         introspection-timeout: 10s
 
+# Text channel creation follows the auth service's channel_creation setting
+# (now: {{ .ChannelCreation }}); boson-ergo watch-settings re-renders this
+# file and rehashes Ergo when it changes.
+#   registered: anyone can create channels; logged-in users can register them
+#               with ChanServ (Ergo has no "logged-in only" creation switch,
+#               see IRC_REQUIRE_SASL).
+#   admins:     only opers with the chanreg capability (class server-admin,
+#               i.e. /OPER {{ .OperName }}) can create or register channels;
+#               they can hand them over with /msg ChanServ TRANSFER.
 channels:
     default-modes: +ntC
     max-channels-per-client: 100
-    operator-only-creation: false
+    operator-only-creation: {{ .OperatorOnlyCreation }}
     registration:
         enabled: true
-        operator-only: false
+        operator-only: {{ .OperatorOnlyCreation }}
         max-channels-per-account: 15
     list-delay: 0s
     invite-expiration: 24h
@@ -217,6 +227,17 @@ opers:
         whois-line: "is a Network Administrator"
         # bcrypt, from `ergo genpasswd` (scripts/setup.sh)
         password: {{ q .OperPasswordHash }}
+
+{{- if .APIToken }}
+# HTTP API for quicvoiced (founder checks, channel roles): POST /v1/ns/info,
+# /v1/whois. Plain HTTP on the compose network only; never published or
+# routed by Traefik. Token: ERGO_API_TOKEN.
+api:
+    enabled: true
+    listener: {{ q .APIListener }}
+    bearer-tokens:
+        - {{ q .APIToken }}
+{{- end }}
 
 logging:
     -
