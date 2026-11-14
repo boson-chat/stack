@@ -103,6 +103,32 @@ jobs:
           else
             echo "auth served channel_creation itself (not admins): skipped"
           fi
+      - name: config/boson.yaml is owned by 65532, mode 644, and a hand edit reloads auth (skipped on auth without the config file)
+        run: |
+          own=$(docker run --rm -v "$PWD/config:/config:ro" busybox:1.37.0 stat -c '%u %a' /config/boson.yaml)
+          [ "$own" = "65532 644" ] || { echo "config/boson.yaml is '$own', want '65532 644'"; exit 1; }
+          net=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$(docker compose ps -q auth)")
+          status() { docker run --rm --network "$net" busybox:1.37.0 wget -qO- -T 5 http://auth:8081/internal/config/status; }
+          if ! before=$(status 2>/dev/null); then
+            echo "auth has no /internal/config/status (older than the config-file release): skipped"; exit 0
+          fi
+          echo "before: $before"
+          m0=$(echo "$before" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("file_mtime",""))')
+          sleep 1 # a new mtime even on coarse filesystems
+          # A hand edit, the way an editor saves (sed -i writes a new file and renames it).
+          if grep -q '^auth:$' config/boson.yaml; then
+            sudo sed -i '/^auth:$/a\  channel_expiry_days: 0' config/boson.yaml
+          else
+            printf 'auth:\n  channel_expiry_days: 0\n' | sudo tee -a config/boson.yaml >/dev/null
+          fi
+          for i in $(seq 1 30); do
+            now=$(status || true)
+            if echo "$now" | M0="$m0" python3 -c 'import os,sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get("ok") and d.get("file_mtime") != os.environ["M0"] else 1)' 2>/dev/null; then
+              echo "auth reloaded: $now"; exit 0
+            fi
+            sleep 1
+          done
+          echo "auth didn't reload config/boson.yaml within 30 s: $now"; docker compose logs auth | tail -20; exit 1
       - name: VictoriaMetrics scrapes auth, quicvoiced and traefik
         env:
           COMPOSE_PROFILES: irc,voice,auth,metrics

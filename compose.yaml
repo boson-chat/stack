@@ -24,6 +24,28 @@ networks:
     internal: true
 
 services:
+  # ---- config/boson.yaml (docs/config.md) -------------------------------------
+  # The stack's one non-secret config file. The admin panel writes it, every
+  # service reads its own section and reloads on change. This creates it from
+  # config/boson.example.yaml when missing and hands it to uid 65532 (the
+  # admin panel's user; everyone else only reads). Exits when done.
+  #
+  # Services mount the config DIRECTORY, not the file: the panel saves by
+  # writing a temp file and renaming it over boson.yaml, and a single-file
+  # bind mount would keep showing the old inode. Only admin mounts it rw.
+  config-init:
+    image: busybox:1.37.0
+    command:
+      - sh
+      - -c
+      - >-
+        [ -f /config/boson.yaml ] || cp /config/boson.example.yaml /config/boson.yaml;
+        chown 65532:65532 /config /config/boson.yaml &&
+        chmod 755 /config && chmod 644 /config/boson.yaml
+    volumes:
+      - ./config:/config
+    restart: "no"
+
   traefik:
     <<: *restart
     image: traefik:v3.7.19
@@ -108,12 +130,16 @@ services:
       - "6697:6697"
       - "${IRC_PLAINTEXT_PORT:-127.0.0.1:6667}:6667"
     environment:
+      # config/boson.yaml (irc:, network:) wins over the env defaults below.
+      BOSON_CONFIG: /config/boson.yaml
       IRC_HOST: ${IRC_HOST}
       DOMAIN: ${DOMAIN:-}
+      # Default; config/boson.yaml network.name wins.
       NETWORK_NAME: ${NETWORK_NAME:-Boson}
       AUTH_HOST: ${AUTH_HOST}
       OPER_NAME: ${OPER_NAME:-admin}
       OPER_PASSWORD_HASH: ${OPER_PASSWORD_HASH:-}
+      # Default; config/boson.yaml irc.plaintext wins (needs a restart).
       IRC_PLAINTEXT: ${IRC_PLAINTEXT:-false}
       IRC_WEBSOCKET: ${IRC_WEBSOCKET:-true}
       IRC_WEBSOCKET_ORIGINS: ${IRC_WEBSOCKET_ORIGINS:-}
@@ -137,6 +163,7 @@ services:
       # the default with an auth older than 1.8. IRC_REQUIRE_SASL_EXEMPT:
       # IPs/CIDRs that may skip the login while guests are off.
       IRC_REQUIRE_SASL: ${IRC_REQUIRE_SASL:-false}
+      # Default; config/boson.yaml irc.require_sasl_exempt wins.
       IRC_REQUIRE_SASL_EXEMPT: ${IRC_REQUIRE_SASL_EXEMPT:-}
       # Ergo's HTTP API on :8089 for quicvoiced (founder checks, channel
       # roles), RoleServ and the role sync. Compose network only: not
@@ -146,6 +173,7 @@ services:
       # every ROLES_POLL_SECONDS; members' oper class / WHOIS line / vhost
       # are applied at login and pushed to connected users on a change.
       IRC_ROLES: ${IRC_ROLES:-true}
+      # Default; config/boson.yaml irc.roles_poll_seconds wins.
       ROLES_POLL_SECONDS: ${ROLES_POLL_SECONDS:-10}
       IRC_ROLE_BASE_CAPABILITIES: ${IRC_ROLE_BASE_CAPABILITIES:-nofakelag}
       AUTH_INTERNAL_URL: http://auth:8081
@@ -155,7 +183,12 @@ services:
     volumes:
       - certs_irc:/certs:ro
       - ergo_db:/ircd
-    depends_on: [certsync]
+      - ./config:/config:ro
+    depends_on:
+      certsync:
+        condition: service_started
+      config-init:
+        condition: service_completed_successfully
     labels:
       # WebSocket for web clients: wss://IRC_HOST/webirc
       - traefik.enable=true
@@ -191,11 +224,17 @@ services:
       AUTH_PUBLIC_URL: http://auth:8080
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-}
       AUTH_ACTING_TOKEN: ${ROLESERV_AUTH_TOKEN:-}
+      BOSON_CONFIG: /config/boson.yaml
+      # Default; config/boson.yaml irc.roles_poll_seconds wins.
       ROLES_POLL_SECONDS: ${ROLES_POLL_SECONDS:-10}
       IRC_ROLE_BASE_CAPABILITIES: ${IRC_ROLE_BASE_CAPABILITIES:-nofakelag}
+    volumes:
+      - ./config:/config:ro
     depends_on:
       ergo:
         condition: service_healthy
+      config-init:
+        condition: service_completed_successfully
 
   # ---- auth -----------------------------------------------------------------
   postgres:
@@ -228,17 +267,22 @@ services:
     profiles: [auth]
     # Releases: harbor.floret.dev/boson/auth:<version>. To run an unreleased
     # checkout instead, add compose.auth-src.yaml (see README).
-    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.8.0}
+    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.9.0}
     environment:
       ENV: production
       LOG_LEVEL: ${AUTH_LOG_LEVEL:-info}
+      # config/boson.yaml (auth:, network:) wins over the env defaults below
+      # and replaces the network settings auth kept in its database.
+      BOSON_CONFIG: /config/boson.yaml
+      # Default; config/boson.yaml network.name wins.
       SITE_NAME: ${NETWORK_NAME:-Boson}
       PUBLIC_URL: https://${AUTH_HOST}
       ISSUER: https://${AUTH_HOST}
       APP_URL: ${AUTH_APP_URL:-https://${AUTH_HOST}}
       # Extra browser origins allowed to call auth with credentials/tokens and
       # to be SSO return_to targets, e.g. the directory web UI
-      # (https://directory.example.com). Comma-separated.
+      # (https://directory.example.com). Comma-separated. Default;
+      # config/boson.yaml auth.cors_allowed_origins wins.
       CORS_ALLOWED_ORIGINS: ${AUTH_CORS_ALLOWED_ORIGINS:-}
       DATABASE_URL: postgres://auth:${POSTGRES_PASSWORD}@postgres:5432/auth?sslmode=disable
       AUTH_KEY_ENCRYPTION_KEY: ${AUTH_KEY_ENCRYPTION_KEY:?run scripts/setup.sh}
@@ -246,6 +290,9 @@ services:
       # Traefik's X-Forwarded-For is trusted (client IPs for rate limits/audit).
       TRUSTED_PROXIES: ${STACK_SUBNET:-10.203.53.0/24}
       COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
+      # Defaults; config/boson.yaml auth.registration,
+      # auth.require_email_verification and auth.smtp.{host,port,from,tls}
+      # win. SMTP_USER / SMTP_PASSWORD are secrets and stay here.
       REGISTRATION: ${REGISTRATION:-open}
       REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-true}
       SMTP_HOST: ${SMTP_HOST:-}
@@ -257,9 +304,13 @@ services:
       # RoleServ's token for the acting endpoints (/internal/v1/acting/*):
       # changes made on behalf of the IRC user who asked. docs/roles.md.
       INTERNAL_ACTING_TOKEN: ${ROLESERV_AUTH_TOKEN:-}
+    volumes:
+      - ./config:/config:ro
     depends_on:
       postgres:
         condition: service_healthy
+      config-init:
+        condition: service_completed_successfully
     labels:
       - traefik.enable=true
       - traefik.http.routers.auth.rule=Host(`${AUTH_HOST}`)
@@ -283,7 +334,7 @@ services:
   quicvoiced:
     <<: *restart
     profiles: [voice]
-    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.6.0}
+    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.7.0}
     ports:
       - "7700:7700/udp"
     environment:
@@ -293,13 +344,18 @@ services:
       HTTP_ADDR: ":8080"
       # Public API (GET /v1/rooms, /healthz), routed at https://VOICE_HOST.
       PUBLIC_HTTP_ADDR: ":8090"
+      # config/boson.yaml (voice:) wins over the env defaults below.
+      BOSON_CONFIG: /config/boson.yaml
+      # Default; config/boson.yaml voice.rooms wins.
       # Static voice channels: comma-separated id:Display Name, in display order.
       VOICE_ROOMS: ${VOICE_ROOMS:-general:General}
       # true = only registry rooms (VOICE_ROOMS + ones created through the
       # API) can be joined; false = any name makes an ad-hoc room.
+      # Default; config/boson.yaml voice.rooms_strict wins.
       VOICE_ROOMS_STRICT: ${VOICE_ROOMS_STRICT:-true}
       # Room registry (dynamic voice channels), in the voice_data volume.
       VOICE_ROOMS_DB: /data/rooms.json
+      # Default; config/boson.yaml voice.max_rooms_per_user wins.
       VOICE_ROOMS_MAX_PER_USER: ${VOICE_ROOMS_MAX_PER_USER:-10}
       VOICE_ROOMS_MAX: ${VOICE_ROOMS_MAX:-500}
       # Who may create voice channels: the auth service's
@@ -323,10 +379,13 @@ services:
     volumes:
       - certs_voice:/certs:ro
       - voice_data:/data
+      - ./config:/config:ro
     depends_on:
       certsync:
         condition: service_started
       voice-data-init:
+        condition: service_completed_successfully
+      config-init:
         condition: service_completed_successfully
     labels:
       # https://VOICE_HOST → the public API listener only (8090). The
@@ -361,9 +420,17 @@ services:
   admin:
     <<: *restart
     profiles: [admin]
-    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.8.0}
+    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.9.0}
     environment:
       ENV: production
+      # The stack config file: the panel edits it (Settings pages, Config
+      # file view) and reports each service's reload status from
+      # CONFIG_STATUS_TARGETS (compose service name = internal status URL;
+      # the panel reports its own). ergo:8098 is the boson-ergo helper's
+      # status listener (compose network only, never published).
+      BOSON_CONFIG: /config/boson.yaml
+      CONFIG_STATUS_TARGETS: >-
+        ${ADMIN_CONFIG_STATUS_TARGETS:-auth=http://auth:8081/internal/config/status,quicvoiced=http://quicvoiced:8080/internal/config/status,directory=http://directory:8081/internal/config/status,ergo=http://ergo:8098/internal/config/status}
       PUBLIC_URL: https://${ADMIN_HOST:-admin.${DOMAIN:-localhost}}
       # Seals the admin's auth tokens in the session cookie (32 random bytes, base64).
       SESSION_KEY: ${ADMIN_SESSION_KEY:-}
@@ -383,6 +450,7 @@ services:
         auth=http://auth:8081/healthz,auth=http://auth:8081/readyz,quicvoiced=http://quicvoiced:8080/healthz,victoriametrics=http://victoriametrics:8428/health${ADMIN_API_HEALTH-,api=http://api:3000/health}
       VERSION_TARGETS: auth=http://auth:8081/metrics,quicvoiced=http://quicvoiced:8080/version
       # host:port to report, @ where to dial it from inside the network.
+      # Default; config/boson.yaml admin.tls_check_hosts wins.
       TLS_CHECK_HOSTS: >-
         ${ADMIN_TLS_CHECK_HOSTS:-${VOICE_HOST}:443@traefik:443,${AUTH_HOST}:443@traefik:443,${ADMIN_HOST:-admin.localhost}:443@traefik:443,${IRC_HOST}:6697}
       # Services control (restart/stop/start, logs) through docker-proxy below.
@@ -396,12 +464,17 @@ services:
       # The directory this network is listed in (Directory page; network key
       # + DNS TXT proof). docs/directory.md.
       DIRECTORY_API_URL: ${ADMIN_DIRECTORY_API_URL-https://directory.boson.chat}
+      # Default; config/boson.yaml admin.directory_registration wins (the
+      # listed hostname: admin.directory_hostname, else IRC_CHECK_SERVER_NAME).
       DIRECTORY_REGISTRATION: ${ADMIN_DIRECTORY_REGISTRATION:-true}
       # The stack's own directory (directory profile): the "include the boson
       # main directory" switch, its peers, and users' listings. scripts/setup.sh
       # sets ADMIN_DIRECTORY_LOCAL_URL=http://directory:8080 with the profile.
       DIRECTORY_LOCAL_URL: ${ADMIN_DIRECTORY_LOCAL_URL:-}
       DIRECTORY_INTERNAL_TOKEN: ${DIRECTORY_INTERNAL_TOKEN:-}
+    volumes:
+      # rw: the panel saves config/boson.yaml (temp file + rename in this dir).
+      - ./config:/config
     networks: [default, docker-proxy]
     labels:
       - traefik.enable=true
@@ -412,7 +485,11 @@ services:
       - traefik.http.routers.admin.tls=true
       - traefik.http.services.admin.loadbalancer.server.port=8080
     # Note: ADMIN_HOST must be in CERT_HOSTS so Traefik gets its certificate.
-    depends_on: [auth]
+    depends_on:
+      auth:
+        condition: service_started
+      config-init:
+        condition: service_completed_successfully
 
   # The admin panel's only door to Docker: a socket proxy that allows listing
   # and inspecting containers, their logs and stats, and start/stop/restart,
@@ -521,7 +598,7 @@ services:
   directory:
     <<: *restart
     profiles: [directory]
-    image: ${DIRECTORY_IMAGE:-harbor.floret.dev/boson/directory:1.4.0}
+    image: ${DIRECTORY_IMAGE:-harbor.floret.dev/boson/directory:1.5.0}
     environment:
       ENV: ${DIRECTORY_ENV:-production}
       LOG_LEVEL: ${DIRECTORY_LOG_LEVEL:-info}
@@ -533,10 +610,14 @@ services:
       AUTH_JWKS_URL: http://auth:8080/.well-known/jwks.json
       AUTH_PUBLIC_URL: https://${AUTH_HOST}
       TRUSTED_PROXIES: ${STACK_SUBNET:-10.203.53.0/24}
+      # config/boson.yaml (directory:) wins over the env defaults below.
+      BOSON_CONFIG: /config/boson.yaml
       # /.well-known/boson-directory.json: name, operator, contact. These and
-      # the federation values below are defaults only (directory >= 1.4.0):
-      # change them in the admin panel's Directory page, which stores them in
-      # the directory's database and wins over the env.
+      # the federation values below are defaults only: config/boson.yaml
+      # directory.name / operator / contact / include_main / main_peer_url /
+      # sync_every / peers win (the admin panel's Directory page writes them
+      # there; without BOSON_CONFIG it stores them in the directory's
+      # database, directory >= 1.4.0).
       DIRECTORY_NAME: ${DIRECTORY_NAME:-${NETWORK_NAME:-Boson} directory}
       DIRECTORY_PUBLIC_URL: https://${DIRECTORY_HOST:-directory.${DOMAIN:-localhost}}
       DIRECTORY_OPERATOR: ${NETWORK_NAME:-Boson}
@@ -557,10 +638,13 @@ services:
       DNS_VERIFIER: ${DIRECTORY_DNS_VERIFIER:-}
     volumes:
       - directory_media:/media
+      - ./config:/config:ro
     depends_on:
       postgres:
         condition: service_healthy
       directory-media-init:
+        condition: service_completed_successfully
+      config-init:
         condition: service_completed_successfully
     labels:
       - traefik.enable=true

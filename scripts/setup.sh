@@ -60,6 +60,39 @@ local_ca() {
 	echo "Local CA: $d/ca.pem (trust it to avoid TLS warnings); certificate: $d/cert.pem"
 }
 
+# yq_str VALUE: a double-quoted YAML string.
+yq_str() { local v=${1//\\/\\\\}; v=${v//\"/\\\"}; printf '"%s"' "$v"; }
+
+# config_values: the YAML for the answers above, inserted under `version:`.
+config_values() {
+	echo "network:"
+	echo "  name: $(yq_str "$NETWORK_NAME")"
+	echo "auth:"
+	echo "  registration: open"
+	echo "  require_email_verification: $REQUIRE_EMAIL_VERIFICATION"
+	case ",$PROFILES," in *,directory,*)
+		echo "  cors_allowed_origins: [$(yq_str "https://$DIRECTORY_HOST")]" ;;
+	esac
+	echo "voice:"
+	echo "  rooms:"
+	local IFS=, room
+	for room in $VOICE_ROOMS; do
+		[ -n "$room" ] || continue
+		echo "    - { id: $(yq_str "${room%%:*}"), name: $(yq_str "${room#*:}") }"
+	done
+}
+
+# write_config: config/boson.yaml from the example plus config_values,
+# unless it exists already (then it's left alone).
+write_config() {
+	[ -e config/boson.yaml ] && { echo "config/boson.yaml already exists; left as it is."; return; }
+	mkdir -p config
+	CONFIG_VALUES=$(config_values) awk '{ print } !done && /^version:/ { print ENVIRON["CONFIG_VALUES"]; done = 1 }' \
+		config/boson.example.yaml > config/boson.yaml.tmp
+	chmod 644 config/boson.yaml.tmp
+	mv config/boson.yaml.tmp config/boson.yaml
+}
+
 LOCAL=false
 if [ "${1:-}" = "--local" ]; then
 	LOCAL=true
@@ -195,6 +228,12 @@ umask 077
 	echo "SMTP_FROM="
 	echo "SMTP_TLS=starttls"
 } > .env
+
+# config/boson.yaml: the stack's runtime settings (docs/config.md). The env
+# values above are only its defaults; the admin panel edits this file.
+write_config
+echo "Wrote config/boson.yaml (runtime settings: edit it by hand with sudo once"
+echo "  the stack has started, or in the admin panel; config-init gives it to uid 65532)."
 
 echo "Wrote .env. Next:"
 if [ "$LOCAL" = false ] && [ "$TLS_ISSUER" != local ]; then

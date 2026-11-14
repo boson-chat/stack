@@ -75,7 +75,7 @@ rm -rf caddy
 3. **Edit `.env`.** Remove `SERVICES_HOST`, `SERVICES_LINK_PASSWORD`,
    `CLOAK_KEY1..3` (unused now) and any `QUICVOICE_IMAGE=ghcr.io/...:1.1.0`
    line (1.1.0 can't verify auth tokens; the compose default is
-   `harbor.floret.dev/boson/quicvoice:1.3.0`). Keep `VOICE_JWT_SECRET`,
+   `harbor.floret.dev/boson/quicvoice:1.7.0`). Keep `VOICE_JWT_SECRET`,
    `TLS_ISSUER` (the Let's Encrypt email) and the existing values. Set:
 
    ```sh
