@@ -182,7 +182,9 @@ umask 077
 	case ",$PROFILES," in *,directory,*)
 		# docs/directory.md: false = an independent directory.
 		echo "DIRECTORY_INCLUDE_MAIN=true"
-		echo "ADMIN_DIRECTORY_LOCAL_URL=http://directory:8080" ;;
+		echo "ADMIN_DIRECTORY_LOCAL_URL=http://directory:8080"
+		# The directory web UI signs in against auth from the browser.
+		echo "AUTH_CORS_ALLOWED_ORIGINS=https://$DIRECTORY_HOST" ;;
 	esac
 	echo "VOICE_JWT_SECRET=$(rand 64)"
 	echo "VOICE_ROOMS=$VOICE_ROOMS"

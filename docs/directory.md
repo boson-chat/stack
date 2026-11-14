@@ -38,6 +38,16 @@ owners sign in with the stack's accounts).
 The admin panel talks to it when `ADMIN_DIRECTORY_LOCAL_URL=http://directory:8080`
 is set (setup.sh does it with the profile); see "Admin panel" below.
 
+### Existing installs: sign-in from the web UI
+
+The directory's web UI signs people in against auth from the browser, so auth
+must allow the directory's origin. setup.sh sets this with the profile; on an
+existing install add to `.env` and recreate auth:
+
+```sh
+AUTH_CORS_ALLOWED_ORIGINS=https://directory.example.com
+```
+
 ### Existing installs: the database
 
 `postgres/initdb/20-directory.sh` only runs when the Postgres volume is
