@@ -329,6 +329,36 @@ certbot's last certificate for irc.boson.chat is still in
 Ergo's datastore stays in the `boson_ergo_db` volume for the next attempt
 (remove the volume to re-import).
 
+## Voice channels and the room list API
+
+Needs the quicvoice release with `/v1/rooms` (1.4.0, the compose default
+from this change on) and phase 1 (Traefik). Voice blips for a
+few seconds while quicvoiced restarts.
+
+`.env` (keep `CERT_HOSTS` as it is: `voice.boson.chat` already has its
+certificate, which Traefik now also uses for `https://voice.boson.chat`):
+
+```sh
+VOICE_ROOMS=general:General
+#VOICE_ROOMS_STRICT=true     # default; the old ad-hoc room names (e.g. "lobby") stop working
+```
+
+Remove any `QUICVOICE_IMAGE=` override older than 1.4.0. Don't add the
+`wellknown` profile: `boson.chat` is the website on Cloudflare, which serves
+`/.well-known/boson.json` itself (boson-chat/boson `website/public/`).
+
+```sh
+cd "$STACK" && git pull --ff-only
+docker compose pull quicvoiced && docker compose up -d
+docker compose logs quicvoiced | grep -E 'voice rooms configured|public HTTP listening'
+curl -s -o /dev/null -w '%{http_code}\n' https://voice.boson.chat/v1/rooms          # 401
+curl -s -o /dev/null -w '%{http_code}\n' https://voice.boson.chat/metrics           # 404
+curl -fsS https://boson.chat/.well-known/boson.json                                  # from the website
+```
+
+and with a voice token (see [voice.md](voice.md#room-list-api)):
+`curl -fsS https://voice.boson.chat/v1/rooms -H "Authorization: Bearer $VOICE"`.
+
 ## Open questions
 
 - **auth rate limits for SASL:** auth 1.0.0 ignores `X-Forwarded-For` on its

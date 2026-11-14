@@ -73,7 +73,8 @@ if [ "${1:-}" = "--local" ]; then
 	ADMIN_EMAIL=admin@localhost
 	TLS_ISSUER=local
 	ACME_CA_SERVER=
-	PROFILES=irc,voice,auth,api
+	PROFILES=irc,voice,auth,api,wellknown
+	VOICE_ROOMS=general:General
 	REQUIRE_EMAIL_VERIFICATION=false
 	OPER_NAME=admin
 	OPER_PASSWORD=$(rand 20)
@@ -94,6 +95,12 @@ else
 		case "$STAGING" in [yY]*) ACME_CA_SERVER=https://acme-staging-v02.api.letsencrypt.org/directory ;; esac
 	fi
 	ask PROFILES "Parts to run (irc, voice, auth, api, metrics, admin)" "irc,voice,auth,api"
+	case ",$PROFILES," in *,voice,*)
+		ask VOICE_ROOMS "Voice channels (id:Display Name, comma-separated)" "general:General" ;;
+	*) VOICE_ROOMS=general:General ;;
+	esac
+	ask WELLKNOWN "Serve https://$DOMAIN/.well-known/boson.json from this server, so the app finds everything from \"$DOMAIN\"? Only if $DOMAIN's DNS points here. y/N" "n"
+	case "$WELLKNOWN" in [yY]*) PROFILES="$PROFILES,wellknown" ;; esac
 	REQUIRE_EMAIL_VERIFICATION=true
 	ask OPER_NAME "IRC operator name" "admin"
 	read -r -s -p "IRC operator password (empty = generate): " OPER_PASSWORD; echo
@@ -135,7 +142,10 @@ umask 077
 	echo "AUTH_HOST=$AUTH_HOST"
 	echo "ADMIN_HOST=$ADMIN_HOST"
 	echo "API_HOST=$API_HOST"
-	echo "CERT_HOSTS=$IRC_HOST,$VOICE_HOST,$AUTH_HOST,$API_HOST"
+	case ",$PROFILES," in
+	*,wellknown,*) echo "CERT_HOSTS=$IRC_HOST,$VOICE_HOST,$AUTH_HOST,$API_HOST,$DOMAIN" ;;
+	*) echo "CERT_HOSTS=$IRC_HOST,$VOICE_HOST,$AUTH_HOST,$API_HOST" ;;
+	esac
 	echo "ADMIN_EMAIL=$ADMIN_EMAIL"
 	echo "TLS_ISSUER=$TLS_ISSUER"
 	[ -z "$ACME_CA_SERVER" ] || echo "ACME_CA_SERVER=$ACME_CA_SERVER"
@@ -151,6 +161,7 @@ umask 077
 	echo "ADMIN_SESSION_KEY=$(openssl rand -base64 32)"
 	echo "API_DB_PASSWORD=$(rand 40)"
 	echo "VOICE_JWT_SECRET=$(rand 64)"
+	echo "VOICE_ROOMS=$VOICE_ROOMS"
 	echo "SMTP_HOST="
 	echo "SMTP_PORT=587"
 	echo "SMTP_USER="
@@ -161,7 +172,10 @@ umask 077
 
 echo "Wrote .env. Next:"
 if [ "$LOCAL" = false ] && [ "$TLS_ISSUER" != local ]; then
-	echo "  1. Point DNS A records for $IRC_HOST, $VOICE_HOST, $AUTH_HOST and $API_HOST at this server."
+	case ",$PROFILES," in
+	*,wellknown,*) echo "  1. Point DNS A records for $DOMAIN, $IRC_HOST, $VOICE_HOST, $AUTH_HOST and $API_HOST at this server." ;;
+	*) echo "  1. Point DNS A records for $IRC_HOST, $VOICE_HOST, $AUTH_HOST and $API_HOST at this server." ;;
+	esac
 	echo "  2. Open ports 80/tcp, 443/tcp, 6697/tcp and 7700/udp."
 	echo "  3. Optional: SMTP_* in .env so the auth service can send verification email."
 fi
