@@ -12,3 +12,8 @@
 # The stack config file is install-specific (scripts/setup.sh creates it)
 /config/*
 !/config/boson.example.yaml
+# Branding images (admin panel / by hand, docs/branding.md): the directory
+# ships empty
+!/config/branding/
+/config/branding/*
+!/config/branding/.gitkeep
