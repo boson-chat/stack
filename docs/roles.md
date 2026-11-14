@@ -119,6 +119,7 @@ network service") and sets `+B` (bot).
 | same, **in the admin panel** | with auth's grants feed (below): pushed | ≤ `ROLES_POLL_SECONDS` |
 | same, admin panel, **auth 1.5.0** (no grants feed yet) | next login | next login |
 | account disabled | next login refused (SASL PLAIN by auth, OAUTHBEARER by the auth-script); connected sessions stay until auth's feed or a reconnect | next login |
+| account deleted (auth 1.7+) | Ergo account erased: sessions closed, founded channels unregistered ([irc-channels.md](irc-channels.md#deleted-and-disabled-users)) | ≤ `SETTINGS_POLL_SECONDS` |
 
 At every login (SASL PLAIN, `PASS`, NickServ IDENTIFY: auth's
 verify-password; SASL OAUTHBEARER: `GET /internal/v1/users/{username}/irc`)
@@ -283,4 +284,10 @@ non-oper role's vhost without `313`, RoleServ's answers (and the hierarchy
 on writes, with the fake), a WHOIS-line edit and an oper role losing its
 `irc.*` permissions reaching connected users, membership changes (live with
 the grants feed, at reconnect without), disabled accounts refused, and that
-`RoleServ` can't be logged into through auth. CI runs the fake variant.
+`RoleServ` can't be logged into through auth. It also covers the channel
+lifecycle ([irc-channels.md](irc-channels.md)): auto-registration on JOIN,
+the 15-per-account limit, guests' channels staying unregistered, expiry with
+a 20 s `IRC_CHANNEL_EXPIRE_AFTER` (warning, expiry, a busy channel kept, `CS
+SET EXPIRY` refused for non-opers), a deleted user's account and channels
+removed and a disabled user's channels kept (real auth: `AUTH_FULL=1`, auth
+1.7+; deletion via SQL, auth has no delete API). CI runs the fake variant.

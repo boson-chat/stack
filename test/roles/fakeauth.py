@@ -8,9 +8,10 @@ Same shapes as auth 1.5 (boson-chat/auth docs/roles.md) for:
 plus what the stack asks auth to add (docs/roles.md "Requested from auth"):
   GET  /internal/v1/roles/{id}/members       (the admin API's members list, internal)
   GET  /internal/v1/irc/grants               (ETag; every user with an oper class or vhost)
+  GET  /internal/v1/irc/accounts/removed     (auth 1.7: users deleted/disabled after ?since=)
   /internal/v1/acting/...                    (the admin API as X-Acting-Account,
                                               X-Internal-Token = INTERNAL_ACTING_TOKEN; GET /me)
-and a test control endpoint, POST /test/state {users: {name: [role]}, roles: {role: patch}, disable: [name]}.
+and a test control endpoint, POST /test/state {users: {name: [role]}, roles: {role: patch}, disable: [name], delete: [name]}.
 """
 import hashlib, json, os, re, sys, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -39,8 +40,13 @@ USERS = {  # username -> password, assigned role ids (Member is implicit)
     "bob": ("pw-bob", []),
     "dave": ("pw-dave", ["rol_dj"]),
     "erin": ("pw-erin", ["rol_00000000000000000000000003"]),
+    "frank": ("pw-frank", []), "gina": ("pw-gina", []), "hank": ("pw-hank", []),
 }
 DISABLED = set()
+REMOVED = []  # (seq, username, reason, at), the removed-accounts feed
+def removed(name, reason):
+    import datetime
+    REMOVED.append((len(REMOVED) + 1, name, reason, datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")))
 version = [1]
 
 def slug(s): return s.lower().replace(" ", "-")
@@ -109,7 +115,15 @@ class H(BaseHTTPRequestHandler):
         elif self.headers.get("X-Internal-Token") != TOKEN and not p.startswith("/test/"):
             return self.err(401, "unauthorized", "bad token")
         with lock:
-            if method == "GET" and p == "/internal/v1/settings": return self.reply(200, {"channel_creation": "registered"})
+            if method == "GET" and p == "/internal/v1/settings":
+                return self.reply(200, {"channel_creation": "registered", "channel_auto_register": True, "channel_expiry_days": 0})
+            if method == "GET" and p == "/internal/v1/irc/accounts/removed":
+                q = parse_qs(u.query); since = int((q.get("since") or ["0"])[0] or 0); limit = int((q.get("limit") or ["500"])[0])
+                page = [r for r in REMOVED if r[0] > since][:limit]
+                # like auth: entries for usernames that exist (again) / are enabled again are left out
+                out = [{"username": n, "reason": why, "at": at} for _, n, why, at in page
+                       if (why == "deleted" and n not in USERS) or (why == "disabled" and n in DISABLED)]
+                return self.reply(200, {"accounts": out, "next": str(page[-1][0]) if page else (str(since) if since else "")})
             if method == "POST" and p == "/internal/v1/verify-password":
                 b = self.body() or {}; name = b.get("username", "").lower()
                 if name in USERS and USERS[name][0] == b.get("password") and name not in DISABLED:
@@ -141,7 +155,9 @@ class H(BaseHTTPRequestHandler):
                 b = self.body() or {}
                 for name, ids in (b.get("users") or {}).items():
                     USERS[name] = (USERS.get(name, ("pw-" + name, []))[0], [role(i)["id"] for i in ids])
-                for name in b.get("disable") or []: DISABLED.add(name)
+                for name in b.get("disable") or []: DISABLED.add(name); removed(name, "disabled")
+                for name in b.get("delete") or []:
+                    USERS.pop(name, None); DISABLED.discard(name); removed(name, "deleted")
                 for rid, patch in (b.get("roles") or {}).items():
                     rid = role(rid)["id"]
                     r = role(rid)

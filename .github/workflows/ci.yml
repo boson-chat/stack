@@ -121,7 +121,7 @@ jobs:
         run: docker compose logs
 
   roles:
-    name: network roles on a real Ergo (patched image + fake auth, RoleServ)
+    name: network roles + channel lifecycle on a real Ergo (patched image + fake auth, RoleServ)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

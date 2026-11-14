@@ -11,6 +11,12 @@ vhost in the hostmask (311) to everyone; a non-oper role gets only its vhost;
 RoleServ answers LIST/INFO/ROLES/WHO; role edits (WHOIS line, oper powers)
 reach connected users live; membership changes apply live (fake: grants
 feed and RoleServ) or at the next login (real auth 1.5).
+
+Channel lifecycle (patched Ergo, docs/irc-channels.md; IRC_CHANNEL_EXPIRE_AFTER=20s
+in compose.yaml): a logged-in user's new channel is registered to them on JOIN,
+up to max-channels-per-account (15); a guest's isn't; unused registered
+channels expire (with a warning first) while a used one stays; a user deleted
+in auth loses their Ergo account and channels, a disabled one keeps them.
 """
 import base64, json, os, socket, subprocess, sys, time, urllib.request
 
@@ -35,8 +41,12 @@ def http(method, url, body=None, token=None, headers=None):
         data = e.read(); return e.code, json.loads(data) if data else None
 
 class Client:
-    def __init__(self, user, password=None, bearer=None, nick=None, register=True):
+    def __init__(self, user, password=None, bearer=None, nick=None, register=True, guest=False):
         self.s = socket.create_connection(IRC, timeout=10); self.buf = b""; self.nick = nick or user
+        self.log = []  # every line received
+        if guest:  # no SASL: not logged in
+            self.sasl = ""; self.send(f"NICK {self.nick}"); self.send(f"USER {user} 0 * :{user}")
+            self.burst = self.collect(lambda l: " 376 " in l or " 422 " in l, 15) + self.drain(1.0); return
         self.send("CAP REQ :sasl"); self.wait(" ACK ")
         if bearer:
             self.send("AUTHENTICATE OAUTHBEARER"); self.wait("AUTHENTICATE +")
@@ -61,7 +71,7 @@ class Client:
             d = self.s.recv(65536)
             if not d: raise EOFError("connection closed")
             self.buf += d
-        l, self.buf = self.buf.split(b"\r\n", 1); l = l.decode(errors="replace")
+        l, self.buf = self.buf.split(b"\r\n", 1); l = l.decode(errors="replace"); self.log.append(l)
         if l.startswith("PING"): self.send("PONG" + l[4:])
         return l
     def wait(self, needle, timeout=10):
@@ -108,14 +118,14 @@ def compose(*args, stdin=None):
 # ---- set up roles ---------------------------------------------------------
 AUTH_PUBLIC = f"http://127.0.0.1:{os.environ.get('TEST_AUTH_PUBLIC_PORT', '28080')}"
 AUTH_TEST = f"http://127.0.0.1:{os.environ.get('TEST_AUTH_PORT', '28081')}"
-PW = {"alice": "pw-alice", "bob": "pw-bob", "dave": "pw-dave", "erin": "pw-erin"}
+PW = {"alice": "pw-alice", "bob": "pw-bob", "dave": "pw-dave", "erin": "pw-erin", "frank": "pw-frank", "gina": "pw-gina", "hank": "pw-hank"}
 owner_token = None
 if MODE == "real":
-    for u in ["olivia", "alice", "bob", "dave", "erin"]:
+    for u in ["olivia", "alice", "bob", "dave", "erin", "frank", "gina", "hank"]:
         r = compose("exec", "-T", "auth", "./auth", "user", "create", "--username", u, "--email", f"{u}@example.test",
                     "--password-stdin", *(["--role", "owner"] if u == "olivia" else []), stdin=f"pw-{u}-long-enough\n")
         check(f"auth CLI user create {u}", r.returncode == 0, r.stderr)
-    PW = {u: f"pw-{u}-long-enough" for u in ["olivia", "alice", "bob", "dave", "erin"]}
+    PW = {u: f"pw-{u}-long-enough" for u in ["olivia", "alice", "bob", "dave", "erin", "frank", "gina", "hank"]}
     st, body = http("POST", AUTH_PUBLIC + "/v1/login", {"login": "olivia", "password": PW["olivia"]})
     owner_token = (body or {}).get("access_token")
     check("owner login (admin API)", st == 200 and owner_token, body)
@@ -242,6 +252,73 @@ else:
     http("POST", AUTH_TEST + "/test/state", {"disable": ["dave"]})
     d2 = Client("dave", PW["dave"], nick="dave2", register=False)
     check("disabled dave can't log in", not d2.ok(), d2.sasl)
+
+# ---- channel lifecycle: auto-register, limit, guests, expiry, removed users ----
+def cs(c, cmd):
+    c.drain(0.2); c.send("PRIVMSG ChanServ :" + cmd)
+    return " ".join([c.wait("NOTICE", 10)] + c.drain(0.7))
+def join(c, ch):
+    c.send("JOIN " + ch)
+    return c.collect(lambda l: "ChanServ" in l and ch in l and "registered" in l, 5)
+def keep_busy():  # activity in #frank-1, so it never expires
+    frank.send("PRIVMSG #frank-1 :still here")
+def real_user_id(name):
+    st, body = http("GET", AUTH_PUBLIC + "/v1/admin/users?q=" + name, token=owner_token)
+    return next(u["id"] for u in body["users"] if u["username"] == name)
+
+frank = Client("frank", PW["frank"])
+got = join(frank, "#frank-1") + frank.drain(0.5)
+check("auto-register: frank's new #frank-1 is registered on JOIN (ChanServ notice)",
+      any("Channel #frank-1 successfully registered" in l for l in got), got)
+check("auto-register: frank gets founder (+q)", any("MODE #frank-1 +q frank" in l for l in got), got)
+for i in range(2, 16): join(frank, f"#frank-{i}")
+got = join(frank, "#frank-16")
+check("auto-register: the 16th channel isn't registered (max-channels-per-account 15)",
+      any("#frank-16 was not registered automatically" in l for l in got), got)
+check("ChanServ INFO #frank-15: registered to frank", "Founder: frank" in cs(frank, "INFO #frank-15"))
+guest = Client("guest", nick="guest1", guest=True)
+guest.send("JOIN #guest-chan"); guest.drain(1)
+out = cs(frank, "INFO #guest-chan")
+check("a guest's new channel isn't registered", "is not registered" in out, out)
+out = cs(frank, "SET #frank-2 EXPIRY OFF")
+check("CS SET EXPIRY OFF needs an oper with chanreg", "Insufficient privileges" in out, out)
+out = cs(frank, "GET #frank-2 EXPIRY")
+check("CS GET EXPIRY: expiry after 20s", "unregistered after 20s" in out, out)
+
+keep_busy()
+gina = Client("gina", PW["gina"]); join(gina, "#gina-chan")
+hank = Client("hank", PW["hank"]); join(hank, "#hank-chan")
+check("gina's and hank's channels registered", "Founder: gina" in cs(frank, "INFO #gina-chan") and "Founder: hank" in cs(frank, "INFO #hank-chan"))
+if MODE == "real":
+    r = compose("exec", "-T", "postgres", "psql", "-U", "auth", "-d", "auth", "-c", "DELETE FROM users WHERE username = 'gina'")
+    check("delete gina in auth (SQL: auth has no delete API)", r.returncode == 0, r.stderr)
+    st, _ = http("POST", AUTH_PUBLIC + f"/v1/admin/users/{real_user_id('hank')}/disable", token=owner_token)
+    check("admin API: disable hank", st == 200, st)
+else:
+    http("POST", AUTH_TEST + "/test/state", {"delete": ["gina"], "disable": ["hank"]})
+def disconnected(c):
+    try: return [l for l in c.drain(1) if l.startswith("ERROR")]
+    except (EOFError, OSError) as e: return [repr(e)]
+keep_busy()
+got = eventually(lambda: keep_busy() or disconnected(gina), 15)
+check("gina deleted in auth: her IRC session is disconnected (Ergo account erased)", bool(got), got)
+out = cs(frank, "INFO #gina-chan")
+check("gina deleted in auth: #gina-chan is unregistered", "is not registered" in out, out)
+keep_busy(); time.sleep(3)
+out = cs(frank, "INFO #hank-chan")
+check("hank disabled in auth: #hank-chan stays registered", "Founder: hank" in out, out)
+
+# 20s expiry: #frank-1 is kept busy, the others are silent
+end = time.time() + 40
+while time.time() < end and not any("#frank-3 was unregistered" in l for l in frank.log):
+    keep_busy(); frank.drain(3)
+seen = frank.log
+check("expiry: frank warned before #frank-3 expires", any("#frank-3 has had no activity" in l and "will be unregistered" in l for l in seen), seen[-5:])
+check("expiry: frank told #frank-3 was unregistered", any("Channel #frank-3 was unregistered because it had no activity for 20s" in l for l in seen), seen[-5:])
+out = cs(frank, "INFO #frank-3")
+check("expiry: #frank-3 is no longer registered", "is not registered" in out, out)
+out = cs(frank, "INFO #frank-1")
+check("expiry: the busy #frank-1 is still registered", "Founder: frank" in out, out)
 
 # RoleServ's account can't be taken over through auth
 rs = Client("RoleServ", "anything", nick="RoleServ", register=False)

@@ -1,4 +1,4 @@
-# Text channels: who can create them, roles and locks (Ergo 2.19)
+# Text channels: who can create them, registration, expiry, roles and locks (Ergo 2.19)
 
 Text channels are plain IRC channels on Ergo. The stack adds one thing on top:
 **who may create channels** follows the auth service's network settings.
@@ -32,6 +32,99 @@ How a change reaches Ergo:
 
 So an admin-panel change takes effect on IRC within about
 `SETTINGS_POLL_SECONDS`.
+
+## Channel registration: automatic, and expiry of unused channels
+
+Two more network settings (auth 1.7+, admin panel → Network settings →
+Channels; `GET /internal/v1/settings`) shape channel registration. They
+reach Ergo the same way as `channel_creation` (re-render + rehash, within
+`SETTINGS_POLL_SECONDS`) and need the patched Ergo
+([patches 0002/0003](../images/ergo/patches), see below).
+
+| Setting (auth) | Default | Ergo config | Effect |
+|---|---|---|---|
+| `channel_auto_register` | `true` | `channels.registration.auto-register` | A logged-in user who creates a channel by joining it becomes its founder at once, as if they had sent `/msg ChanServ REGISTER #chan`: the usual ChanServ notice and `+q`. Same limits as REGISTER: under `channel_creation: admins` only opers with `chanreg` get one, and at most 15 per account (`max-channels-per-account`; past that, ChanServ says the channel "was not registered automatically"). Guests (not logged in) never do. `SAJOIN`ed channels aren't registered |
+| `channel_expiry_days` | `0` (never) | `channels.registration.expire-after: <n>d` | A registered channel with no **JOIN, PRIVMSG or NOTICE** for that many days is unregistered: it becomes an ordinary channel again (topic, modes, bans, persistent roles and ChanServ settings are dropped; anyone in it stays) and the name can be registered by someone else |
+
+What expiry looks like on IRC:
+
+- **Warning**: during the last 7 days the founder gets a ChanServ notice,
+  once on the next check if they're online, and again at every login (works
+  like a memo, nothing is stored):
+  `Channel #chan has had no activity since … and will be unregistered in 6 days (…) unless someone joins it or talks in it`.
+- **Expiry**: logged (`docker compose logs ergo | grep expired`), sent to
+  opers with the channels snomask (`/MODE nick +s +j`), and the founder, if
+  online, gets `Channel #chan was unregistered because it had no activity for 90 days`.
+- **Checking**: `/msg ChanServ GET #chan EXPIRY` (founder or oper) shows
+  when the channel will expire.
+- **Exempting** (opers with `chanreg`, e.g. Owner/Admin roles):
+  `/msg ChanServ SET #chan EXPIRY OFF` (and `ON` to undo). Founders can't
+  exempt their own channels.
+
+Details: activity is tracked in memory and stored with the channel at most
+once an hour (so a restart loses at most an hour of it); the check runs every
+hour. Channels registered before the patched Ergo (or with Ergo older than
+the patch) start their clock at the first check, so turning expiry on never
+drops a channel sooner than `channel_expiry_days` after that. Always-on
+clients being rejoined at a restart don't count as activity.
+
+Fallbacks: with an auth older than 1.7 (no such fields) the helper uses
+`IRC_CHANNEL_AUTO_REGISTER` (default `true`) and `IRC_CHANNEL_EXPIRY_DAYS`
+(default `0`) from the ergo container's environment; the last values auth
+sent are remembered in `/ircd/boson-settings.json` like `channel_creation`.
+`IRC_CHANNEL_EXPIRE_AFTER` (an Ergo duration: `90d`, `12h`, `30s`)
+overrides `channel_expiry_days` altogether; it's meant for testing (the
+roles test uses `20s`). None of the three are in `compose.yaml`; add them
+under `ergo: environment:` in a compose override if you need them.
+
+## Deleted and disabled users
+
+The helper (`boson-ergo watch-settings`, every `SETTINGS_POLL_SECONDS`,
+needs `ERGO_API_TOKEN`) reads auth's feed of removed users
+(`GET /internal/v1/irc/accounts/removed?since=<cursor>`, auth 1.7+; cursor
+kept in `/ircd/boson-removed.json`, so each removal is handled once, also
+after downtime):
+
+| In auth | On IRC |
+|---|---|
+| user **deleted** | the Ergo account is **erased** (patched Ergo `POST /v1/ns/unregister` with `erase`, i.e. `NS ERASE`): their connections are closed, **every channel they founded is unregistered** (Ergo's own unregister logic), their always-on client, read markers, account settings and vhost go, and the name is free for a new account |
+| user **disabled** | nothing: the account and its channels are kept, so re-enabling them restores everything. They can't log in (auth refuses), and their unused channels still expire with `channel_expiry_days` |
+
+Why erase rather than only unregister the channels: the person is gone,
+and Ergo's account holds their data (always-on client, settings, read
+markers) and reserves the name. A plain `NS UNREGISTER` would keep the name
+reserved forever, so a new auth user who later takes the username couldn't
+log in to IRC. Auth only reports a deletion while nobody has that username
+again, so a re-created user's account is never touched. Disabling is
+reversible, so it destroys nothing.
+
+With an older auth (no feed) deleted users keep their Ergo accounts and
+channels; their channels then only go away by expiry (or an oper:
+`/msg NickServ ERASE <account>`).
+
+## The Ergo patches
+
+[images/ergo/patches](../images/ergo/patches), applied in order on Ergo
+v2.19.1 (see [ergo-account-opers.md](ergo-account-opers.md) for 0001):
+
+- **0002 `channels: auto-register new channels, expire inactive registrations`**:
+  the two `channels.registration` options above, `LastActivity` in the
+  stored channel registration, `CS SET/GET <chan> EXPIRY`, a periodic check
+  and the login-time warning (`irc/channelexpiry.go` plus small hooks in
+  `channel.go` (JOIN/PRIVMSG/NOTICE), `channelmanager.go` (JOIN of a new
+  channel), `chanserv.go` (REGISTER refactored so auto-register shares it),
+  `server.go`, `handlers.go`, `config.go`; documented in `default.yaml`,
+  `traditional.yaml` and the manual; unit tests in
+  `irc/channelexpiry_test.go`). Ergo 2.19 had nothing to reuse: no channel
+  expiry, no last-activity time (history timestamps live only in the
+  optional history database), and `CS PURGE` bans a channel rather than
+  freeing it.
+- **0003 `api: add /v1/ns/unregister`**: `NS UNREGISTER`/`NS ERASE` over the
+  HTTP API, for deleted users.
+
+Both are written against upstream and kept as commits on the
+`channel-lifecycle` branch of a local Ergo checkout (based on v2.19.1);
+0002/0003 here are the same commits on top of 0001.
 
 ### "Logged-in users only" and guests
 
