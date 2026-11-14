@@ -178,8 +178,8 @@ For an install whose server directory lives in the `api` profile today
 Rolling back is step 4 in reverse (`DIRECTORY_SERVES_LEGACY=false`): the api
 still has its `servers` table.
 
-**Afterwards (separate change):** the api's `api-cron` jobs
-(`cron --mode=verify` and `--mode=health`) only maintain the old `servers`
-table, which nothing reads any more; drop them from `compose.yaml` once the
-cutover has held, and the backend's directory code goes with them. The
-`servers` table is kept for one release for rollback.
+**Afterwards:** the api's `api-cron` jobs (`cron --mode=verify` and
+`--mode=health`) and the backend's directory code have been removed; run
+`docker compose up -d --remove-orphans` once to remove the old `api-cron`
+container. The api's `servers` table is kept for one release for rollback,
+so step 4 in reverse still works with an api image from before the removal.

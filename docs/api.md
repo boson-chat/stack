@@ -1,19 +1,23 @@
 # The boson API (`api` profile)
 
-The backend the boson desktop client talks to: server directory, profiles,
-nick claims and avatars ([boson-chat/boson](https://github.com/boson-chat/boson)
+The backend the boson desktop client talks to: profiles, nick claims and
+avatars ([boson-chat/boson](https://github.com/boson-chat/boson)
 `backend/`). It's optional; enable it with `api` in `COMPOSE_PROFILES`.
 
 | Service | What it does |
 |---|---|
 | `api` | `serve` on port 3000, routed by Traefik at `API_HOST` (add it to `CERT_HOSTS`) |
 | `api-migrate` | runs `migrate up` before `api` starts, then exits |
-| `api-cron` | busybox crond running `cron --mode=verify` (daily, `API_CRON_VERIFY`) and `cron --mode=health` (every 15 min, `API_CRON_HEALTH`); built from the same `API_IMAGE` |
 
-The server directory is moving out of the API into the `directory` profile
-(`GET /servers*` on `API_HOST` is routed there with
-`DIRECTORY_SERVES_LEGACY=true`); see [directory.md](directory.md) for the
-cutover. After it, `api-cron`'s jobs are no longer needed.
+The server directory has moved out of the API into its own service,
+[boson-chat/directory](https://github.com/boson-chat/directory) (the
+`directory` profile; see [directory.md](directory.md)). With
+`DIRECTORY_SERVES_LEGACY=true`, `https://API_HOST/servers*` is routed to the
+directory, so old clients keep working. The API no longer serves `/servers`
+and has no scheduled jobs: the `api-cron` service (`cron --mode=verify` and
+`--mode=health`) is gone. On an existing install, run
+`docker compose up -d --remove-orphans` once to remove its container. The
+api's old `servers` table is kept for one release for rollback.
 
 It verifies access tokens from the stack's auth service (`AUTH_JWKS_URL`
 inside the network, `aud=boson`) and stores data in the stack Postgres, in its
