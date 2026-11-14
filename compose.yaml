@@ -426,11 +426,11 @@ services:
       # The stack config file: the panel edits it (Settings pages, Config
       # file view) and reports each service's reload status from
       # CONFIG_STATUS_TARGETS (compose service name = internal status URL;
-      # the panel reports its own). ergo's port is the boson-ergo helper's
-      # status listener (placeholder until the helper ships it).
+      # the panel reports its own). ergo:8098 is the boson-ergo helper's
+      # status listener (compose network only, never published).
       BOSON_CONFIG: /config/boson.yaml
       CONFIG_STATUS_TARGETS: >-
-        ${ADMIN_CONFIG_STATUS_TARGETS:-auth=http://auth:8081/internal/config/status,quicvoiced=http://quicvoiced:8080/internal/config/status,directory=http://directory:8081/internal/config/status,ergo=http://ergo:8088/internal/config/status}
+        ${ADMIN_CONFIG_STATUS_TARGETS:-auth=http://auth:8081/internal/config/status,quicvoiced=http://quicvoiced:8080/internal/config/status,directory=http://directory:8081/internal/config/status,ergo=http://ergo:8098/internal/config/status}
       PUBLIC_URL: https://${ADMIN_HOST:-admin.${DOMAIN:-localhost}}
       # Seals the admin's auth tokens in the session cookie (32 random bytes, base64).
       SESSION_KEY: ${ADMIN_SESSION_KEY:-}

@@ -61,12 +61,22 @@ admin needs to change it in the panel.
 | `auth.cors_allowed_origins` | list of origins | `AUTH_CORS_ALLOWED_ORIGINS` | live | auth | `settings.manage` |
 | `auth.smtp.host` / `.port` / `.from` / `.tls` | string / int / string / `starttls` \| `tls` \| `none` | `SMTP_HOST` / `SMTP_PORT` / `SMTP_FROM` / `SMTP_TLS` | live | auth | `settings.manage` |
 | `irc.plaintext` | bool | `IRC_PLAINTEXT` | **restart** (listener) | ergo | `services.manage` |
-| `irc.plaintext_port` | int | `6667` | **restart** (listener) | ergo | `services.manage` |
+| `irc.plaintext_port` | int | `6667` | **restart** (listener) | ergo | hand edit only (compose publishes the container's 6667) |
 | `irc.require_sasl_exempt` | list of IPs/CIDRs | `IRC_REQUIRE_SASL_EXEMPT` | live (rehash) | ergo | `services.manage` |
 | `irc.roles_poll_seconds` | int | `ROLES_POLL_SECONDS` | live | ergo, roleserv | `services.manage` |
+| `irc.settings_poll_seconds` | int | `SETTINGS_POLL_SECONDS` | live | ergo | `services.manage` |
+| `irc.websocket` | bool | `IRC_WEBSOCKET` | live (rehash) | ergo | `services.manage` |
+| `irc.websocket_origins` | list of origins | `IRC_WEBSOCKET_ORIGINS` | live (rehash) | ergo | `services.manage` |
+| `irc.oauthbearer` | bool | `IRC_OAUTHBEARER` | live (rehash) | ergo | `services.manage` |
+| `irc.persistent_history` | bool | `IRC_PERSISTENT_HISTORY` | **restart** | ergo | `services.manage` |
+| `irc.history_expire` | Ergo duration (`7d`) | built-in | live (rehash) | ergo | `services.manage` |
+| `irc.log_level` | `debug`/`info`/`warn`/`error` | built-in | live (rehash) | ergo | `services.manage` |
 | `voice.rooms` | list of `{id, name}` | `VOICE_ROOMS` | live | quicvoiced | `settings.manage` |
 | `voice.rooms_strict` | bool | `VOICE_ROOMS_STRICT` | live | quicvoiced | `settings.manage` |
 | `voice.max_rooms_per_user` | int | `VOICE_ROOMS_MAX_PER_USER` | live | quicvoiced | `settings.manage` |
+| `voice.max_rooms`, `voice.max_participants` | int (0 = no limit) | built-in | live | quicvoiced | `settings.manage` |
+| `voice.settings_ttl`, `voice.ergo_cache_ttl` | duration | built-in | live | quicvoiced | hand edit |
+| `voice.quic_addr`, `voice.http_addr`, `voice.public_http_addr`, `voice.max_datagrams_per_sec`, `voice.max_datagram_payload` | listeners / limits | built-in | **restart** | quicvoiced | hand edit |
 | `directory.name` / `.operator` / `.contact` | string | `DIRECTORY_NAME` / `DIRECTORY_OPERATOR` / `DIRECTORY_CONTACT` | live | directory | `directory.manage` |
 | `directory.include_main` | bool | `DIRECTORY_INCLUDE_MAIN` | live | directory | `directory.manage` |
 | `directory.main_peer_url` | https URL | `DIRECTORY_MAIN_PEER` | live | directory | `directory.manage` |

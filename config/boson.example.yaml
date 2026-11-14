@@ -78,8 +78,9 @@ version: 1
 #   # Plain-text IRC listener (no TLS). restart: it's a listener.
 #   # Default: IRC_PLAINTEXT.
 #   plaintext: false
-#   # Its port inside the container. restart. Publishing it on the host is
-#   # still compose's job (IRC_PLAINTEXT_PORT in .env).
+#   # Its port inside the container. restart. compose publishes the
+#   # container's 6667 (IRC_PLAINTEXT_PORT in .env is the host side), so
+#   # change both or leave this alone; the admin panel doesn't offer it.
 #   plaintext_port: 6667
 #   # IPs/CIDRs that may connect without signing in while guest access is off.
 #   # Default: IRC_REQUIRE_SASL_EXEMPT.
@@ -87,6 +88,24 @@ version: 1
 #   # How often network roles are re-read from auth, in seconds (ergo and
 #   # RoleServ). Default: ROLES_POLL_SECONDS (10).
 #   roles_poll_seconds: 10
+#   # How often auth's channel_creation / guest_access are re-read, in
+#   # seconds. Default: SETTINGS_POLL_SECONDS (30).
+#   settings_poll_seconds: 30
+#   # WebSocket listener for web clients (wss://IRC_HOST/webirc).
+#   # Default: IRC_WEBSOCKET (true).
+#   websocket: true
+#   # Origins allowed to open those WebSockets; empty = any.
+#   # Default: IRC_WEBSOCKET_ORIGINS.
+#   websocket_origins: [https://chat.example.com]
+#   # SASL OAUTHBEARER (sign in with an auth token). Default: IRC_OAUTHBEARER (true).
+#   oauthbearer: true
+#   # Keep channel history on disk across restarts. restart.
+#   # Default: IRC_PERSISTENT_HISTORY (true).
+#   persistent_history: true
+#   # How long history is kept (Ergo durations: 7d, 1w2d; 0 = forever).
+#   history_expire: 7d
+#   # Ergo's log level: debug, info, warn, error.
+#   log_level: info
 
 # ---- voice: quicvoiced ----------------------------------------------------------
 # voice:
@@ -100,6 +119,19 @@ version: 1
 #   rooms_strict: true
 #   # Voice rooms one user may create. Default: VOICE_ROOMS_MAX_PER_USER (10).
 #   max_rooms_per_user: 10
+#   # Rooms the server holds at once, and people per room (0 = no limit).
+#   max_rooms: 0
+#   max_participants: 0
+#   # Caches (live): how long auth's settings and Ergo's founder answers are reused.
+#   settings_ttl: 30s
+#   ergo_cache_ttl: 30s
+#   # Listeners and datagram limits. restart: quicvoiced only reads them at start.
+#   quic_addr: ":7700"
+#   http_addr: ":8080"
+#   public_http_addr: ":8090"
+#   max_datagrams_per_sec: 0
+#   max_datagram_payload: 0
+#   # `rooms` also accepts bare ids: rooms: [general, gaming]
 
 # ---- directory: the stack's own directory (directory profile) --------------------
 # Without this file the directory keeps these in its database (admin panel:
