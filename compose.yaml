@@ -386,7 +386,7 @@ services:
       DOCKER_PROXY_URL: ${ADMIN_DOCKER_PROXY_URL-http://docker-proxy:2375}
       DOCKER_PROJECT: boson
       DOCKER_PROTECTED_SERVICES: admin,traefik
-      # Users' boson profiles (avatar, handle, listed servers) from the api
+      # Users' boson profiles (avatar, handle) from the api
       # profile. Set ADMIN_BOSON_API_URL= (empty) without it.
       BOSON_API_URL: ${ADMIN_BOSON_API_URL-http://api:3000}
       # The directory this network is listed in (Directory page; network key
@@ -441,7 +441,7 @@ services:
     networks: [docker-proxy]
 
   # ---- api (optional): the boson backend API --------------------------------
-  # Server directory, profiles, nick claims and avatars for the boson client
+  # Profiles, nick claims and avatars for the boson client
   # (github.com/boson-chat/boson backend/). Uses the stack Postgres and the
   # auth service. POP3_* (nick claims) and R2_* (avatars) are optional: empty
   # disables that feature. See docs/api.md.
@@ -498,22 +498,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-
-  # Scheduled jobs (DNS re-verification daily, server health every 15 min).
-  # Once the directory profile has taken over the server directory
-  # (docs/directory.md, "Cutover"), these jobs are no longer needed.
-  api-cron:
-    <<: *restart
-    profiles: [api]
-    build:
-      context: images/api-cron
-      args:
-        API_IMAGE: ${API_IMAGE:-harbor.floret.dev/boson/backend:0.43.0}
-    image: harbor.floret.dev/boson/stack-api-cron:${API_CRON_TAG:-0.43.0}
-    environment: *api-env
-    depends_on:
-      api-migrate:
-        condition: service_completed_successfully
 
   # ---- directory (optional): a boson network directory -------------------------
   # github.com/boson-chat/directory: the IRC network directory the boson app
