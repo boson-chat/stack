@@ -529,7 +529,7 @@ services:
   directory:
     <<: *restart
     profiles: [directory]
-    image: ${DIRECTORY_IMAGE:-harbor.floret.dev/boson/directory:0.1.0}
+    image: ${DIRECTORY_IMAGE:-harbor.floret.dev/boson/directory:1.1.0}
     environment:
       ENV: ${DIRECTORY_ENV:-production}
       LOG_LEVEL: ${DIRECTORY_LOG_LEVEL:-info}

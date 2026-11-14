@@ -59,7 +59,7 @@ The directory applies its own migrations when it starts.
 | Variable | Default | |
 |---|---|---|
 | `DIRECTORY_HOST` | `directory.$DOMAIN` | public hostname (add it to `CERT_HOSTS`) |
-| `DIRECTORY_IMAGE` | `harbor.floret.dev/boson/directory:0.1.0` | |
+| `DIRECTORY_IMAGE` | `harbor.floret.dev/boson/directory:1.1.0` | |
 | `DIRECTORY_INCLUDE_MAIN` | `true` | your directory also shows everything from directory.boson.chat; `false` = an independent directory |
 | `DIRECTORY_MAIN_PEER` | `https://directory.boson.chat` | the built-in main peer |
 | `DIRECTORY_PEERS` | – | more directories to import, comma-separated base URLs |
