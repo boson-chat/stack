@@ -10,6 +10,11 @@ nick claims and avatars ([boson-chat/boson](https://github.com/boson-chat/boson)
 | `api-migrate` | runs `migrate up` before `api` starts, then exits |
 | `api-cron` | busybox crond running `cron --mode=verify` (daily, `API_CRON_VERIFY`) and `cron --mode=health` (every 15 min, `API_CRON_HEALTH`); built from the same `API_IMAGE` |
 
+The server directory is moving out of the API into the `directory` profile
+(`GET /servers*` on `API_HOST` is routed there with
+`DIRECTORY_SERVES_LEGACY=true`); see [directory.md](directory.md) for the
+cutover. After it, `api-cron`'s jobs are no longer needed.
+
 It verifies access tokens from the stack's auth service (`AUTH_JWKS_URL`
 inside the network, `aud=boson`) and stores data in the stack Postgres, in its
 own database and role (`API_DB_NAME` / `API_DB_USER`, default `api`).
