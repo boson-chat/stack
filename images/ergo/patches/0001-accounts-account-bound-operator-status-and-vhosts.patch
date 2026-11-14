@@ -1,0 +1,834 @@
+From c7363aa963712846984826d7bd5a2982ee8bb2e0 Mon Sep 17 00:00:00 2001
+From: James Trotter <james@jamesat.dev>
+Date: Fri, 13 Nov 2026 22:20:46 -0500
+Subject: [PATCH] accounts: account-bound operator status and vhosts from
+ auth-script
+
+An auth-script response may now include operClass, whoisLine and vhost.
+On a successful login the client is opered up into that oper class at
+registration (or at once for a login after registration) and the vhost is
+stored as the account's HostServ vhost. The same grants can be applied at
+any time, including to connected clients, via POST /v1/account_grants. On
+rehash, account-bound opers follow their class's new definition and are
+de-opered if it was removed. /OPER opers are never affected.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ docs/API.md              |  17 +++
+ docs/MANUAL.md           |   8 ++
+ irc/accountopers.go      | 269 +++++++++++++++++++++++++++++++++++++++
+ irc/accountopers_test.go | 185 +++++++++++++++++++++++++++
+ irc/accounts.go          |  21 ++-
+ irc/api.go               |  48 ++++++-
+ irc/authscript.go        |   2 +
+ irc/client.go            |  13 ++
+ irc/config.go            |  10 +-
+ irc/handlers.go          |   2 +
+ irc/server.go            |   4 +
+ 11 files changed, 570 insertions(+), 9 deletions(-)
+ create mode 100644 irc/accountopers.go
+ create mode 100644 irc/accountopers_test.go
+
+diff --git a/docs/API.md b/docs/API.md
+index 2a75ec46..c52602eb 100644
+--- a/docs/API.md
++++ b/docs/API.md
+@@ -168,6 +168,23 @@ Omitted fields are not updated (i.e. PATCH semantics).
+ 
+ The response format is the same as `/v1/ns/saget`.
+ 
++`/v1/account_grants`
++--------------------
++
++This endpoint grants or revokes account-bound operator status and sets an account's vhost, with the same semantics as the optional `operClass`, `whoisLine` and `vhost` keys of an `auth-script` response (see the manual), and applies them immediately to the account's connected clients. The request is a JSON object with fields:
++
++* `accountName`: string, name of the account
++* `operClass`: string, optional: the name of an `oper-classes` entry, or the empty string to revoke account-bound operator status. Omit it to leave operator status alone. Clients that used `/OPER` are not affected.
++* `whoisLine`: string, optional, overrides the class's `whois-line`
++* `vhost`: string, optional: the account's new vhost, or the empty string to remove it. Omit it to leave the vhost alone.
++
++The response is a JSON object with fields:
++
++* `success`: boolean, whether the request succeeded
++* `clients`: number, how many connected clients of the account had their operator status synced (0 if `operClass` was omitted)
++* `errorCode`: string, optional, machine-readable description of the error. Possible values: `ACCOUNT_DOES_NOT_EXIST`, `UNKNOWN_OPER_CLASS`, `INVALID_VHOST`, `FEATURE_DISABLED`, `UNKNOWN_ERROR`.
++* `error`: string, optional, human-readable description of the failure
++
+ `/v1/ns/saregister`
+ -------------------
+ 
+diff --git a/docs/MANUAL.md b/docs/MANUAL.md
+index 3b100c4b..15cda167 100644
+--- a/docs/MANUAL.md
++++ b/docs/MANUAL.md
+@@ -1239,6 +1239,14 @@ The script must print a single line (`\n`-terminated) to its output and exit. Th
+ * `accountName`, a string containing the normalized account name (in the case of passphrase-based authentication, it is permissible to return the empty string or omit the value)
+ * `error`, containing a human-readable description of the authentication error to be logged if applicable
+ 
++On success, the script may also grant the account operator status and a vhost (for example, when the external system also knows who the network's staff are). These keys are optional; a script that omits them changes nothing:
++
++* `operClass`, the name of an entry in `oper-classes`. The client becomes an IRC operator of that class as soon as it completes registration (or immediately, for a login after registration, e.g. `NS IDENTIFY`). The empty string means "not an operator". There is no oper name or password: the operator status is bound to the login. If the class doesn't exist, the login still succeeds and an error is logged. On rehash, such operators get their class's new definition, and lose operator status if the class has been removed. Operators who used `/OPER` are never affected.
++* `whoisLine`, a string overriding the class's `whois-line` for this operator
++* `vhost`, a string that is stored as the account's vhost (as with `HS SET`; it must pass `accounts.vhosts.valid-regexp` and `max-length`, and `accounts.vhosts.enabled` must be true). The empty string removes the account's vhost. The datastore is only written when the vhost changes, and a user's `HS OFF` is respected.
++
++The same grants can be applied at any time, including to clients that are already connected, with the `/v1/account_grants` API endpoint.
++
+ Here is a toy example of an authentication script in Python that checks that the account name and the password are equal (and rejects any attempts to authenticate via certfp):
+ 
+ ```python3
+diff --git a/irc/accountopers.go b/irc/accountopers.go
+new file mode 100644
+index 00000000..4d6ad3cb
+--- /dev/null
++++ b/irc/accountopers.go
+@@ -0,0 +1,269 @@
++// Copyright (c) 2026 The Ergo contributors
++// released under the MIT license
++
++package irc
++
++// Account-bound operator status ("account opers").
++//
++// Ergo's opers authenticate with /OPER (password and/or certfp). When accounts
++// live in an external system (auth-script), that system usually also knows
++// who the network's staff are. These helpers let it say so:
++//
++//   - the auth-script may return `operClass` (and optionally `whoisLine` and
++//     `vhost`) with a successful login. The client is opered up into that
++//     class when registration completes (or at once, for a login after
++//     registration, e.g. NickServ IDENTIFY), and the vhost is stored as the
++//     account's HostServ vhost.
++//   - POST /v1/account_grants (HTTP API) applies the same fields to an
++//     account at any time, including to its connected clients, so changes
++//     made in the external system can take effect without a reconnect.
++//   - on rehash, account-bound opers pick up their class's new definition,
++//     and are de-opered if the class no longer exists.
++//
++// Operators who opered up with /OPER are never touched by any of this.
++
++import (
++	"errors"
++	"fmt"
++	"strings"
++
++	"github.com/ergochat/ergo/irc/modes"
++)
++
++var errUnknownOperClass = errors.New("unknown oper class")
++
++// AccountGrants are the optional privileges an external system (auth-script
++// output or the account_grants API) can attach to an account.
++type AccountGrants struct {
++	// OperClass is the name of an oper-classes entry. nil = no opinion
++	// (leave things as they are); "" = the account is not an operator.
++	OperClass *string `json:"operClass,omitempty"`
++	// WhoisLine overrides the class's whois-line (RPL_WHOISOPERATOR).
++	WhoisLine string `json:"whoisLine,omitempty"`
++	// VHost is stored as the account's vhost (as with HostServ SET).
++	// nil = leave it alone; "" = remove it.
++	VHost *string `json:"vhost,omitempty"`
++}
++
++// accountOper builds the Oper for an account-bound grant. It returns nil, nil
++// when the grant doesn't make the account an operator.
++func (conf *Config) accountOper(accountName string, g AccountGrants) (*Oper, error) {
++	if g.OperClass == nil || *g.OperClass == "" {
++		return nil, nil
++	}
++	cfAccount, err := CasefoldName(accountName)
++	if err != nil {
++		return nil, err
++	}
++	class := conf.operClasses[*g.OperClass]
++	if class == nil {
++		return nil, fmt.Errorf("%w %q", errUnknownOperClass, *g.OperClass)
++	}
++	oper := &Oper{
++		Name:             cfAccount,
++		Class:            class,
++		WhoisLine:        class.WhoisLine,
++		account:          cfAccount,
++		className:        *g.OperClass,
++		accountWhoisLine: sanitizeGrantedWhoisLine(g.WhoisLine),
++	}
++	if oper.accountWhoisLine != "" {
++		oper.WhoisLine = oper.accountWhoisLine
++	}
++	return oper, nil
++}
++
++// sanitizeGrantedWhoisLine drops control characters (and so CR/LF).
++func sanitizeGrantedWhoisLine(line string) string {
++	return strings.TrimSpace(strings.Map(func(r rune) rune {
++		if r < 0x20 || r == 0x7f {
++			return -1
++		}
++		return r
++	}, line))
++}
++
++// validGrantedVHost reports whether vhost ("" = none) passes the same checks
++// as HostServ SET.
++func (conf *Config) validGrantedVHost(vhost string) bool {
++	if vhost == "" {
++		return true
++	}
++	return len(vhost) <= conf.Accounts.VHosts.MaxLength && conf.Accounts.VHosts.validRegexp.MatchString(vhost)
++}
++
++// refreshedAccountOper returns the Oper an account-bound oper should have
++// under conf: the same grant against conf's oper classes, or nil if its class
++// is gone. ok is false if oper is not account-bound.
++func (conf *Config) refreshedAccountOper(oper *Oper) (refreshed *Oper, ok bool) {
++	if oper == nil || oper.account == "" {
++		return nil, false
++	}
++	refreshed, err := conf.accountOper(oper.account, AccountGrants{OperClass: &oper.className, WhoisLine: oper.accountWhoisLine})
++	if err != nil {
++		return nil, true
++	}
++	return refreshed, true
++}
++
++// applyGrantedVHost stores a granted vhost as the account's vhost, unless it
++// already is (so a login doesn't write to the datastore, and a user's
++// HostServ OFF is kept).
++func (am *AccountManager) applyGrantedVHost(accountName string, vhost *string) error {
++	config := am.server.Config()
++	if vhost == nil || !config.Accounts.VHosts.Enabled {
++		return nil
++	}
++	if !config.validGrantedVHost(*vhost) {
++		return errVHostBadCharacters
++	}
++	account, err := am.LoadAccount(accountName)
++	if err != nil {
++		return err
++	}
++	if account.VHost.ApprovedVHost == *vhost {
++		return nil
++	}
++	_, err = am.VHostSet(accountName, *vhost)
++	return err
++}
++
++// applyLoginGrants handles the grants in a successful auth-script response.
++// client has just been logged into accountName. The oper class is applied
++// later, by sendSuccessfulAccountAuth / attemptAutoOper, so that a login that
++// is undone (e.g. by the nick-equals-account check) grants nothing.
++func (am *AccountManager) applyLoginGrants(client *Client, accountName string, g AccountGrants) {
++	if err := am.applyGrantedVHost(accountName, g.VHost); err != nil {
++		am.server.logger.Warning("accounts", "could not apply vhost from auth-script for", accountName, err.Error())
++	}
++	oper, err := am.server.Config().accountOper(accountName, g)
++	if err != nil {
++		am.server.logger.Error("accounts", "could not apply oper class from auth-script for", accountName, err.Error())
++	}
++	client.setPendingOper(oper)
++}
++
++func (client *Client) setPendingOper(oper *Oper) {
++	client.stateMutex.Lock()
++	defer client.stateMutex.Unlock()
++	client.pendingOper = oper
++}
++
++func (client *Client) takePendingOper() (oper *Oper) {
++	client.stateMutex.Lock()
++	defer client.stateMutex.Unlock()
++	oper, client.pendingOper = client.pendingOper, nil
++	return
++}
++
++// handOffPendingOper is called once a login has fully succeeded. Before
++// registration, the grant moves to the session (it may end up attached to a
++// different, always-on Client) and is applied by attemptAutoOper; after
++// registration it is applied immediately.
++func (client *Client) handOffPendingOper(rb *ResponseBuffer) {
++	oper := client.takePendingOper()
++	if oper == nil || oper.account != client.Account() {
++		return
++	}
++	if !client.Registered() {
++		rb.session.pendingOper = oper
++	} else if !client.HasMode(modes.Operator) {
++		applyOper(client, oper, rb)
++	}
++}
++
++// grantAccountOper opers up client (which must not be an operator yet).
++func grantAccountOper(client *Client, oper *Oper) {
++	sessions := client.Sessions()
++	if len(sessions) == 0 {
++		// an always-on client with nobody attached
++		client.SetOper(oper)
++		ApplyUserModeChanges(client, modes.ModeChanges{{Mode: modes.Operator, Op: modes.Add}}, true, oper)
++		return
++	}
++	rb := NewResponseBuffer(sessions[0])
++	applyOper(client, oper, rb)
++	rb.Send(true)
++}
++
++// revokeAccountOper de-opers client and tells its sessions.
++func revokeAccountOper(client *Client) {
++	applied := ApplyUserModeChanges(client, modes.ModeChanges{{Mode: modes.Operator, Op: modes.Remove}}, true, nil)
++	if len(applied) == 0 {
++		return
++	}
++	details := client.Details()
++	args := append([]string{details.nick}, applied.Strings()...)
++	for _, session := range client.Sessions() {
++		session.Send(nil, client.server.name, "MODE", args...)
++	}
++	client.server.logger.Info("opers", details.nick, "lost account-bound operator status")
++}
++
++// syncAccountOper brings one client in line with oper (nil = not an
++// operator). Clients opered with /OPER are left alone.
++func syncAccountOper(client *Client, oper *Oper) {
++	current := client.Oper()
++	switch {
++	case current != nil && current.account == "":
++		// /OPER: not ours
++	case oper == nil:
++		if current != nil {
++			revokeAccountOper(client)
++		}
++	case current == nil:
++		// a client still registering gets its login's grant at registration
++		if client.Registered() {
++			grantAccountOper(client, oper)
++		}
++	default:
++		// already an account-bound oper: switch class / whois-line quietly
++		client.SetOper(oper)
++	}
++}
++
++// ApplyAccountGrants applies g to accountName and to all its clients now.
++// It returns the number of clients whose oper status was synced.
++func (am *AccountManager) ApplyAccountGrants(accountName string, g AccountGrants) (clients int, err error) {
++	cfAccount, err := CasefoldName(accountName)
++	if err != nil {
++		return 0, errAccountDoesNotExist
++	}
++	if _, err = am.LoadAccount(cfAccount); err != nil {
++		return 0, err
++	}
++	config := am.server.Config()
++	if g.VHost != nil && !config.validGrantedVHost(*g.VHost) {
++		return 0, errVHostBadCharacters
++	}
++	var oper *Oper
++	if g.OperClass != nil {
++		if oper, err = config.accountOper(cfAccount, g); err != nil {
++			return 0, err
++		}
++	}
++	if err = am.applyGrantedVHost(cfAccount, g.VHost); err != nil {
++		return 0, err
++	}
++	if g.OperClass == nil {
++		return 0, nil
++	}
++	am.RLock()
++	targets := make([]*Client, len(am.accountToClients[cfAccount]))
++	copy(targets, am.accountToClients[cfAccount])
++	am.RUnlock()
++	for _, client := range targets {
++		syncAccountOper(client, oper)
++	}
++	return len(targets), nil
++}
++
++// refreshAccountOpers re-resolves every account-bound oper against config
++// (after a rehash): class changes apply at once, removed classes de-oper.
++func (server *Server) refreshAccountOpers(config *Config) {
++	for _, client := range server.clients.AllClients() {
++		if refreshed, ok := config.refreshedAccountOper(client.Oper()); ok {
++			syncAccountOper(client, refreshed)
++		}
++	}
++}
+diff --git a/irc/accountopers_test.go b/irc/accountopers_test.go
+new file mode 100644
+index 00000000..118772c4
+--- /dev/null
++++ b/irc/accountopers_test.go
+@@ -0,0 +1,185 @@
++// Copyright (c) 2026 The Ergo contributors
++// released under the MIT license
++
++package irc
++
++import (
++	"encoding/json"
++	"errors"
++	"regexp"
++	"testing"
++)
++
++func accountOpersTestConfig(t *testing.T) *Config {
++	var config Config
++	config.OperClasses = map[string]*OperClassConfig{
++		"helper": {
++			Title:        "Helper",
++			Capabilities: []string{"nofakelag"},
++		},
++		"moderator": {
++			Title:        "Moderator",
++			WhoisLine:    "is a network moderator",
++			Extends:      "helper",
++			Capabilities: []string{"kill", "ban"},
++		},
++	}
++	ocs, err := config.OperatorClasses()
++	if err != nil {
++		t.Fatal(err)
++	}
++	config.operClasses = ocs
++	config.Accounts.VHosts.Enabled = true
++	config.Accounts.VHosts.MaxLength = 64
++	config.Accounts.VHosts.validRegexp = regexp.MustCompile(`^[0-9A-Za-z.\-_/]+$`)
++	return &config
++}
++
++func strPtr(s string) *string {
++	return &s
++}
++
++func TestAuthScriptOutputGrants(t *testing.T) {
++	var output AuthScriptOutput
++	err := json.Unmarshal([]byte(`{"success": true, "accountName": "Alice", "operClass": "moderator", "whoisLine": "is the boss", "vhost": "staff/alice"}`), &output)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !output.Success || output.AccountName != "Alice" {
++		t.Errorf("unexpected output %#v", output)
++	}
++	if output.OperClass == nil || *output.OperClass != "moderator" || output.WhoisLine != "is the boss" || output.VHost == nil || *output.VHost != "staff/alice" {
++		t.Errorf("unexpected grants %#v", output.AccountGrants)
++	}
++
++	// a script that knows nothing about grants: no opinion on anything
++	output = AuthScriptOutput{}
++	if err := json.Unmarshal([]byte(`{"success": true, "accountName": "bob"}`), &output); err != nil {
++		t.Fatal(err)
++	}
++	if output.OperClass != nil || output.VHost != nil {
++		t.Errorf("grants should be unset, got %#v", output.AccountGrants)
++	}
++
++	// explicit "" means "not an operator" / "no vhost", distinct from absent
++	output = AuthScriptOutput{}
++	if err := json.Unmarshal([]byte(`{"success": true, "accountName": "bob", "operClass": "", "vhost": ""}`), &output); err != nil {
++		t.Fatal(err)
++	}
++	if output.OperClass == nil || *output.OperClass != "" || output.VHost == nil || *output.VHost != "" {
++		t.Errorf("explicit empty grants should be set, got %#v", output.AccountGrants)
++	}
++}
++
++func TestAccountOper(t *testing.T) {
++	config := accountOpersTestConfig(t)
++
++	oper, err := config.accountOper("Alice", AccountGrants{OperClass: strPtr("moderator")})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if oper.Name != "alice" || oper.account != "alice" || oper.className != "moderator" {
++		t.Errorf("unexpected oper %#v", oper)
++	}
++	if oper.WhoisLine != "is a network moderator" {
++		t.Errorf("expected the class whois-line, got %q", oper.WhoisLine)
++	}
++	if oper.Pass != nil || oper.Certfp != "" || oper.Auto || oper.Hidden {
++		t.Errorf("account opers have no credentials and are visible: %#v", oper)
++	}
++	for _, capab := range []string{"kill", "ban", "nofakelag"} {
++		if !oper.HasRoleCapab(capab) {
++			t.Errorf("expected capability %s", capab)
++		}
++	}
++	if oper.HasRoleCapab("rehash") {
++		t.Errorf("unexpected capability rehash")
++	}
++
++	oper, err = config.accountOper("alice", AccountGrants{OperClass: strPtr("helper"), WhoisLine: "is a \r\nfriendly\x01 helper "})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if oper.WhoisLine != "is a friendly helper" {
++		t.Errorf("granted whois-line should be used and sanitized, got %q", oper.WhoisLine)
++	}
++
++	for _, g := range []AccountGrants{{}, {OperClass: strPtr("")}, {VHost: strPtr("x")}} {
++		oper, err = config.accountOper("alice", g)
++		if oper != nil || err != nil {
++			t.Errorf("%#v should grant nothing, got %#v, %v", g, oper, err)
++		}
++	}
++
++	_, err = config.accountOper("alice", AccountGrants{OperClass: strPtr("server-admin")})
++	if !errors.Is(err, errUnknownOperClass) {
++		t.Errorf("expected errUnknownOperClass, got %v", err)
++	}
++}
++
++func TestRefreshedAccountOper(t *testing.T) {
++	config := accountOpersTestConfig(t)
++	oper, err := config.accountOper("alice", AccountGrants{OperClass: strPtr("moderator")})
++	if err != nil {
++		t.Fatal(err)
++	}
++	custom, err := config.accountOper("bob", AccountGrants{OperClass: strPtr("moderator"), WhoisLine: "is bob"})
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	// /OPER opers and non-opers are not ours
++	if _, ok := config.refreshedAccountOper(nil); ok {
++		t.Error("nil oper should not be refreshed")
++	}
++	if _, ok := config.refreshedAccountOper(&Oper{Name: "admin", Class: oper.Class}); ok {
++		t.Error("password oper should not be refreshed")
++	}
++
++	// rehash: the class gains a capability and a new whois-line
++	newConfig := accountOpersTestConfig(t)
++	newConfig.OperClasses["moderator"].Capabilities = append(newConfig.OperClasses["moderator"].Capabilities, "samode")
++	newConfig.OperClasses["moderator"].WhoisLine = "is a moderator"
++	ocs, err := newConfig.OperatorClasses()
++	if err != nil {
++		t.Fatal(err)
++	}
++	newConfig.operClasses = ocs
++
++	refreshed, ok := newConfig.refreshedAccountOper(oper)
++	if !ok || refreshed == nil {
++		t.Fatalf("expected a refreshed oper, got %#v %v", refreshed, ok)
++	}
++	if !refreshed.HasRoleCapab("samode") || refreshed.WhoisLine != "is a moderator" || refreshed.account != "alice" {
++		t.Errorf("refreshed oper doesn't follow the new class: %#v", refreshed)
++	}
++	refreshed, _ = newConfig.refreshedAccountOper(custom)
++	if refreshed.WhoisLine != "is bob" {
++		t.Errorf("a granted whois-line should survive a rehash, got %q", refreshed.WhoisLine)
++	}
++
++	// rehash: the class is removed
++	delete(newConfig.operClasses, "moderator")
++	refreshed, ok = newConfig.refreshedAccountOper(oper)
++	if !ok || refreshed != nil {
++		t.Errorf("expected de-oper (nil, true), got %#v %v", refreshed, ok)
++	}
++}
++
++func TestValidGrantedVHost(t *testing.T) {
++	config := accountOpersTestConfig(t)
++	for vhost, valid := range map[string]bool{
++		"":                       true,
++		"staff/alice":            true,
++		"mod.boson.chat":         true,
++		"bad vhost":              false,
++		"bad\nvhost":             false,
++		"ünïcode":                false,
++		string(make([]byte, 65)): false,
++		"a234567890123456789012345678901234567890123456789012345678901234": true,
++	} {
++		if got := config.validGrantedVHost(vhost); got != valid {
++			t.Errorf("validGrantedVHost(%q) = %v, want %v", vhost, got, valid)
++		}
++	}
++}
+diff --git a/irc/accounts.go b/irc/accounts.go
+index 3a568632..9d6180db 100644
+--- a/irc/accounts.go
++++ b/irc/accounts.go
+@@ -1488,10 +1488,12 @@ func (am *AccountManager) AuthenticateByPassphrase(client *Client, accountName s
+ 	}
+ 
+ 	var account ClientAccount
++	var grants AccountGrants
+ 
+ 	defer func() {
+ 		if err == nil {
+ 			am.Login(client, account)
++			am.applyLoginGrants(client, account.Name, grants)
+ 		}
+ 	}()
+ 
+@@ -1506,6 +1508,7 @@ func (am *AccountManager) AuthenticateByPassphrase(client *Client, accountName s
+ 			if output.AccountName != "" {
+ 				accountName = output.AccountName
+ 			}
++			grants = output.AccountGrants
+ 			account, err = am.loadWithAutocreation(accountName, config.Accounts.AuthScript.Autocreate)
+ 			return
+ 		}
+@@ -1538,8 +1541,9 @@ func (am *AccountManager) AuthenticateByOAuthBearer(client *Client, opts oauth2.
+ 	}
+ 
+ 	var username string
++	var grants AccountGrants
+ 	if config.Accounts.AuthScript.Enabled && config.Accounts.OAuth2.AuthScript {
+-		username, err = am.authenticateByOAuthBearerScript(client, config, opts)
++		username, grants, err = am.authenticateByOAuthBearerScript(client, config, opts)
+ 	} else {
+ 		username, err = config.Accounts.OAuth2.Introspect(context.Background(), opts.Token)
+ 	}
+@@ -1550,6 +1554,7 @@ func (am *AccountManager) AuthenticateByOAuthBearer(client *Client, opts oauth2.
+ 	account, err := am.loadWithAutocreation(username, config.Accounts.OAuth2.Autocreate)
+ 	if err == nil {
+ 		am.Login(client, account)
++		am.applyLoginGrants(client, account.Name, grants)
+ 	}
+ 	return err
+ }
+@@ -1569,17 +1574,17 @@ func (am *AccountManager) AuthenticateByJWT(client *Client, token string) (err e
+ 	return err
+ }
+ 
+-func (am *AccountManager) authenticateByOAuthBearerScript(client *Client, config *Config, opts oauth2.OAuthBearerOptions) (username string, err error) {
++func (am *AccountManager) authenticateByOAuthBearerScript(client *Client, config *Config, opts oauth2.OAuthBearerOptions) (username string, grants AccountGrants, err error) {
+ 	output, err := CheckAuthScript(am.server.semaphores.AuthScript, config.Accounts.AuthScript.ScriptConfig,
+ 		AuthScriptInput{OAuthBearer: &opts, IP: client.IP().String()})
+ 
+ 	if err != nil {
+ 		am.server.logger.Error("internal", "failed shell auth invocation", err.Error())
+-		return "", oauth2.ErrInvalidToken
++		return "", grants, oauth2.ErrInvalidToken
+ 	} else if output.Success {
+-		return output.AccountName, nil
++		return output.AccountName, output.AccountGrants, nil
+ 	} else {
+-		return "", oauth2.ErrInvalidToken
++		return "", grants, oauth2.ErrInvalidToken
+ 	}
+ }
+ 
+@@ -2045,7 +2050,7 @@ func unmarshalRegisteredChannels(channelsStr string) (result []string) {
+ 
+ func (am *AccountManager) AuthenticateByCertificateOrCookies(client *Client, certfp string, peerCerts []*x509.Certificate, cookies []RequestCookie, authzid string) (err error) {
+ 
+-	clientAccount, err := am.checkCertOrCookieAuth(client.IP(), certfp, peerCerts, cookies, authzid)
++	clientAccount, grants, err := am.checkCertOrCookieAuth(client.IP(), certfp, peerCerts, cookies, authzid)
+ 	if err != nil {
+ 		return
+ 	}
+@@ -2064,10 +2069,11 @@ func (am *AccountManager) AuthenticateByCertificateOrCookies(client *Client, cer
+ 		}
+ 	}
+ 	am.Login(client, clientAccount)
++	am.applyLoginGrants(client, clientAccount.Name, grants)
+ 	return
+ }
+ 
+-func (am *AccountManager) checkCertOrCookieAuth(ip net.IP, certfp string, peerCerts []*x509.Certificate, cookies []RequestCookie, authzid string) (clientAccount ClientAccount, err error) {
++func (am *AccountManager) checkCertOrCookieAuth(ip net.IP, certfp string, peerCerts []*x509.Certificate, cookies []RequestCookie, authzid string) (clientAccount ClientAccount, grants AccountGrants, err error) {
+ 	defer func() {
+ 		if err != nil {
+ 			return
+@@ -2099,6 +2105,7 @@ func (am *AccountManager) checkCertOrCookieAuth(ip net.IP, certfp string, peerCe
+ 		if err != nil {
+ 			am.server.logger.Error("internal", "failed shell auth invocation", err.Error())
+ 		} else if output.Success && output.AccountName != "" {
++			grants = output.AccountGrants
+ 			clientAccount, err = am.loadWithAutocreation(output.AccountName, config.Accounts.AuthScript.Autocreate)
+ 			return
+ 		}
+diff --git a/irc/api.go b/irc/api.go
+index 2a6dc67c..5e5b85f2 100644
+--- a/irc/api.go
++++ b/irc/api.go
+@@ -3,6 +3,7 @@ package irc
+ import (
+ 	"crypto/subtle"
+ 	"encoding/json"
++	"errors"
+ 	"fmt"
+ 	"net/http"
+ 	"runtime"
+@@ -43,6 +44,9 @@ func newAPIHandler(server *Server) http.Handler {
+ 	api.mux.HandleFunc("POST /v1/ns/saget", api.handleNsSaget)
+ 	api.mux.HandleFunc("POST /v1/ns/saset", api.handleNsSaset)
+ 
++	// account-bound oper status and vhosts from an external system:
++	api.mux.HandleFunc("POST /v1/account_grants", api.handleAccountGrants)
++
+ 	return api
+ }
+ 
+@@ -173,7 +177,7 @@ func (a *ergoAPI) handleCheckAuth(w http.ResponseWriter, r *http.Request) {
+ 	if request.AccountName != "" && request.Passphrase != "" {
+ 		account, err = a.server.accounts.checkPassphrase(request.AccountName, request.Passphrase)
+ 	} else if request.Certfp != "" {
+-		account, err = a.server.accounts.checkCertOrCookieAuth(nil, request.Certfp, nil, nil, "")
++		account, _, err = a.server.accounts.checkCertOrCookieAuth(nil, request.Certfp, nil, nil, "")
+ 	} else {
+ 		err = errAccountInvalidCredentials
+ 	}
+@@ -712,3 +716,45 @@ func (a *ergoAPI) handleList(w http.ResponseWriter, r *http.Request) {
+ 	}
+ 	a.writeJSONResponse(response, w, r)
+ }
++
++type apiAccountGrantsRequest struct {
++	AccountName string `json:"accountName"`
++	AccountGrants
++}
++
++type apiAccountGrantsResponse struct {
++	apiGenericResponse
++	// connected clients of the account whose operator status was synced
++	Clients int `json:"clients"`
++}
++
++// handleAccountGrants applies the same grants an auth-script can return at
++// login (operClass, whoisLine, vhost) to an account and its clients now.
++func (a *ergoAPI) handleAccountGrants(w http.ResponseWriter, r *http.Request) {
++	var request apiAccountGrantsRequest
++	if err := a.decodeJSONRequest(&request, w, r); err != nil {
++		return
++	}
++
++	var response apiAccountGrantsResponse
++	clients, err := a.server.accounts.ApplyAccountGrants(request.AccountName, request.AccountGrants)
++	switch {
++	case err == nil:
++		response.Success = true
++		response.Clients = clients
++	case errors.Is(err, errAccountDoesNotExist), errors.Is(err, errAccountUnverified):
++		response.ErrorCode = "ACCOUNT_DOES_NOT_EXIST"
++	case errors.Is(err, errUnknownOperClass):
++		response.ErrorCode = "UNKNOWN_OPER_CLASS"
++		response.Error = err.Error()
++	case errors.Is(err, errVHostBadCharacters):
++		response.ErrorCode = "INVALID_VHOST"
++	case errors.Is(err, errFeatureDisabled):
++		response.ErrorCode = "FEATURE_DISABLED"
++	default:
++		a.server.logger.Error("api", "could not apply account grants:", err.Error())
++		response.ErrorCode = "UNKNOWN_ERROR"
++	}
++
++	a.writeJSONResponse(response, w, r)
++}
+diff --git a/irc/authscript.go b/irc/authscript.go
+index 05f8f064..342067c4 100644
+--- a/irc/authscript.go
++++ b/irc/authscript.go
+@@ -37,6 +37,8 @@ type AuthScriptOutput struct {
+ 	AccountName string `json:"accountName"`
+ 	Success     bool   `json:"success"`
+ 	Error       string `json:"error"`
++	// optional, on success: operClass, whoisLine, vhost (see accountopers.go)
++	AccountGrants
+ }
+ 
+ func CheckAuthScript(sem utils.Semaphore, config ScriptConfig, input AuthScriptInput) (output AuthScriptOutput, err error) {
+diff --git a/irc/client.go b/irc/client.go
+index 00b156eb..66963a69 100644
+--- a/irc/client.go
++++ b/irc/client.go
+@@ -82,6 +82,7 @@ type Client struct {
+ 	accountName             string // display name of the account: uncasefolded, '*' if not logged in
+ 	accountRegDate          time.Time
+ 	accountSettings         AccountSettings
++	pendingOper             *Oper // account-bound oper grant from the last login
+ 	awayMessage             string
+ 	channels                ChannelSet
+ 	ctime                   time.Time
+@@ -190,6 +191,8 @@ type Session struct {
+ 	deferredFakelagCount int
+ 
+ 	lastOperAttempt time.Time
++	// account-bound oper grant from a SASL login, applied at registration
++	pendingOper *Oper
+ 
+ 	certfp     string
+ 	peerCerts  []*x509.Certificate
+@@ -1736,6 +1739,16 @@ func (client *Client) CheckInvited(casefoldedChannel string, createdTime time.Ti
+ // Implements auto-oper by certfp (scans for an auto-eligible operator block that matches
+ // the client's cert, then applies it).
+ func (client *Client) attemptAutoOper(session *Session) {
++	if oper := session.pendingOper; oper != nil {
++		// account-bound oper from the auth-script (accountopers.go)
++		session.pendingOper = nil
++		if !client.HasMode(modes.Operator) && oper.account == client.Account() {
++			rb := NewResponseBuffer(session)
++			applyOper(client, oper, rb)
++			rb.Send(true)
++			return
++		}
++	}
+ 	if session.certfp == "" || client.HasMode(modes.Operator) {
+ 		return
+ 	}
+diff --git a/irc/config.go b/irc/config.go
+index ab53eb12..c667108e 100644
+--- a/irc/config.go
++++ b/irc/config.go
+@@ -704,7 +704,8 @@ type Config struct {
+ 
+ 	// parsed operator definitions, unexported so they can't be defined
+ 	// directly in YAML:
+-	operators map[string]*Oper
++	operators   map[string]*Oper
++	operClasses map[string]*OperClass
+ 
+ 	Logging []logger.LoggingConfig
+ 
+@@ -868,6 +869,12 @@ type Oper struct {
+ 	Auto      bool
+ 	Hidden    bool
+ 	Modes     []modes.ModeChange
++
++	// set for account-bound opers (see accountopers.go): the casefolded
++	// account, the oper class's name, and the whois-line that was granted
++	account          string
++	className        string
++	accountWhoisLine string
+ }
+ 
+ func (oper *Oper) HasRoleCapab(capab string) bool {
+@@ -1707,6 +1714,7 @@ func LoadConfig(filename string) (config *Config, err error) {
+ 		return nil, err
+ 	}
+ 	config.operators = opers
++	config.operClasses = operclasses
+ 
+ 	// parse default channel modes
+ 	config.Channels.defaultModes = ParseDefaultChannelModes(config.Channels.DefaultModes)
+diff --git a/irc/handlers.go b/irc/handlers.go
+index 6cbcdb85..d903879a 100644
+--- a/irc/handlers.go
++++ b/irc/handlers.go
+@@ -146,6 +146,8 @@ func sendSuccessfulAccountAuth(service *ircService, client *Client, rb *Response
+ 	}
+ 
+ 	client.server.logger.Info("accounts", rb.session.ConnID(), details.nick, "logged into account", details.accountName)
++
++	client.handOffPendingOper(rb)
+ }
+ 
+ func (server *Server) sendLoginSnomask(nickMask, accountName string) {
+diff --git a/irc/server.go b/irc/server.go
+index 03d192fb..c119d313 100644
+--- a/irc/server.go
++++ b/irc/server.go
+@@ -873,6 +873,10 @@ func (server *Server) applyConfig(config *Config) (err error) {
+ 	// activate the new config
+ 	server.config.Store(config)
+ 
++	if !initial {
++		server.refreshAccountOpers(config)
++	}
++
+ 	// load [dk]-lines, registered users and channels, etc.
+ 	if initial {
+ 		if err := server.loadFromDatastore(config); err != nil {
+-- 
+2.56.0
+
