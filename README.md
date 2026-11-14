@@ -7,7 +7,8 @@ voice, and automatic TLS, wired together for your own domain.
 |---|---|---|---|
 | `traefik` | always | Reverse proxy and TLS: gets and renews Let's Encrypt certs for every hostname (or serves a local CA's cert for dev), routes `AUTH_HOST` and the IRC WebSocket | 80, 443 |
 | `certsync` | always | Exports Traefik's certs (`acme.json`, via traefik-certs-dumper) as files for IRC and voice, owned by each service's uid; they hot-reload | – |
-| `ergo` | `irc` | IRC server ([Ergo](https://ergo.chat) 2.19) with built-in NickServ/ChanServ, history, always-on clients. Logins are checked against the auth service | 6697 (TLS), 6667 (optional), `wss://IRC_HOST/webirc` |
+| `ergo` | `irc` | IRC server ([Ergo](https://ergo.chat) 2.19, built with the [account-opers patch](docs/ergo-account-opers.md)) with built-in NickServ/ChanServ, history, always-on clients. Logins are checked against the auth service; network roles become IRC operator classes and vhosts | 6697 (TLS), 6667 (optional), `wss://IRC_HOST/webirc` |
+| `roleserv` | `irc` | `/msg RoleServ`: network roles from any IRC client ([docs/roles.md](docs/roles.md)) | – |
 | `auth` | `auth` | Accounts ([boson-chat/auth](https://github.com/boson-chat/auth)): sign-up, login, sessions, password reset, signed tokens for voice and IRC | via Traefik at `https://AUTH_HOST` |
 | `postgres` | `auth` | Database for `auth` (Postgres 18) | internal |
 | `quicvoiced` | `voice` | Voice rooms over QUIC ([boson-chat/quicvoice](https://github.com/boson-chat/quicvoice)); accepts tokens from `auth`. Static channels from `VOICE_ROOMS` plus channels created through the rooms API at `https://VOICE_HOST/v1/rooms` (optionally under an IRC channel, lockable to IRC roles) | 7700/udp, via Traefik at `https://VOICE_HOST` |
@@ -80,10 +81,17 @@ There is one account per person, held by the auth service:
    `GET https://VOICE_HOST/v1/rooms` (see [docs/voice.md](docs/voice.md)).
 
 Ergo keeps channel registrations, always-on state, history and its own
-per-account settings; passwords live only in the auth service. Ergo's IRC
-operator account is separate (`OPER_NAME` / `OPER_PASSWORD_HASH`, `/OPER`):
-auth admins are not IRC operators (Ergo can't bind opers to accounts), but
-they are admins for voice channels.
+per-account settings; passwords live only in the auth service.
+
+**Network roles are IRC-native** (auth 1.5+, [docs/roles.md](docs/roles.md)):
+roles with IRC operator powers (Owner, Admin, Moderator, custom ones with
+`irc.*` permissions) make their members IRC operators at login, no `/OPER`;
+WHOIS shows the role's line and the hostmask the role's vhost
+(`alice!~u@staff/alice`), in any client, mIRC included. `/msg RoleServ HELP`
+lists roles and members from IRC (and will manage them, once auth has its
+acting API). Ergo is built with a small patch for this
+([docs/ergo-account-opers.md](docs/ergo-account-opers.md)). The emergency
+`/OPER $OPER_NAME` login (`OPER_PASSWORD_HASH`) stays.
 
 **Network settings from the admin panel** (auth service,
 `/internal/v1/settings`) apply at runtime: `channel_creation`
@@ -117,7 +125,9 @@ to its public API (`:8090`), never to `:8080` (`/metrics`).
 
 Details, the JSON formats and examples: [docs/voice.md](docs/voice.md).
 Text channel creation policy, IRC roles and channel locks (exact Ergo
-commands): [docs/irc-channels.md](docs/irc-channels.md).
+commands): [docs/irc-channels.md](docs/irc-channels.md). Network roles on
+IRC, RoleServ, and what the auth service provides for them:
+[docs/roles.md](docs/roles.md).
 
 ## Profiles
 

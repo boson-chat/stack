@@ -131,8 +131,19 @@ services:
       # true = every IRC client must log in (no guests).
       IRC_REQUIRE_SASL: ${IRC_REQUIRE_SASL:-false}
       # Ergo's HTTP API on :8089 for quicvoiced (founder checks, channel
-      # roles). Compose network only: not published, not routed. Empty = off.
+      # roles), RoleServ and the role sync. Compose network only: not
+      # published, not routed. Empty = off.
       ERGO_API_TOKEN: ${ERGO_API_TOKEN:-}
+      # Network roles (docs/roles.md): oper classes from auth's roles, polled
+      # every ROLES_POLL_SECONDS; members' oper class / WHOIS line / vhost
+      # are applied at login and pushed to connected users on a change.
+      IRC_ROLES: ${IRC_ROLES:-true}
+      ROLES_POLL_SECONDS: ${ROLES_POLL_SECONDS:-10}
+      IRC_ROLE_BASE_CAPABILITIES: ${IRC_ROLE_BASE_CAPABILITIES:-nofakelag}
+      AUTH_INTERNAL_URL: http://auth:8081
+      AUTH_PUBLIC_URL: http://auth:8080
+      ERGO_API_URL: http://127.0.0.1:8089
+      ROLESERV_NICK: RoleServ
     volumes:
       - certs_irc:/certs:ro
       - ergo_db:/ircd
@@ -151,6 +162,32 @@ services:
       timeout: 3s
       retries: 3
       start_period: 120s
+
+  # RoleServ: /msg RoleServ HELP. Network roles for any IRC client; changes
+  # are made by auth as the caller's account (docs/roles.md). Same image as
+  # ergo, connects to its services listener (6680, never published).
+  roleserv:
+    <<: *restart
+    profiles: [irc]
+    # Same build as ergo (so `up --build` never pulls an older image for it).
+    build: images/ergo
+    image: harbor.floret.dev/boson/stack-ergo:2.19.1
+    entrypoint: ["/usr/local/bin/boson-ergo"]
+    command: ["roleserv"]
+    environment:
+      ROLESERV_IRC_ADDR: ergo:6680
+      ROLESERV_NICK: RoleServ
+      ERGO_API_URL: http://ergo:8089
+      ERGO_API_TOKEN: ${ERGO_API_TOKEN:-}
+      AUTH_INTERNAL_URL: http://auth:8081
+      AUTH_PUBLIC_URL: http://auth:8080
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-}
+      AUTH_ACTING_TOKEN: ${ROLESERV_AUTH_TOKEN:-}
+      ROLES_POLL_SECONDS: ${ROLES_POLL_SECONDS:-10}
+      IRC_ROLE_BASE_CAPABILITIES: ${IRC_ROLE_BASE_CAPABILITIES:-nofakelag}
+    depends_on:
+      ergo:
+        condition: service_healthy
 
   # ---- auth -----------------------------------------------------------------
   postgres:
@@ -179,7 +216,7 @@ services:
     profiles: [auth]
     # Releases: harbor.floret.dev/boson/auth:<version>. To run an unreleased
     # checkout instead, add compose.auth-src.yaml (see README).
-    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.4.0}
+    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.5.0}
     environment:
       ENV: production
       LOG_LEVEL: ${AUTH_LOG_LEVEL:-info}
@@ -201,6 +238,9 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-}
       SMTP_TLS: ${SMTP_TLS:-starttls}
+      # RoleServ's token for the acting endpoints (/internal/v1/acting/*):
+      # changes made on behalf of the IRC user who asked. docs/roles.md.
+      INTERNAL_ACTING_TOKEN: ${ROLESERV_AUTH_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -227,7 +267,7 @@ services:
   quicvoiced:
     <<: *restart
     profiles: [voice]
-    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.5.0}
+    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.6.0}
     ports:
       - "7700:7700/udp"
     environment:
@@ -305,7 +345,7 @@ services:
   admin:
     <<: *restart
     profiles: [admin]
-    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.3.0}
+    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.4.0}
     environment:
       ENV: production
       PUBLIC_URL: https://${ADMIN_HOST:-admin.${DOMAIN:-localhost}}

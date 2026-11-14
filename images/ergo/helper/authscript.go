@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/boson-chat/stack/images/ergo/helper/internal/roles"
 )
 
 const (
@@ -42,6 +44,10 @@ type scriptOutput struct {
 	// Error is for infrastructure failures only: Ergo logs it as an error.
 	// A wrong password is success=false with no error.
 	Error string `json:"error,omitempty"`
+	// On success: the user's network-role oper class, WHOIS line and vhost
+	// (patched Ergo, see images/ergo/patches and docs/roles.md). Omitted
+	// when auth doesn't know about roles, so nothing changes.
+	roles.Grant
 }
 
 type authClient struct {
@@ -49,6 +55,13 @@ type authClient struct {
 	timeout                           time.Duration
 	http                              *http.Client
 	now                               func() time.Time
+	// roles: nil = IRC_ROLES=false. classes come from the roles cache that
+	// boson-ergo render / watch-settings keep in ERGO_DIR.
+	roles   *roles.Client
+	classes func() []roles.OperClass
+	// reserved: local Ergo service accounts (RoleServ) that must never be
+	// logged into through auth (casefolded).
+	reserved map[string]bool
 }
 
 func newAuthClient(get func(string) string) *authClient {
@@ -56,7 +69,7 @@ func newAuthClient(get func(string) string) *authClient {
 	if d, err := time.ParseDuration(get("AUTH_SCRIPT_TIMEOUT")); err == nil && d > 0 {
 		timeout = d
 	}
-	return &authClient{
+	c := &authClient{
 		verifyURL: strEnv(get, "AUTH_VERIFY_URL", defaultVerifyURL),
 		jwksURL:   strEnv(get, "AUTH_JWKS_URL", defaultJWKSURL),
 		token:     get("INTERNAL_API_TOKEN"),
@@ -64,7 +77,39 @@ func newAuthClient(get func(string) string) *authClient {
 		timeout:   timeout,
 		http:      &http.Client{Timeout: timeout},
 		now:       time.Now,
+		reserved:  reservedAccounts(get),
 	}
+	if rolesEnabled(get) {
+		c.roles = newRolesClient(get)
+		dir := strEnv(get, "ERGO_DIR", "/ircd")
+		c.classes = func() []roles.OperClass {
+			cache, _ := loadRolesCache(dir)
+			classes, _ := classesFor(get, cache)
+			return classes
+		}
+	}
+	return c
+}
+
+// reservedAccounts: ROLESERV_NICK (RoleServ) plus RESERVED_ACCOUNTS
+// (comma-separated). These are local Ergo accounts; a same-named auth user
+// must not be able to log into them.
+func reservedAccounts(get func(string) string) map[string]bool {
+	out := map[string]bool{strings.ToLower(strEnv(get, "ROLESERV_NICK", "RoleServ")): true}
+	for _, a := range strings.Split(get("RESERVED_ACCOUNTS"), ",") {
+		if a = strings.ToLower(strings.TrimSpace(a)); a != "" {
+			out[a] = true
+		}
+	}
+	return out
+}
+
+// grant turns auth's irc object into the Ergo grant (nil irc = no opinion).
+func (c *authClient) grant(irc *roles.UserIRC) roles.Grant {
+	if irc == nil || c.classes == nil {
+		return roles.Grant{}
+	}
+	return roles.GrantFor(c.classes(), *irc)
 }
 
 func authScriptMain(in io.Reader, out io.Writer, c *authClient) int {
@@ -90,8 +135,29 @@ func (c *authClient) handle(in io.Reader) scriptOutput {
 	defer cancel()
 	switch {
 	case req.OAuth2 != nil && req.OAuth2.Token != "":
-		return c.bearer(ctx, req.OAuth2.Username, req.OAuth2.Token)
+		out := c.bearer(ctx, req.OAuth2.Username, req.OAuth2.Token)
+		if out.Success && c.reserved[strings.ToLower(out.AccountName)] {
+			return scriptOutput{}
+		}
+		if out.Success && c.roles != nil {
+			// The token says who, not which roles: ask auth. A disabled
+			// or deleted account doesn't get in (the token may outlive
+			// that); auth being unreachable or too old just means no IRC
+			// role this time.
+			u, err := c.roles.User(ctx, out.AccountName)
+			switch {
+			case err == nil && u.Disabled, errors.Is(err, roles.ErrNotFound):
+				return scriptOutput{}
+			case err == nil:
+				out.Grant = c.grant(&u.IRC)
+			}
+		}
+		return out
 	case req.AccountName != "" && req.Passphrase != "":
+		if c.reserved[strings.ToLower(req.AccountName)] {
+			// Not ours: Ergo checks its own (local) password instead.
+			return scriptOutput{}
+		}
 		return c.password(ctx, req.AccountName, req.Passphrase, req.IP)
 	default:
 		// certfp / cookies: not handled here; Ergo falls back to its own DB.
@@ -130,17 +196,18 @@ func (c *authClient) password(ctx context.Context, user, pass, ip string) script
 		return scriptOutput{Error: fmt.Sprintf("auth service: HTTP %d: %s", resp.StatusCode, bytes.TrimSpace(data))}
 	}
 	var r struct {
-		OK       bool   `json:"ok"`
-		Username string `json:"username"`
-		Reason   string `json:"reason"`
+		OK       bool           `json:"ok"`
+		Username string         `json:"username"`
+		Reason   string         `json:"reason"`
+		IRC      *roles.UserIRC `json:"irc"`
 	}
 	if err := json.Unmarshal(data, &r); err != nil {
 		return scriptOutput{Error: "auth service: bad response: " + err.Error()}
 	}
-	if !r.OK || r.Username == "" {
+	if !r.OK || r.Username == "" || c.reserved[strings.ToLower(r.Username)] {
 		return scriptOutput{}
 	}
-	return scriptOutput{Success: true, AccountName: r.Username}
+	return scriptOutput{Success: true, AccountName: r.Username, Grant: c.grant(r.IRC)}
 }
 
 // bearer verifies a boson access token (EdDSA JWT, typ at+jwt, aud "boson")

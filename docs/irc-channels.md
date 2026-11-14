@@ -42,18 +42,17 @@ account. To make the network logged-in-only, set `IRC_REQUIRE_SASL=true`
 (`accounts.require-sasl.enabled`): every client must authenticate with SASL
 or `PASS user:password`.
 
-### Auth admins and IRC operators
+### Network roles and IRC operators
 
-Ergo's operators are defined in `ircd.yaml` and authenticate with a password
-(`/OPER`) or a TLS client certificate fingerprint. They can't be bound to an
-account, and the auth-script can't grant oper status (its output is only
-success/account name). So **auth-service admins are not automatically IRC
-operators**. Under `admins`, channels are created by someone who has done
-`/OPER $OPER_NAME <password>` (class `server-admin`, which has `chanreg`).
-They can then hand a channel to a user:
+Network roles (auth 1.5+) make staff IRC operators **through their
+account**: anyone holding a role with irc.* permissions (Owner, Admin,
+Moderator, or a custom one) is opered up when they log in with SASL or
+NickServ IDENTIFY, no `/OPER` needed (patched Ergo, see
+[roles.md](roles.md)). Under `channel_creation: admins`, the roles with
+`irc.chanreg` (Owner and Admin by default) can create and register channels,
+and hand them over:
 
 ```
-/OPER admin <password>
 /JOIN #newchannel
 /msg ChanServ REGISTER #newchannel
 /msg ChanServ TRANSFER #newchannel alice           # prints a confirmation code
@@ -62,10 +61,16 @@ They can then hand a channel to a user:
 
 (For an oper with `chanreg` the transfer happens at once; for anyone else
 the recipient must accept with `/msg ChanServ TRANSFER accept #newchannel`.)
+The emergency `/OPER $OPER_NAME <password>` login (class
+`boson.server-admin`, which has `chanreg`) still works.
 
-Voice is different: quicvoiced reads the auth role straight from the voice
-token, so auth admins *are* admins for voice channels (see
-[voice.md](voice.md)).
+Ergo 2.19 has no per-account "may create channels" switch, so the
+`channel.create` permission is not enforced on IRC: under `registered`
+anyone can create a channel by joining it (see above), under `admins` only
+opers with `chanreg` can.
+
+Voice reads the roles from the voice token (`perms`: `voice.create`,
+`voice.manage_any`, `voice.bypass_locks`, see [voice.md](voice.md)).
 
 ## Roles in a channel
 

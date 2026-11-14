@@ -63,7 +63,7 @@ func readConf(t *testing.T, dir string) string {
 func TestRenderPolicyAndAPI(t *testing.T) {
 	dir := t.TempDir()
 	get := testEnv(nil)
-	if _, err := render(get, "", dir, policyRegistered); err != nil {
+	if _, err := render(get, "", dir, policyRegistered, nil); err != nil {
 		t.Fatal(err)
 	}
 	conf := readConf(t, dir)
@@ -71,13 +71,13 @@ func TestRenderPolicyAndAPI(t *testing.T) {
 		strings.Contains(conf, "\napi:") || !strings.Contains(conf, "require-sasl:\n        enabled: false") {
 		t.Fatalf("registered conf:\n%s", conf)
 	}
-	changed, err := render(get, "", dir, policyRegistered)
+	changed, err := render(get, "", dir, policyRegistered, nil)
 	if err != nil || changed {
 		t.Fatalf("re-render same policy: changed=%v err=%v", changed, err)
 	}
 	tok := strings.Repeat("a", 64)
 	get = testEnv(map[string]string{"ERGO_API_TOKEN": tok, "IRC_REQUIRE_SASL": "true"})
-	changed, err = render(get, "", dir, policyAdmins)
+	changed, err = render(get, "", dir, policyAdmins, nil)
 	if err != nil || !changed {
 		t.Fatalf("admins: changed=%v err=%v", changed, err)
 	}
@@ -91,7 +91,7 @@ func TestRenderPolicyAndAPI(t *testing.T) {
 			t.Fatalf("admins conf lacks %q:\n%s", want, conf)
 		}
 	}
-	if _, err := render(testEnv(map[string]string{"ERGO_API_TOKEN": "short"}), "", dir, policyAdmins); err == nil {
+	if _, err := render(testEnv(map[string]string{"ERGO_API_TOKEN": "short"}), "", dir, policyAdmins, nil); err == nil {
 		t.Fatal("short API token accepted")
 	}
 }
@@ -133,16 +133,16 @@ func TestWatchSettingsRehashesOnChange(t *testing.T) {
 	srv := httptest.NewServer(fs)
 	defer srv.Close()
 	dir := t.TempDir()
-	get := testEnv(map[string]string{"AUTH_SETTINGS_URL": srv.URL})
-	if _, err := render(get, "", dir, policyRegistered); err != nil {
+	get := testEnv(map[string]string{"AUTH_SETTINGS_URL": srv.URL, "IRC_ROLES": "false"})
+	if _, err := render(get, "", dir, policyRegistered, nil); err != nil {
 		t.Fatal(err)
 	}
 	var rehashes atomic.Int32
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		watchSettings(ctx, get, "", dir, 10*time.Millisecond, newSettingsClient(get),
-			func() error { rehashes.Add(1); return nil }, t.Logf)
+		w := newWatcher(get, "", dir, 0, func() error { rehashes.Add(1); return nil }, t.Logf)
+		w.run(ctx, 10*time.Millisecond)
 		close(done)
 	}()
 	waitFor := func(cond func() bool, what string) {

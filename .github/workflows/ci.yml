@@ -120,6 +120,13 @@ jobs:
           COMPOSE_PROFILES: irc,voice,auth,metrics,wellknown
         run: docker compose logs
 
+  roles:
+    name: network roles on a real Ergo (patched image + fake auth, RoleServ)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: test/roles/run.sh fake
+
   acme:
     name: ACME path (Pebble → Traefik → certsync → Ergo/quicvoiced)
     runs-on: ubuntu-latest
@@ -130,7 +137,7 @@ jobs:
 
   publish:
     name: publish images to Harbor
-    needs: [helper, smoke, acme]
+    needs: [helper, smoke, roles, acme]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
