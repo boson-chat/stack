@@ -40,6 +40,9 @@ type renderData struct {
 	// Text channel creation (channel_creation from the auth service).
 	ChannelCreation      channelPolicy
 	OperatorOnlyCreation bool
+	// channels.registration.auto-register / expire-after (patched Ergo).
+	ChannelAutoRegister bool
+	ChannelExpireAfter  string
 	// Ergo HTTP API (internal network only), for quicvoiced's founder/role
 	// lookups. Empty token = API off.
 	APIToken    string
@@ -135,17 +138,20 @@ func q(v any) string {
 	return string(b)
 }
 
-// render writes ircd.yaml and ergo.motd for policy and the role oper
+// render writes ircd.yaml and ergo.motd for the network settings and the role oper
 // classes. changed reports whether ircd.yaml's content changed (only then
 // does Ergo need a rehash).
-func render(get func(string) string, tmplPath, dir string, policy channelPolicy, classes []roles.OperClass) (changed bool, err error) {
+func render(get func(string) string, tmplPath, dir string, st netSettings, classes []roles.OperClass) (changed bool, err error) {
 	d, err := buildData(get)
 	if err != nil {
 		return false, err
 	}
 	d.RoleClasses = classes
-	d.ChannelCreation = policy
-	d.OperatorOnlyCreation = policy == policyAdmins
+	d.ChannelCreation = st.ChannelCreation
+	d.OperatorOnlyCreation = st.ChannelCreation == policyAdmins
+	if d.ChannelAutoRegister, d.ChannelExpireAfter, err = channelLifecycle(get, st); err != nil {
+		return false, err
+	}
 	src := defaultTemplate
 	if tmplPath != "" {
 		b, err := os.ReadFile(tmplPath)

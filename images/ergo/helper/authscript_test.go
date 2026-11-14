@@ -139,7 +139,7 @@ func TestRender(t *testing.T) {
 		"OPER_PASSWORD_HASH": "$2a$04$0123456789abcdef0123456789abcdef0123456789abcdef01234",
 		"IRC_PLAINTEXT":      "true",
 	}
-	if _, err := render(func(k string) string { return env[k] }, "", dir, policyRegistered, nil); err != nil {
+	if _, err := render(func(k string) string { return env[k] }, "", dir, netSettings{ChannelCreation: policyRegistered}, nil); err != nil {
 		t.Fatal(err)
 	}
 	d, _ := buildData(func(k string) string { return env[k] })
@@ -147,7 +147,7 @@ func TestRender(t *testing.T) {
 		t.Fatalf("%+v", d)
 	}
 	env["OPER_PASSWORD_HASH"] = "plain"
-	if _, err := render(func(k string) string { return env[k] }, "", dir, policyRegistered, nil); err == nil {
+	if _, err := render(func(k string) string { return env[k] }, "", dir, netSettings{ChannelCreation: policyRegistered}, nil); err == nil {
 		t.Fatal("non-bcrypt oper hash accepted")
 	}
 }

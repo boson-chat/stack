@@ -185,6 +185,35 @@ func (c *Client) Grants(ctx context.Context, etag string) (users []UserGrant, ne
 	return body.Users, resp.Header.Get("ETag"), false, nil
 }
 
+// RemovedAccount is a user deleted or disabled in auth.
+type RemovedAccount struct {
+	Username string    `json:"username"`
+	Reason   string    `json:"reason"` // "deleted" or "disabled"
+	At       time.Time `json:"at"`
+}
+
+// RemovedAccounts fetches one page of GET /internal/v1/irc/accounts/removed
+// (auth >= 1.7): users deleted or disabled after the cursor since ("" = from
+// the beginning), and the cursor to continue from. ErrUnsupported if auth
+// doesn't have it.
+func (c *Client) RemovedAccounts(ctx context.Context, since string, limit int) (accounts []RemovedAccount, next string, err error) {
+	var body struct {
+		Accounts []RemovedAccount `json:"accounts"`
+		Next     string           `json:"next"`
+	}
+	u := fmt.Sprintf("%s/internal/v1/irc/accounts/removed?limit=%d", c.InternalURL, limit)
+	if since != "" {
+		u += "&since=" + url.QueryEscape(since)
+	}
+	if _, err := c.do(ctx, http.MethodGet, u, c.Token, nil, nil, &body); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			err = ErrUnsupported
+		}
+		return nil, "", err
+	}
+	return body.Accounts, body.Next, nil
+}
+
 // Member is one holder of a role.
 type Member struct {
 	ID       string `json:"id"`

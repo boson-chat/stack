@@ -1,8 +1,9 @@
 // boson-ergo is the glue between Ergo and the boson stack:
 //
 //	boson-ergo render          write /ircd/ircd.yaml and /ircd/ergo.motd from the environment
-//	                           and the auth service's channel_creation setting
-//	boson-ergo watch-settings  poll channel_creation; on a change re-render and SIGHUP Ergo
+//	                           and the auth service's network settings (channel creation, auto-register, expiry)
+//	boson-ergo watch-settings  poll the settings; on a change re-render and rehash Ergo
+//	boson-ergo watch-settings  also: erase the Ergo accounts of users deleted in auth
 //	boson-ergo watch-settings  also: re-render the network roles' oper classes, push role changes to Ergo
 //	boson-ergo auth-script     Ergo accounts.auth-script: checks SASL credentials against the auth service
 //	boson-ergo roleserv        RoleServ, the /msg RoleServ service for network roles (docs/roles.md)
@@ -31,18 +32,18 @@ func main() {
 		dir := envOr("ERGO_DIR", "/ircd")
 		logf := log.New(os.Stderr, "boson-ergo render: ", 0).Printf
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		policy := resolvePolicy(ctx, os.Getenv, dir, newSettingsClient(os.Getenv), logf)
+		st := resolveSettings(ctx, os.Getenv, dir, newSettingsClient(os.Getenv), logf)
 		rc := resolveRoles(ctx, os.Getenv, dir, newRolesClient(os.Getenv), logf)
 		cancel()
 		classes, err := classesFor(os.Getenv, rc)
 		if err == nil {
-			_, err = render(os.Getenv, envOr("ERGO_CONFIG_TEMPLATE", ""), dir, policy, classes)
+			_, err = render(os.Getenv, envOr("ERGO_CONFIG_TEMPLATE", ""), dir, st, classes)
 		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "boson-ergo render:", err)
 			os.Exit(1)
 		}
-		logf("channel_creation=%s, %d role oper class(es)", policy, len(classes))
+		logf("%s, %d role oper class(es)", st, len(classes))
 	case "watch-settings":
 		settingsEvery := secondsEnv("SETTINGS_POLL_SECONDS", 30)
 		interval := secondsEnv("ROLES_POLL_SECONDS", 10)

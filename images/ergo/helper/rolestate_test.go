@@ -124,7 +124,7 @@ func TestRenderRoleClasses(t *testing.T) {
 	if err != nil || len(classes) != 2 {
 		t.Fatalf("%v %+v", err, classes)
 	}
-	if _, err := render(get, "", dir, policyRegistered, classes); err != nil {
+	if _, err := render(get, "", dir, netSettings{ChannelCreation: policyRegistered}, classes); err != nil {
 		t.Fatal(err)
 	}
 	conf := readConf(t, dir)

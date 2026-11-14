@@ -198,6 +198,12 @@ channels:
         enabled: true
         operator-only: {{ .OperatorOnlyCreation }}
         max-channels-per-account: 15
+        # channel_auto_register (auth): a logged-in user's new channel is
+        # registered to them when they create it by joining it
+        auto-register: {{ .ChannelAutoRegister }}
+        # channel_expiry_days (auth): registered channels without joins or
+        # messages for this long are unregistered (0 = never)
+        expire-after: {{ .ChannelExpireAfter }}
     list-delay: 0s
     invite-expiration: 24h
 
