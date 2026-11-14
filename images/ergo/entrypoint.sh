@@ -7,6 +7,10 @@
 # roles change (boson-ergo watch-settings: settings every
 # SETTINGS_POLL_SECONDS, default 30; roles every ROLES_POLL_SECONDS, default
 # 10), which also pushes role changes to connected users (docs/roles.md).
+# With BOSON_CONFIG (the stack config file: network.name, irc:) the values
+# there beat the environment; watch-settings re-renders + rehashes when the
+# file changes and serves GET :8098/internal/config/status
+# (docs/irc-channels.md).
 set -eu
 
 CERT_DIR=${CERT_DIR:-/certs}

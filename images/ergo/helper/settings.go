@@ -157,12 +157,19 @@ func resolveSettings(ctx context.Context, get func(string) string, dir string, c
 		logf("network settings: %v; using the last known values (%s)", err, cached)
 		return cached
 	}
+	st = fallbackSettings(get, logf)
+	logf("network settings: %v; using IRC_CHANNEL_CREATION=%q", err, st.ChannelCreation)
+	return st
+}
+
+// fallbackSettings: IRC_CHANNEL_CREATION (default registered), for when
+// auth hasn't answered and nothing is remembered.
+func fallbackSettings(get func(string) string, logf func(string, ...any)) netSettings {
 	fallback, perr := parsePolicy(strEnv(get, "IRC_CHANNEL_CREATION", string(policyRegistered)))
 	if perr != nil {
 		logf("IRC_CHANNEL_CREATION: %v; using admins", perr)
 		fallback = policyAdmins
 	}
-	logf("network settings: %v; using IRC_CHANNEL_CREATION=%q", err, fallback)
 	return netSettings{ChannelCreation: fallback}
 }
 

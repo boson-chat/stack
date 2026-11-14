@@ -134,11 +134,102 @@ Details:
   check); with guests off it shows "up" without the server version, since it
   has no account to finish registering with.
 - **Exemptions**: `localhost` (inside the Ergo container) by default.
-  `IRC_REQUIRE_SASL_EXEMPT` (comma-separated IPs/CIDRs, replaces the
+  `irc.require_sasl_exempt` in the stack config file (or
+  `IRC_REQUIRE_SASL_EXEMPT`, comma-separated IPs/CIDRs; either replaces the
   default) lets e.g. a bouncer or gateway that can't do SASL connect without
   logging in. Don't exempt `STACK_SUBNET`: published ports can reach Ergo
   from the Docker gateway address (e.g. IPv6 clients through docker-proxy),
   which would let guests in.
+
+## Stack config file: `network.name` and `irc:`
+
+With `BOSON_CONFIG` set (the stack sets `/config/boson.yaml`), boson-ergo
+also reads the shared stack config file that the admin panel writes. It
+reads `network.name` and the `irc:` section. Each key stands for an
+environment variable. A key in the file beats the env var, and the env var
+beats the default. An absent key, or one with no value, uses the env var,
+so removing a key resets it. Unknown keys are ignored. Without the file
+(unset, or missing on disk) nothing changes.
+
+```yaml
+version: 1
+network:
+  name: Boson                      # NETWORK_NAME (also the cloak suffix)
+irc:
+  plaintext: false                 # IRC_PLAINTEXT
+  plaintext_port: 6667             # IRC_PLAINTEXT_LISTEN_PORT: Ergo's port in the container
+  require_sasl_exempt: [127.0.0.1/32]  # IRC_REQUIRE_SASL_EXEMPT; [] = default (localhost)
+  roles_poll_seconds: 10           # ROLES_POLL_SECONDS (watch-settings tick)
+  settings_poll_seconds: 30        # SETTINGS_POLL_SECONDS
+  websocket: true                  # IRC_WEBSOCKET (the :8097 listener)
+  websocket_origins: [https://example.com, "https://*.example.com"]  # IRC_WEBSOCKET_ORIGINS
+  oauthbearer: true                # IRC_OAUTHBEARER (SASL OAUTHBEARER)
+  history_expire: 1w               # IRC_HISTORY_EXPIRE (Ergo duration: 12h, 30d, 1w)
+  log_level: info                  # IRC_LOG_LEVEL: debug | info | warn | error
+  persistent_history: true         # IRC_PERSISTENT_HISTORY  (restart required)
+```
+
+Channel and guest policy (`channel_creation`, `guest_access`,
+`channel_auto_register`, `channel_expiry_days`) are not read here. They are
+in the file's `auth:` section, which the auth service reads, and they reach
+Ergo through auth's `/internal/v1/settings` as described above, so the file
+has only one reader for them.
+
+Not in the file: deployment values and secrets. These are `IRC_HOST`,
+`DOMAIN`, `AUTH_*`, `OPER_NAME` / `OPER_PASSWORD_HASH`, `ERGO_API_*`,
+`STACK_SUBNET`, `IRC_SERVICES_LISTENER`, `IRC_MOTD_FILE`,
+`ERGO_CONFIG_TEMPLATE`, `IRC_ROLES` and `IRC_ROLE_BASE_CAPABILITIES` (the
+last two are also read by the separate roleserv container). The auth
+fallbacks `IRC_CHANNEL_*` and `IRC_REQUIRE_SASL` also stay in the env.
+
+**Live reload.** `boson-ergo watch-settings` watches the file. It uses
+fsnotify on the directory, because the admin panel writes the file by
+renaming a temp file over it, plus an mtime poll every 10 s. It debounces
+changes, then validates the two sections.
+
+- **Valid:** it re-renders `ircd.yaml` and rehashes Ergo, over the API or
+  with SIGHUP. Ergo 2.19's rehash applies listener changes too: it opens
+  new listeners and closes removed ones (`setupListeners`). So
+  `plaintext`, `plaintext_port` and `websocket` apply without a restart,
+  and connected clients stay. The log line is `config reloaded`.
+- **Invalid:** it keeps the last good config and logs the error with line
+  and column.
+- **Restart required:** `irc.persistent_history`. Ergo opens the history
+  database only at startup. Until a restart, `ircd.yaml` keeps the value Ergo
+  started with, saved by `boson-ergo render` in
+  `/ircd/boson-config-running.json`. The key is reported in
+  `restart_required`. Network name changes are rehashed (`NETWORK=`, and the
+  cloak suffix for new connections).
+
+The compose file publishes the container's port 6667 (`IRC_PLAINTEXT_PORT`
+is the host side of that mapping). A `plaintext_port` other than 6667 makes
+Ergo listen there, but that port is published only if the compose port
+mapping points at it.
+
+Mount the config **directory** read-only (e.g. `./config:/config:ro`), not
+the single file. A single-file bind mount keeps the old inode after an
+atomic replace and never sees the change.
+
+**Status.** `GET http://ergo:8098/internal/config/status` is served on the
+compose network only. Don't publish it. `CONFIG_STATUS_LISTENER` sets the
+address, and `off` disables it. Ergo has no HTTP API of its own for this,
+so boson-ergo reports for it. Example response:
+
+```json
+{"path":"/config/boson.yaml","loaded_at":"2026-11-14T10:00:00Z","file_mtime":"2026-11-14T09:59:59Z",
+ "ok":false,"error":"line 4, column 25: irc.require_sasl_exempt: \"nope\" is not an IP, CIDR or localhost",
+ "error_line":4,"error_column":25,"restart_required":["irc.persistent_history"]}
+```
+
+- `loaded_at`: when the file in use was rendered and rehashed.
+- `ok: false`: the file is invalid, or the rehash failed. The error is
+  given, and the last good config stays.
+- `file_mtime`: `null` when the file is missing.
+- `restart_required`: keys to apply with `docker compose restart ergo`.
+
+The endpoint answers even without `BOSON_CONFIG`, with `path: ""` and
+`ok: true`. It exists only while `watch-settings` runs, so not with
+`IRC_WATCH_SETTINGS=false`.
 
 ## The Ergo patches
 

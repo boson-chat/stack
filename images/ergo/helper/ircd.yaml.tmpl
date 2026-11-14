@@ -19,8 +19,8 @@ server:
                 key: {{ q .TLSKey }}
             min-tls-version: 1.2
 {{- if .Plaintext }}
-        # Plaintext IRC for legacy clients (IRC_PLAINTEXT=true).
-        ":6667":
+        # Plaintext IRC for legacy clients (irc.plaintext / IRC_PLAINTEXT=true).
+        {{ q (printf ":%d" .PlaintextPort) }}: {}
 {{- end }}
 {{- if .ServicesListener }}
         # Plaintext for in-stack services (RoleServ) on the compose network.

@@ -42,7 +42,8 @@ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 USER ergo
 WORKDIR /ircd
 # 6697 TLS, 6667 plaintext (IRC_PLAINTEXT=true), 8097 WebSocket (behind
-# Traefik), 6680 plaintext for in-stack services (RoleServ; never published)
-EXPOSE 6697 6667 8097 6680
+# Traefik), 6680 plaintext for in-stack services (RoleServ; never published),
+# 8098 boson-ergo's config status (compose network only; never published)
+EXPOSE 6697 6667 8097 6680 8098
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["/ircd-bin/ergo", "run", "--conf", "/ircd/ircd.yaml"]

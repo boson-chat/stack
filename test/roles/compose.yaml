@@ -2,6 +2,8 @@
 # the fake auth (compose.fake.yaml: the whole requested contract, RoleServ
 # writes included) or a real auth checkout (compose.real.yaml). Run with
 # test/roles/run.sh fake|real; nothing here is published beyond loopback.
+# Ergo also reads the stack config file (TEST_CONFIG_DIR/boson.yaml), which
+# smoke-roles.py edits to check live re-render + rehash.
 name: boson-roles-test
 
 x-ergo-env: &ergo-env
@@ -11,7 +13,10 @@ x-ergo-env: &ergo-env
   AUTH_HOST: auth.test
   OPER_NAME: admin
   OPER_PASSWORD_HASH: "$$2a$$04$$0123456789abcdefghijkuSmS9NIl9AOvb4uP8ir2gQoodvhXAvg."
-  IRC_PLAINTEXT: "true"
+  # Plaintext comes from the config file (irc.plaintext: true, run.sh):
+  # the file beats this env value.
+  IRC_PLAINTEXT: "false"
+  BOSON_CONFIG: /config/boson.yaml
   IRC_WEBSOCKET: "false"
   AUTH_VERIFY_URL: http://auth:8081/internal/v1/verify-password
   AUTH_SETTINGS_URL: http://auth:8081/internal/v1/settings
@@ -33,9 +38,15 @@ services:
     image: boson-roles-test-ergo:local
     ports:
       - "127.0.0.1:${TEST_IRC_PORT:-26667}:6667"
+      # irc.plaintext_port: 6668 in the config file (smoke-roles.py)
+      - "127.0.0.1:${TEST_IRC_ALT_PORT:-26668}:6668"
+      # boson-ergo's GET /internal/config/status
+      - "127.0.0.1:${TEST_STATUS_PORT:-28098}:8098"
     environment: *ergo-env
     volumes:
       - ${TEST_CERTS:?}:/certs:ro
+      # The config directory (not the file: an atomic replace swaps the inode).
+      - ${TEST_CONFIG_DIR:?}:/config:ro
     depends_on:
       auth:
         condition: service_healthy
