@@ -529,14 +529,18 @@ services:
       AUTH_JWKS_URL: http://auth:8080/.well-known/jwks.json
       AUTH_PUBLIC_URL: https://${AUTH_HOST}
       TRUSTED_PROXIES: ${STACK_SUBNET:-10.203.53.0/24}
-      # /.well-known/boson-directory.json: name, operator, contact.
+      # /.well-known/boson-directory.json: name, operator, contact. These and
+      # the federation values below are defaults only (directory >= 1.4.0):
+      # change them in the admin panel's Directory page, which stores them in
+      # the directory's database and wins over the env.
       DIRECTORY_NAME: ${DIRECTORY_NAME:-${NETWORK_NAME:-Boson} directory}
       DIRECTORY_PUBLIC_URL: https://${DIRECTORY_HOST:-directory.${DOMAIN:-localhost}}
       DIRECTORY_OPERATOR: ${NETWORK_NAME:-Boson}
       DIRECTORY_CONTACT: ${DIRECTORY_CONTACT:-${ADMIN_EMAIL:-}}
-      # Federation: other directories to import (comma-separated URLs) and the
-      # built-in main peer, on unless DIRECTORY_INCLUDE_MAIN=false (also
-      # switchable at runtime in the admin panel / the directory's Peers page).
+      # Federation: other directories to seed once (comma-separated URLs) and
+      # the built-in main peer, on unless DIRECTORY_INCLUDE_MAIN=false. Add or
+      # remove peers and switch the main directory at runtime in the admin
+      # panel (Directory page) or the directory's own Peers page.
       DIRECTORY_PEERS: ${DIRECTORY_PEERS:-}
       DIRECTORY_MAIN_PEER: ${DIRECTORY_MAIN_PEER:-https://directory.boson.chat}
       DIRECTORY_INCLUDE_MAIN: ${DIRECTORY_INCLUDE_MAIN:-true}
