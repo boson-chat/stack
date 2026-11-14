@@ -17,7 +17,7 @@ voice, and automatic TLS, wired together for your own domain.
 | `docker-proxy` | `admin` | [Socket proxy](https://github.com/wollomatic/socket-proxy) that is the admin panel's only access to Docker: list/inspect containers, logs, stats, start/stop/restart; nothing else, only from `admin`, on an internal network | internal |
 | `directory` | `directory` | Optional: a boson network directory ([boson-chat/directory](https://github.com/boson-chat/directory)): website and paginated `/v1` API where networks list themselves (DNS-verified), federated with other directories; includes directory.boson.chat's listings by default ([docs/directory.md](docs/directory.md)) | via Traefik at `https://DIRECTORY_HOST` |
 | `webroot` | `webroot` | Optional: serves a host directory at `http://WEBROOT_HOST/.well-known/acme-challenge/` for a certbot outside the stack | via Traefik |
-| `wellknown` | `wellknown` | Optional: serves `https://DOMAIN/.well-known/boson.json` (client discovery: IRC, auth and voice endpoints), generated from `.env`. Only when `DOMAIN` points at this server | via Traefik |
+| `wellknown` | `wellknown` | Optional: serves `https://DOMAIN/.well-known/boson.json` (client discovery: IRC, auth and voice endpoints, and the network's branding), generated from `.env`. Only when `DOMAIN` points at this server | via Traefik |
 
 Planned: SSO (OIDC/SAML) in the auth service, video, the admin panel, and the
 desktop client configured from your domain.
@@ -185,6 +185,10 @@ Two places:
   belongs to uid 65532), and every service reloads it live. A key there wins
   over the matching `.env` variable, which is only its default. See
   [docs/config.md](docs/config.md).
+- **`config/branding/`**: the network's branding images (logo, sign-in and
+  pane backgrounds) that `config/boson.yaml` `branding:` names. With the
+  theme and `auth.email` they brand the client and the account emails:
+  [docs/branding.md](docs/branding.md).
 - **`.env`** (see `.env.example`): secrets and deployment values (hosts,
   images, ports, tokens). Changing it takes `docker compose up -d`.
 

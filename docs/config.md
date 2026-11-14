@@ -26,6 +26,11 @@ services). The `.env` variables a key replaced are still read, as that key's
 `docker compose up`) copies the example; it also sets the owner and mode
 each time.
 
+Next to it, `config/branding/` holds the network's branding images (logo,
+sign-in background, pane backgrounds) that `branding.images` names; auth
+serves them. [docs/branding.md](branding.md) covers branding and email
+customization.
+
 Mounts: `admin` mounts `./config` read-write, every other reader (`auth`,
 `ergo`, `roleserv`, `quicvoiced`, `directory`) mounts it read-only. It's the
 **directory** that's mounted, not the file: the panel saves by writing a
@@ -38,8 +43,8 @@ bind mount would keep showing the old file.
 means "use the env value, else the default". Removing a key resets it; the
 panel's **Reset to default** does exactly that.
 
-Each service reads only its own section (`auth:`, `irc:`, `voice:`,
-`directory:`, `admin:`, and the shared `network:`) and ignores keys it
+Each service reads only its own section (`auth:`, `branding:`, `irc:`,
+`voice:`, `directory:`, `admin:`, and the shared `network:`) and ignores keys it
 doesn't know. `version: 1` is required at the top.
 
 ## Keys (schema v1)
@@ -60,6 +65,10 @@ admin needs to change it in the panel.
 | `auth.channel_expiry_days` | int, 0–3650 (0 = never) | `0` | live | auth → ergo | `settings.manage` |
 | `auth.cors_allowed_origins` | list of origins | `AUTH_CORS_ALLOWED_ORIGINS` | live | auth | `settings.manage` |
 | `auth.smtp.host` / `.port` / `.from` / `.tls` | string / int / string / `starttls` \| `tls` \| `none` | `SMTP_HOST` / `SMTP_PORT` / `SMTP_FROM` / `SMTP_TLS` | live | auth | `settings.manage` |
+| `auth.email.sender_name` / `.accent` / `.footer` / `.logo` | string / `#rrggbb` / string / bool | `network.name` / theme accent / none / `true` | live | auth | `settings.manage` (Emails page) |
+| `auth.email.templates.<verification\|password_reset\|account_setup\|invite>.subject` / `.body` | string with `{{variables}}` | Boson's wording | live | auth | `settings.manage` (Emails page) |
+| `branding.theme` | boson-theme/1 without image URLs | Boson's built-in theme | live | auth | `settings.manage` (Branding page) |
+| `branding.images.<slot>` | file name in `config/branding/` | none | live | auth | `settings.manage` (Branding page) |
 | `irc.plaintext` | bool | `IRC_PLAINTEXT` | **restart** (listener) | ergo | `services.manage` |
 | `irc.plaintext_port` | int | `6667` | **restart** (listener) | ergo | hand edit only (compose publishes the container's 6667) |
 | `irc.require_sasl_exempt` | list of IPs/CIDRs | `IRC_REQUIRE_SASL_EXEMPT` | live (rehash) | ergo | `services.manage` |
@@ -94,8 +103,8 @@ still kept in the directory's peer table (`directory.peers` only seeds it).
 
 ## Editing it
 
-**In the admin panel:** Network settings, Directory, Voice, IRC and the
-admin options write the file; the **Config file** page shows it read-only
+**In the admin panel:** Network settings, Branding, Emails, Directory,
+Voice, IRC and the admin options write the file; the **Config file** page shows it read-only
 with its path. The panel keeps your comments, key order and any keys it
 doesn't know, and notes the last save on the `version:` line
 (`# last saved in the admin panel by alice at …`). Two admins saving at

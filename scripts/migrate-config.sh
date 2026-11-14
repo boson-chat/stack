@@ -23,8 +23,8 @@ case "${1:-}" in
 esac
 
 [ -e .env ] || { echo "no .env here; run scripts/setup.sh first" >&2; exit 1; }
+mkdir -p config/branding
 if [ ! -e config/boson.yaml ]; then
-	mkdir -p config
 	cp config/boson.example.yaml config/boson.yaml
 	chmod 644 config/boson.yaml
 	echo "Created config/boson.yaml from config/boson.example.yaml."

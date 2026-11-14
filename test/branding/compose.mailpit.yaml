@@ -1,0 +1,17 @@
+# Mailpit for the branding smoke test (scripts/smoke-branding.py): an SMTP
+# sink on the stack network (mailpit:1025, no TLS, no auth) with its API on
+# http://127.0.0.1:8025 (host only). Test-only; never part of an install.
+#
+#   docker compose -f compose.yaml -f test/branding/compose.mailpit.yaml up -d --no-deps --wait mailpit
+#
+# The smoke test points auth at it through config/boson.yaml auth.smtp.
+services:
+  mailpit:
+    image: axllent/mailpit:v1.33.0
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+      MP_MAX_MESSAGES: "100"
+    ports:
+      - "127.0.0.1:8025:8025"
+    restart: "no"

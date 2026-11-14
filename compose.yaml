@@ -29,6 +29,9 @@ services:
   # service reads its own section and reloads on change. This creates it from
   # config/boson.example.yaml when missing and hands it to uid 65532 (the
   # admin panel's user; everyone else only reads). Exits when done.
+  # config/branding/ holds the network's branding images (docs/branding.md):
+  # the panel writes them there, auth serves them; files dropped in by hand
+  # (sudo cp) are made readable for auth and removable by the panel.
   #
   # Services mount the config DIRECTORY, not the file: the panel saves by
   # writing a temp file and renaming it over boson.yaml, and a single-file
@@ -40,8 +43,11 @@ services:
       - -c
       - >-
         [ -f /config/boson.yaml ] || cp /config/boson.example.yaml /config/boson.yaml;
+        mkdir -p /config/branding &&
         chown 65532:65532 /config /config/boson.yaml &&
-        chmod 755 /config && chmod 644 /config/boson.yaml
+        chown -R 65532:65532 /config/branding &&
+        chmod 755 /config && chmod 644 /config/boson.yaml &&
+        chmod -R u+rwX,go+rX,go-w /config/branding
     volumes:
       - ./config:/config
     restart: "no"
@@ -305,6 +311,8 @@ services:
       # changes made on behalf of the IRC user who asked. docs/roles.md.
       INTERNAL_ACTING_TOKEN: ${ROLESERV_AUTH_TOKEN:-}
     volumes:
+      # Read-only: boson.yaml (auth:, network:, branding:) and the branding
+      # images in config/branding/, served at /v1/branding/assets/.
       - ./config:/config:ro
     depends_on:
       postgres:
@@ -473,7 +481,8 @@ services:
       DIRECTORY_LOCAL_URL: ${ADMIN_DIRECTORY_LOCAL_URL:-}
       DIRECTORY_INTERNAL_TOKEN: ${DIRECTORY_INTERNAL_TOKEN:-}
     volumes:
-      # rw: the panel saves config/boson.yaml (temp file + rename in this dir).
+      # rw: the panel saves config/boson.yaml (temp file + rename in this dir)
+      # and the Branding page's images in config/branding/.
       - ./config:/config
     networks: [default, docker-proxy]
     labels:
@@ -677,7 +686,8 @@ services:
 
   # ---- wellknown (optional) -------------------------------------------------
   # Serves https://DOMAIN/.well-known/boson.json, which the boson client reads
-  # to find this server's IRC, auth and voice endpoints from just the domain.
+  # to find this server's IRC, auth and voice endpoints from just the domain,
+  # and (with auth) the network's branding: https://AUTH_HOST/v1/branding.
   # Only for installs where DOMAIN itself points at this server; add DOMAIN to
   # CERT_HOSTS. Generated from .env at every start (images/wellknown/serve.sh).
   wellknown:

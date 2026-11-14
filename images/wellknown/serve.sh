@@ -7,7 +7,9 @@
 #   WELLKNOWN_SECTIONS  which sections to publish: irc, voice, auth
 #                       (comma-separated; compose defaults it to COMPOSE_PROFILES)
 #   IRC_HOST, IRC_PORT  irc section ({"host","port":6697,"tls":true})
-#   AUTH_HOST           auth section ({"url":"https://AUTH_HOST"})
+#   AUTH_HOST           auth section ({"url":"https://AUTH_HOST"}), plus the
+#                       network's branding: "branding":"https://AUTH_HOST/v1/branding"
+#                       (docs/branding.md)
 #   VOICE_HOST, VOICE_PORT  voice section ({"addr":"VOICE_HOST:7700","url":"https://VOICE_HOST"})
 set -eu
 
@@ -40,7 +42,7 @@ if has irc; then
 fi
 if has auth; then
 	h=$(host AUTH_HOST "${AUTH_HOST:-}")
-	json="$json,\"auth\":{\"url\":\"https://$h\"}"
+	json="$json,\"auth\":{\"url\":\"https://$h\"},\"branding\":\"https://$h/v1/branding\""
 fi
 if has voice; then
 	h=$(host VOICE_HOST "${VOICE_HOST:-}")

@@ -1,19 +1,20 @@
 # boson stack config: config/boson.yaml (docs/config.md)
 #
 # One file for the whole stack's NON-SECRET settings. Every service reads
-# its own section (auth:, irc:, voice:, directory:, admin:, plus network:)
-# and picks up changes within a few seconds: no restart, except for the
-# few keys marked "restart" below (the admin panel offers the restart).
+# its own section (auth:, branding:, irc:, voice:, directory:, admin:,
+# plus network:) and picks up changes within a few seconds: no restart,
+# except for the few keys marked "restart" below (the admin panel offers
+# the restart).
 #
 # Precedence: a value here > the service's env var (.env) > built-in
 # default. A key that's absent (or commented out) means "use the env value".
 # Removing a key resets it to that default.
 #
-# The admin panel edits this file (Network settings, Directory, Voice, IRC,
-# Config file pages). It keeps your comments, key order and unknown keys,
-# and notes who saved last in a comment on the `version:` line. You can also
-# edit it by hand; it belongs to uid 65532 (config-init sets that on every
-# `docker compose up`), so use sudo:
+# The admin panel edits this file (Network settings, Branding, Emails,
+# Directory, Voice, IRC, Config file pages). It keeps your comments, key
+# order and unknown keys, and notes who saved last in a comment on the
+# `version:` line. You can also edit it by hand; it belongs to uid 65532
+# (config-init sets that on every `docker compose up`), so use sudo:
 #
 #   sudo $EDITOR config/boson.yaml
 #
@@ -72,6 +73,82 @@ version: 1
 #     port: 587
 #     from: "Boson <hi@example.com>"
 #     tls: starttls
+#   # How the account emails look and read (docs/branding.md). Every key is
+#   # optional; absent = Boson's default look and wording. The admin panel's
+#   # Emails page edits this, with a preview and a "Send test" button.
+#   email:
+#     # The From display name. Default: network.name. The address itself is
+#     # auth.smtp.from (SMTP_FROM).
+#     sender_name: "Example Chat"
+#     # Buttons and links in the HTML part: #rrggbb. Default: the branding
+#     # theme's accent (branding.theme.colors.accent), else Boson's.
+#     accent: "#7c3aed"
+#     # One line under every email (plain text, no HTML).
+#     footer: "Example Chat · example.com"
+#     # Put the network's logo at the top: branding.images.logo_wide, else
+#     # branding.images.logo. false = no logo.
+#     logo: true
+#     # Subject and body per email; any subset, and either key alone. The body
+#     # is plain text: a blank line starts a paragraph and URLs become links.
+#     # No HTML (it's shown as typed). Variables:
+#     #   {{network}}   network.name        {{username}}  the account
+#     #   {{link}}      the action's URL    {{expires}}   how long {{link}} works
+#     #   {{inviter}}   who sent the invite (invite only)
+#     # An unknown {{name}} stays as it is. Removing a template (or the
+#     # panel's "Reset to default") brings back Boson's wording.
+#     templates:
+#       verification:            # confirm the email address after sign-up
+#         subject: "Confirm your {{network}} account"
+#         body: "Hi {{username}},\n\nConfirm your email address: {{link}}\n\nThe link works for {{expires}}."
+#       password_reset:          # "forgot password"
+#         subject: "Reset your {{network}} password"
+#         body: "Hi {{username}},\n\nSet a new password: {{link}}\n\nThe link works for {{expires}}. If you didn't ask, ignore this email."
+#       account_setup:           # an admin created the account; the user picks a password
+#         subject: "Your {{network}} account is ready"
+#         body: "Hi {{username}},\n\nChoose your password: {{link}}\n\nThe link works for {{expires}}."
+#       invite:                  # an invite to sign up (registration: invite)
+#         subject: "{{inviter}} invited you to {{network}}"
+#         body: "{{inviter}} invited you to {{network}}.\n\nCreate your account: {{link}}\n\nThe invite works for {{expires}}."
+
+# ---- branding: the network's look in the boson client (auth service) --------------
+# Theme colors, pane backgrounds, logo and sign-in background, served to the
+# client at https://AUTH_HOST/v1/branding (and listed in
+# /.well-known/boson.json). Users see it while this network is the active
+# one, unless they turn network themes off. The admin panel's Branding page
+# edits this and uploads the images; docs/branding.md has the whole story.
+# branding:
+#   # The theme (boson-theme/1) without image URLs: those come from `images`.
+#   # Validation: colors #rrggbb only; unknown keys are dropped; at most 16 KB.
+#   theme:
+#     # Tokens you leave out come from Boson's built-in theme of this base:
+#     # dark | light.
+#     base: dark
+#     # Any subset of the client's theme tokens (accent, bg, fg, ...).
+#     colors:
+#       accent: "#7c3aed"
+#       bg: "#0b0b10"
+#     # Nickname colors: saturation and lightness, 0-100.
+#     nick: { saturation: 62, lightness: 64 }
+#     # Corner radius in px, 0-12.
+#     radius: 2
+#     # boson | system (the OS's UI font).
+#     font: boson
+#     # Per pane (servers, channels, messages, members): a background color,
+#     # and for an image (set in `images` below) how much to dim it (0-1),
+#     # blur it (0-24 px) and where to anchor it (center|top|bottom|left|right).
+#     panes:
+#       servers:  { bg: "#0b0b10" }
+#       channels: { bg: "#111118" }
+#       messages: { dim: 0.7, blur: 8, position: center }
+#       members:  { bg: "#111118" }
+#   # Image files in config/branding/ (next to this file), by slot. png,
+#   # jpeg, webp, gif or svg; at most 2 MB and 4096 px on a side. The panel
+#   # names its uploads <slot>-<hash>.<ext>; by hand any name works.
+#   images:
+#     logo: logo.svg                    # square-ish mark: server rail, sidebar, sign-in
+#     logo_wide: wordmark.svg           # optional wordmark: headers and emails
+#     login_background: login.webp      # sign-in / sign-up screen
+#     panes.messages.image: messages.webp   # also panes.servers/channels/members.image
 
 # ---- irc: Ergo (rendered into ircd.yaml by the boson-ergo helper) ----------------
 # irc:

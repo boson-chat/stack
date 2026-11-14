@@ -83,10 +83,11 @@ config_values() {
 }
 
 # write_config: config/boson.yaml from the example plus config_values,
-# unless it exists already (then it's left alone).
+# unless it exists already (then it's left alone), and config/branding/.
 write_config() {
+	# config/branding/: the network's branding images (docs/branding.md).
+	mkdir -p config/branding
 	[ -e config/boson.yaml ] && { echo "config/boson.yaml already exists; left as it is."; return; }
-	mkdir -p config
 	CONFIG_VALUES=$(config_values) awk '{ print } !done && /^version:/ { print ENVIRON["CONFIG_VALUES"]; done = 1 }' \
 		config/boson.example.yaml > config/boson.yaml.tmp
 	chmod 644 config/boson.yaml.tmp
