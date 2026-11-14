@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 # Ergo (https://github.com/ergochat/ergo) built from source with the patches
 # in patches/ (account-bound operator status and vhosts from the auth-script,
-# see docs/roles.md), plus boson-ergo: renders ircd.yaml from the environment,
+# see docs/roles.md; channel auto-registration and expiry, and account
+# removal over the API, see docs/irc-channels.md), plus boson-ergo: renders ircd.yaml from the environment,
 # checks SASL logins against the boson auth service, syncs roles and runs
 # RoleServ.
 ARG ERGO_VERSION=v2.19.1
