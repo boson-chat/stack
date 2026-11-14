@@ -90,8 +90,11 @@ func (c *Client) do(ctx context.Context, method, u, token string, hdr map[string
 	case resp.StatusCode == http.StatusNotModified:
 		return resp, nil
 	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed:
-		var e struct{ Code string }
+		var e struct{ Error, Code string }
 		_ = json.Unmarshal(data, &e)
+		if e.Code == "" {
+			e.Code = e.Error // auth < 1.6 sends the code only in "error"
+		}
 		// A missing user/role is {"code":"not_found"}; anything else is a
 		// route this auth release doesn't have.
 		if strings.HasSuffix(e.Code, "not_found") {
@@ -99,9 +102,17 @@ func (c *Client) do(ctx context.Context, method, u, token string, hdr map[string
 		}
 		return resp, ErrUnsupported
 	case resp.StatusCode < 200 || resp.StatusCode > 299:
-		var e struct{ Error, Code string }
+		// auth sends {"error": code, "code": code, "message": human text};
+		// older releases have no "code" and some errors no "message".
+		var e struct{ Error, Code, Message string }
 		_ = json.Unmarshal(data, &e)
-		return resp, &APIError{Status: resp.StatusCode, Code: e.Code, Message: e.Error}
+		if e.Code == "" {
+			e.Code = e.Error
+		}
+		if e.Message == "" {
+			e.Message = e.Error
+		}
+		return resp, &APIError{Status: resp.StatusCode, Code: e.Code, Message: e.Message}
 	}
 	if out != nil && len(bytes.TrimSpace(data)) > 0 {
 		if err := json.Unmarshal(data, out); err != nil {
