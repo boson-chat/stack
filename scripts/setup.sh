@@ -210,6 +210,8 @@ umask 077
 	# The admin panel's Docker socket proxy runs as nobody:<docker group>.
 	echo "DOCKER_GID=$( (getent group docker 2>/dev/null || true) | cut -d: -f3 | grep . || stat -c %g /var/run/docker.sock 2>/dev/null || echo 999)"
 	echo "API_DB_PASSWORD=$(rand 40)"
+	# The admin panel -> the api's internal port (http://api:3001).
+	echo "API_INTERNAL_TOKEN=$(openssl rand -hex 32)"
 	echo "DIRECTORY_DB_PASSWORD=$(rand 40)"
 	# The directory's operator API (admin panel → directory profile).
 	echo "DIRECTORY_INTERNAL_TOKEN=$(openssl rand -hex 32)"

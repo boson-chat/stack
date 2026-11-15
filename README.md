@@ -180,7 +180,8 @@ Let's Encrypt ──HTTP-01 on :80──▶ traefik ──▶ acme.json (traefik
 Two places:
 
 - **`config/boson.yaml`**: runtime settings (registration, channel rules,
-  email, IRC options, voice rooms, the directory's identity, the admin
+  email, IRC options, voice rooms, the directory's identity, nick claims
+  (off by default, [docs/nick-claim.md](docs/nick-claim.md)), the admin
   panel's options). The admin panel edits it, you can too (`sudo`, it
   belongs to uid 65532), and every service reloads it live. A key there wins
   over the matching `.env` variable, which is only its default. See

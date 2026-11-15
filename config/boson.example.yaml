@@ -1,8 +1,8 @@
 # boson stack config: config/boson.yaml (docs/config.md)
 #
 # One file for the whole stack's NON-SECRET settings. Every service reads
-# its own section (auth:, branding:, irc:, voice:, directory:, admin:,
-# plus network:) and picks up changes within a few seconds: no restart,
+# its own section (auth:, branding:, irc:, voice:, directory:, nick_claim:,
+# admin:, plus network:) and picks up changes within a few seconds: no restart,
 # except for the few keys marked "restart" below (the admin panel offers
 # the restart).
 #
@@ -22,7 +22,8 @@
 # config and logs the error with its line; the admin panel shows it in a
 # banner until it's fixed.
 #
-# Secrets (passwords, tokens, keys, SMTP_USER/SMTP_PASSWORD, DSNs) never go
+# Secrets (passwords, tokens, keys, SMTP_USER/SMTP_PASSWORD,
+# NICK_CLAIM_POP3_PASSWORD, DSNs) never go
 # here: they stay in .env. So do deployment values: hostnames, images,
 # published ports, internal URLs.
 #
@@ -231,6 +232,42 @@ version: 1
 #   # Other directories to federate with. Default: DIRECTORY_PEERS. Peers
 #   # added in the panel are kept in the directory's peer table as before.
 #   peers: [https://dir.example.net]
+
+# ---- nick_claim: register users' nicks on other IRC networks (api profile) ---------
+# Off by default. When on, the boson app can register a user's nick with
+# NickServ on ANOTHER network for them: the api hands NickServ an address
+# like reg+<user>-<token>@<email_domain>, reads the confirmation email from
+# the inbound mailbox and gives the code back to the app. Needs a mailbox
+# that receives every reg+...@<email_domain> (plus-addressing or a
+# catch-all) and the api profile. docs/nick-claim.md has the mail setup and
+# the privacy notes. The admin panel's Nick claims page edits this section
+# and has a "Test connection" button for the mailbox.
+# nick_claim:
+#   # The switch. false: POST /me/nick-claims answers 403
+#   # nick_claim_disabled and the mailbox is never polled.
+#   # Default: NICK_CLAIM_ENABLED (false).
+#   enabled: false
+#   # The domain in the addresses handed to NickServ. Its MX must deliver
+#   # reg+anything@ to the inbound mailbox below. A subdomain (e.g.
+#   # nick.example.com) keeps this mail apart from your own.
+#   # Default: NICK_CLAIM_EMAIL_DOMAIN (DOMAIN).
+#   email_domain: example.com
+#   # Claims one user may start per hour; 429 after that.
+#   # Default: NICK_CLAIM_RATE_LIMIT_PER_HOUR (5).
+#   rate_limit_per_hour: 5
+#   # The mailbox the worker polls every few seconds. Use one that holds
+#   # nothing else: mail that isn't a confirmation for a pending claim is
+#   # DELETED. Separate from auth.smtp (outgoing). The password is a
+#   # secret: NICK_CLAIM_POP3_PASSWORD in .env, never here.
+#   # Defaults: POP3_HOST, POP3_PORT (995), POP3_TLS (true), POP3_USER.
+#   inbound:
+#     # pop3 is the only protocol so far.
+#     protocol: pop3
+#     host: pop3.example.com
+#     # 995 = POP3 over TLS; 110 with tls: false (only on a trusted network).
+#     port: 995
+#     tls: true
+#     user: reg@example.com
 
 # ---- admin: the admin panel itself -----------------------------------------------
 # admin:
