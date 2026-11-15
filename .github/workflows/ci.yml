@@ -283,7 +283,8 @@ jobs:
           mc "echo hi > /tmp/x && mc cp -q /tmp/x f/boson-files/smoke && mc cat f/boson-files/smoke && mc rm f/boson-files/smoke"
           if mc "mc mb f/other-bucket" 2>/dev/null; then echo "files user could create a bucket"; exit 1; fi
           if mc "mc admin info f" 2>/dev/null; then echo "files user has admin access"; exit 1; fi
-          if docker compose port minio 9000 2>/dev/null | grep -q .; then echo "minio published on the host"; exit 1; fi
+          pub=$(docker inspect -f '{{range $p, $b := .NetworkSettings.Ports}}{{if $b}}{{$p}} {{end}}{{end}}' "$(docker compose ps -q minio)")
+          [ -z "$pub" ] || { echo "minio publishes $pub on the host"; exit 1; }
           echo ok
       - name: Logs on failure
         if: failure()
