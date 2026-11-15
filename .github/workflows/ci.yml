@@ -165,6 +165,16 @@ jobs:
           if grep -q '^SKIP ' branding.out; then
             echo "::notice::branding smoke skipped: $(grep -m1 '^SKIP ' branding.out | cut -c6-) (runs once the auth release with branding is the newest; or run this workflow with auth_ref)"
           fi
+      - name: Role channels (private channel, auto-join on login and on role grant, rejoin once; skipped on auth without the role channel API)
+        env:
+          REQUIRE: ${{ inputs.auth_ref != '' }}
+        run: |
+          flags=""; [ "$REQUIRE" = true ] && flags=--require
+          set -o pipefail
+          python3 -u scripts/smoke-role-channels.py $flags | tee role-channels.out
+          if grep -q '^SKIP ' role-channels.out; then
+            echo "::notice::role channels smoke skipped: $(grep -m1 '^SKIP ' role-channels.out | cut -c6-) (runs once the auth release with role channels is the newest; or run this workflow with auth_ref)"
+          fi
       - name: VictoriaMetrics scrapes auth, quicvoiced and traefik
         env:
           COMPOSE_PROFILES: irc,voice,auth,metrics

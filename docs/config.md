@@ -45,7 +45,7 @@ means "use the env value, else the default". Removing a key resets it; the
 panel's **Reset to default** does exactly that.
 
 Each service reads only its own section (`auth:`, `branding:`, `irc:`,
-`voice:`, `directory:`, `nick_claim:`, `files:`, `admin:`, and the shared `network:`) and ignores keys it
+`voice:`, `directory:`, `nick_claim:`, `files:`, `roles:`, `admin:`, and the shared `network:`) and ignores keys it
 doesn't know. `version: 1` is required at the top.
 
 ## Keys (schema v1)
@@ -97,6 +97,8 @@ admin needs to change it in the panel.
 | `nick_claim.rate_limit_per_hour` | int | `NICK_CLAIM_RATE_LIMIT_PER_HOUR` (`5`) | live | api | `settings.manage` |
 | `nick_claim.inbound.protocol` | `pop3` | `pop3` | live | api | `settings.manage` |
 | `nick_claim.inbound.host` / `.port` / `.tls` / `.user` | string / int / bool / string | `POP3_HOST` / `POP3_PORT` (`995`) / `POP3_TLS` (`true`) / `POP3_USER` | live (the worker reconnects) | api | `settings.manage` |
+| `roles.channels.autojoin` | bool | `ROLE_CHANNELS_AUTOJOIN` (`false`) | live | auth → roleserv | `roles.manage` (Roles page) |
+| `roles.channels.rejoin` | `login` \| `once` | `ROLE_CHANNELS_REJOIN` (`login`) | live | auth → roleserv | `roles.manage` (Roles page) |
 | `files.enabled` | bool | `FILES_ENABLED` (`false`) | live | files, auth (`files_url`) | `settings.manage` (Uploads page) |
 | `files.retention`, `files.window` | duration | `72h` | live | files | `settings.manage` |
 | `files.account.quota` / `.max_file` | size (`5GB`, `100MB`; decimal, `GiB` for binary) | `5GB` / `100MB` | live | files | `settings.manage` |

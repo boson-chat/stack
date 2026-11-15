@@ -465,3 +465,19 @@ func TestParse(t *testing.T) {
 		t.Errorf("%+v", m)
 	}
 }
+
+func TestLoginAccount(t *testing.T) {
+	for text, want := range map[string]string{
+		"\x0314-\x0fACCOUNT\x0314-\x03 Client \x0314[\x0falice!~a@host\x0314]\x0f logged into account \x0314[\x0fAlice\x0314]": "Alice",
+		"-ACCOUNT- Client [bob!b@h] logged into account [bob]":                                                                 "bob",
+	} {
+		if got, ok := LoginAccount(text); !ok || got != want {
+			t.Errorf("LoginAccount(%q) = %q, %v", text, got, ok)
+		}
+	}
+	for _, text := range []string{"-ACCOUNT- Client [x] registered account [y] from IP 1.2.3.4", "-CONNECT- Client connected [x]", "logged into account [x]"} {
+		if _, ok := LoginAccount(text); ok {
+			t.Errorf("LoginAccount(%q) matched", text)
+		}
+	}
+}

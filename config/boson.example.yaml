@@ -2,7 +2,7 @@
 #
 # One file for the whole stack's NON-SECRET settings. Every service reads
 # its own section (auth:, branding:, irc:, voice:, directory:, nick_claim:,
-# files:, admin:, plus network:) and picks up changes within a few seconds: no restart,
+# files:, roles:, admin:, plus network:) and picks up changes within a few seconds: no restart,
 # except for the few keys marked "restart" below (the admin panel offers
 # the restart).
 #
@@ -186,6 +186,18 @@ version: 1
 #   history_expire: 7d
 #   # Ergo's log level: debug, info, warn, error.
 #   log_level: info
+
+# ---- roles: role channels (auth; enforced by RoleServ) ----------------------------
+# Channels are attached to roles (and "everyone") and marked private in the
+# admin panel's Roles page; see docs/roles.md "Role channels".
+# roles:
+#   channels:
+#     # RoleServ joins members to their roles' auto-join channels when they
+#     # log in and when they gain a role. Default: ROLE_CHANNELS_AUTOJOIN (false).
+#     autojoin: false
+#     # login: at every login, even after a /part. once: only the first time
+#     # a role gives the channel (a /part sticks). Default: login.
+#     rejoin: login
 
 # ---- voice: quicvoiced ----------------------------------------------------------
 # voice:
