@@ -279,10 +279,13 @@ version: 1
 # section; auth reads files.enabled too (files_url in its GET /v1/config,
 # so apps only offer uploads while it's on).
 #
-# Sizes: a whole number and B, KB, MB, GB or TB, no space (5GB, 500MB);
-# binary units (1GB = 1024MB). Durations: Go durations (72h, 30m, 90s).
+# Sizes: a byte count or a number with a unit (5GB, 500MB). KB/MB/GB/TB are
+# decimal (1GB = 1000MB = 1,000,000,000 bytes); KiB/MiB/GiB/TiB are binary
+# (1GiB = 1024MiB). Durations: Go durations (72h, 30m, 90s).
+# Everything applies live except storage.driver and storage.s3.*, which
+# need a restart of files (docker compose restart files; the panel offers it).
 # files:
-#   # The switch. false: uploads answer 403 and apps hide the attach
+#   # The switch. false: uploads answer 503 uploads_disabled and apps hide the attach
 #   # button. Existing files stay until they expire.
 #   # Default: FILES_ENABLED (false).
 #   enabled: false
@@ -304,8 +307,15 @@ version: 1
 #   storage:
 #     # local: the files_data volume. s3: any S3-compatible store (the
 #     # minio profile, Cloudflare R2, AWS S3).
-#     driver: local
-#     s3:
+#     driver: local     # restart
+#     # Refuse uploads (507 storage_full) that would leave less than this
+#     # free. local: the volume's free space. s3: what's left of capacity.
+#     min_free: 2GB
+#     # s3 only, optional: a total budget for what files keeps in the bucket
+#     # (S3 has no free-space API), e.g. 15GB for the minio profile on a
+#     # VPS disk with ~24 GB free. Without it s3 has no guard.
+#     # capacity: 15GB
+#     s3:               # restart
 #       # minio profile: http://minio:9000. R2:
 #       # https://<account id>.r2.cloudflarestorage.com.
 #       endpoint: ""

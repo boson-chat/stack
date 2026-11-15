@@ -82,6 +82,12 @@ services:
       - --entrypoints.web.http.redirections.entrypoint.scheme=https
       - --entrypoints.websecure.address=:443
       - --entrypoints.websecure.http.tls=true
+      # Uploads (files profile) may take up to FILES_UPLOAD_TIMEOUT (30m) to
+      # send their body; Traefik's default read timeout (60s) would cut
+      # them off. Applies to the whole entrypoint (there's only one :443);
+      # idle keep-alive connections still close after 180s.
+      - --entrypoints.websecure.transport.respondingtimeouts.readtimeout=${TRAEFIK_READ_TIMEOUT:-35m}
+      - --entrypoints.websecure.transport.respondingtimeouts.idletimeout=${TRAEFIK_IDLE_TIMEOUT:-180s}
       # Drop headers like X_Forwarded_For that alias the ones Traefik sets.
       - --entrypoints.web.http.aliasheadersstrategy=delete
       - --entrypoints.websecure.http.aliasheadersstrategy=delete
@@ -732,13 +738,20 @@ services:
       FILES_PUBLIC_URL: https://${FILES_HOST:-files.${DOMAIN:-localhost}}
       # The admin panel's calls (X-Internal-Token on :3001).
       INTERNAL_TOKEN: ${FILES_INTERNAL_TOKEN:-}
-      # Signs guest upload tokens (POST /v1/guest-token).
+      # Signs guest upload tokens (POST /v1/guest-token), 16+ characters.
+      # Empty: guests are off.
       FILES_GUEST_SECRET: ${FILES_GUEST_SECRET:-}
+      FILES_GUEST_TOKENS_PER_HOUR: ${FILES_GUEST_TOKENS_PER_HOUR:-10}
+      # How long one upload may take to send its body (Traefik's
+      # TRAEFIK_READ_TIMEOUT must be longer).
+      FILES_UPLOAD_TIMEOUT: ${FILES_UPLOAD_TIMEOUT:-30m}
       # config/boson.yaml (files:) wins over the env defaults.
       BOSON_CONFIG: /config/boson.yaml
       # Default; config/boson.yaml files.enabled wins.
       FILES_ENABLED: ${FILES_ENABLED:-false}
       # Accounts: the stack's auth access tokens, checked against its JWKS.
+      # The JWKS URL is set explicitly: the default ($AUTH_ISSUER/.well-known/
+      # jwks.json) is the public host, which doesn't resolve in the network.
       AUTH_ISSUER: https://${AUTH_HOST}
       AUTH_JWKS_URL: http://auth:8080/.well-known/jwks.json
       DATABASE_URL: postgres://${FILES_DB_USER:-files}:${FILES_DB_PASSWORD:-}@postgres:5432/${FILES_DB_NAME:-files}?sslmode=disable
@@ -750,6 +763,8 @@ services:
       FILES_S3_SECRET_KEY: ${FILES_S3_SECRET_KEY:-}
       # Client IPs (guest quotas, rate limits) from Traefik's X-Forwarded-For.
       TRUSTED_PROXIES: ${STACK_SUBNET:-10.203.53.0/24}
+    # Distroless (uid 65532, no shell or curl): no healthcheck; /healthz and
+    # /readyz are on :3001 for the admin panel.
     volumes:
       - files_data:/data
       - ./config:/config:ro
@@ -771,18 +786,19 @@ services:
 
   # ---- minio (optional): an S3-compatible bucket for files ---------------------
   # For files with storage.driver: s3 on this host. Internal only: the S3 API
-  # (9000) and the console (9001) are neither published nor routed; files
+  # (9000) isn't published or routed and the web console is off; files
   # proxies every download through /f/. Upstream MinIO no longer publishes
-  # images, so this uses the pgsty community builds (same code, RELEASE tags).
-  # Then in config/boson.yaml: files.storage: { driver: s3, s3: { endpoint:
+  # images: this is Bitnami's last build (bitnamilegacy). It creates the
+  # bucket itself (MINIO_DEFAULT_BUCKETS). Then in config/boson.yaml:
+  # files.storage: { driver: s3, capacity: 15GB, s3: { endpoint:
   # "http://minio:9000", bucket: boson-files, region: auto, path_style: true } }.
   # docs/files.md.
   minio:
     <<: *restart
     profiles: [minio]
-    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
-    # Refuses to start without root credentials (MinIO would fall back to
-    # minioadmin/minioadmin). Checked here, not with ${VAR:?}, so installs
+    image: bitnamilegacy/minio:2025.7.23-debian-12-r5
+    # Refuses to start without root credentials (the image would fall back
+    # to minio/miniosecret). Checked here, not with ${VAR:?}, so installs
     # without the profile don't need them.
     entrypoint: ["sh", "-ec"]
     command:
@@ -791,28 +807,32 @@ services:
           echo "minio: set MINIO_ROOT_USER and MINIO_ROOT_PASSWORD in .env (scripts/setup.sh)" >&2
           exit 1
         fi
-        exec /usr/bin/docker-entrypoint.sh minio server /data --console-address :9001
+        exec /opt/bitnami/scripts/minio/entrypoint.sh /opt/bitnami/scripts/minio/run.sh
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
-      MINIO_BROWSER_REDIRECT: "off"
+      MINIO_DEFAULT_BUCKETS: ${FILES_S3_BUCKET:-boson-files}
+      # The web console: off (to use it: MINIO_BROWSER=on and an SSH tunnel
+      # to port 9001, docs/files.md).
+      MINIO_BROWSER: ${MINIO_BROWSER:-off}
     # Sized for a 2 GB VPS.
     mem_limit: ${MINIO_MEM_LIMIT:-320m}
     volumes:
-      - minio_data:/data
+      - minio_data:/bitnami/minio/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:9000/minio/health/live"]
       interval: 10s
       timeout: 5s
       retries: 12
-      start_period: 10s
+      start_period: 20s
 
-  # Creates the bucket and the files service's own user (FILES_S3_ACCESS_KEY
-  # / FILES_S3_SECRET_KEY) with a policy limited to that bucket, then exits.
-  # Idempotent: safe on every `up`; a changed secret key is applied.
+  # The files service's own user (FILES_S3_ACCESS_KEY / FILES_S3_SECRET_KEY)
+  # with a policy limited to its bucket, then exits. Idempotent: safe on
+  # every `up`; a changed secret key is applied. (The image has no cat or
+  # grep: shell builtins only.)
   minio-init:
     profiles: [minio]
-    image: pgsty/mc:RELEASE.2026-10-26T00-00-00Z
+    image: bitnamilegacy/minio-client:2025.7.21-debian-12-r3
     entrypoint: ["sh", "-ec"]
     command:
       - |
@@ -822,20 +842,16 @@ services:
         fi
         mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null
         mc mb --ignore-existing "local/$$BUCKET"
-        cat > /tmp/policy.json <<EOF
-        {"Version":"2012-10-17","Statement":[
-         {"Effect":"Allow","Action":["s3:ListBucket","s3:GetBucketLocation"],"Resource":["arn:aws:s3:::$$BUCKET"]},
-         {"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::$$BUCKET/*"]}]}
-        EOF
+        printf '%s' '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:ListBucket","s3:GetBucketLocation"],"Resource":["arn:aws:s3:::'"$$BUCKET"'"]},{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::'"$$BUCKET"'/*"]}]}' > /tmp/policy.json
         mc admin policy create local boson-files /tmp/policy.json
         mc admin user add local "$$FILES_S3_ACCESS_KEY" "$$FILES_S3_SECRET_KEY"
-        # (no grep in the mc image)
         case "$$(mc admin policy entities local --user "$$FILES_S3_ACCESS_KEY")" in
         *boson-files*) echo "policy already attached" ;;
         *) mc admin policy attach local boson-files --user "$$FILES_S3_ACCESS_KEY" ;;
         esac
         echo "minio-init: bucket $$BUCKET, user $$FILES_S3_ACCESS_KEY (policy boson-files)"
     environment:
+      MC_CONFIG_DIR: /tmp/.mc
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
       BUCKET: ${FILES_S3_BUCKET:-boson-files}

@@ -4,7 +4,7 @@ auth + files + wellknown, config/boson.yaml with a files: section that has
 enabled: true and short test limits, see .github/workflows/ci.yml):
 
   retention 20s, window 30s, account quota 3MB / max_file 2MB,
-  guest quota 1MB / max_file 512KB
+  guest quota 1MB / max_file 512KB (decimal: 1MB = 1,000,000 bytes)
 
 1. https://FILES_HOST/v1/config through Traefik: enabled, the test limits.
 2. An account uploads (POST /v1/files, raw body): 201 + fields, image size.
@@ -17,12 +17,13 @@ enabled: true and short test limits, see .github/workflows/ci.yml):
    max_file applies.
 7. The internal API (:3001) isn't routed by Traefik.
 8. Discovery: boson.json files.url, auth /v1/config files_url.
+   Storage guard: storage.min_free above the free space -> 507 storage_full.
 9. Expiry: the png is gone (404/410) after retention.
 10. Rolling window: the refused upload fits once the old uploads leave it.
 
   scripts/smoke-files.py [--addr 127.0.0.1] [--ca local-certs/ca.pem]
 """
-import argparse, http.client, json, os, secrets, socket, ssl, struct, sys, time, urllib.parse, zlib
+import argparse, http.client, subprocess, json, os, secrets, socket, ssl, struct, sys, time, urllib.parse, zlib
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 p = argparse.ArgumentParser()
@@ -33,9 +34,9 @@ p.add_argument("--domain", default="localhost")
 p.add_argument("--ca", default=os.path.join(ROOT, "local-certs", "ca.pem"),
                help="CA to verify TLS with (default: the local CA); 'none' skips verification")
 # The limits written by CI (bytes, seconds).
-p.add_argument("--quota", type=int, default=3 << 20)
-p.add_argument("--max-file", type=int, default=2 << 20)
-p.add_argument("--guest-max-file", type=int, default=512 << 10)
+p.add_argument("--quota", type=int, default=3_000_000)
+p.add_argument("--max-file", type=int, default=2_000_000)
+p.add_argument("--guest-max-file", type=int, default=512_000)
 p.add_argument("--retention", type=int, default=20)
 p.add_argument("--window", type=int, default=30)
 args = p.parse_args()
@@ -76,10 +77,9 @@ def https(host, method, path, body=None, headers=None, auth=None):
 def files(method, path, **kw): return https(args.files_host, method, path, **kw)
 
 def err_code(body):
+    """Errors are {error, message, code, ...}."""
     if not isinstance(body, dict): return ""
-    e = body.get("error")
-    if isinstance(e, dict): return e.get("code", "")
-    return e or body.get("code", "")
+    return body.get("code") or body.get("error") or ""
 
 def png(w=1, h=1):
     def chunk(t, d): return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
@@ -113,7 +113,7 @@ acc = (c.get("limits") or {}).get("account") or {}
 gst = (c.get("limits") or {}).get("guest") or {}
 check("config: account limits from config/boson.yaml", acc.get("quota_bytes") == args.quota and acc.get("max_file_bytes") == args.max_file
       and acc.get("window_seconds") == args.window, acc)
-check("config: guest limits, guest_enabled, retention", c.get("guest_enabled") is True and gst.get("max_file_bytes") == args.guest_max_file
+check("config: guest limits, guest_enabled, accounts_enabled, retention", c.get("guest_enabled") is True and c.get("accounts_enabled") is True and gst.get("max_file_bytes") == args.guest_max_file
       and c.get("retention_seconds") == args.retention, c)
 
 # 2. an account
@@ -127,7 +127,7 @@ if not check("auth login", st == 200 and tok, st): sys.exit(1)
 bearer = "Bearer " + tok
 
 st, _, r = files("POST", "/v1/files", body=b"x", headers={"Content-Type": "text/plain", "X-Filename": "a.txt", "Content-Length": "1"})
-check("upload without a token is refused", st == 401, (st, r))
+check("upload without a token: 401 unauthenticated", st == 401 and err_code(r) == "unauthenticated", (st, r))
 
 img = png(3, 2)
 st, _, f_png = upload(img, "smoke pic.png", "image/png", bearer)
@@ -146,6 +146,7 @@ check("nosniff", h.get("x-content-type-options", "").lower() == "nosniff", h)
 csp = h.get("content-security-policy", "")
 check("CSP sandbox; default-src 'none'", "sandbox" in csp and "default-src 'none'" in csp, csp)
 check("png inline", h.get("content-disposition", "").lower().startswith("inline"), h.get("content-disposition"))
+check("CORS *, X-File-Expires-At, ETag", h.get("access-control-allow-origin") == "*" and h.get("x-file-expires-at") and h.get("etag"), h)
 check("Cache-Control public, max-age", "public" in h.get("cache-control", "") and "max-age=" in h.get("cache-control", ""), h.get("cache-control"))
 st, h, body = files("GET", path_of(f_png["url"]), headers={"Range": "bytes=0-7"})
 check("Range request: 206, 8 bytes", st == 206 and body == img[:8] and h.get("content-range", "").startswith("bytes 0-7/"), (st, h.get("content-range")))
@@ -156,7 +157,8 @@ for name, ctype, data in (("x.svg", "image/svg+xml", b'<svg xmlns="http://www.w3
     if not check(f"upload {name}", st == 201, (st, f)): continue
     st, h, _ = files("GET", path_of(f["url"]))
     check(f"{name} is served as an attachment with the sandbox CSP",
-          st == 200 and h.get("content-disposition", "").lower().startswith("attachment") and "sandbox" in h.get("content-security-policy", ""),
+          st == 200 and h.get("content-disposition", "").lower().startswith("attachment") and "sandbox" in h.get("content-security-policy", "")
+          and h.get("content-type", "").startswith("application/octet-stream"),
           (st, h.get("content-disposition"), h.get("content-type")))
 
 # 4. limits
@@ -186,13 +188,13 @@ st, _, u = files("GET", "/v1/me/usage", auth=bearer)
 check("/v1/me/usage shape", st == 200 and isinstance(u, dict) and all(k in u for k in ("used", "quota", "window_seconds", "max_file", "frees"))
       and u["quota"] == args.quota and u["used"] >= chunk1 and isinstance(u["frees"], list), (st, u))
 st, _, l = files("GET", "/v1/me/files", auth=bearer)
-ids = [x.get("id") for x in (l.get("files", l) if isinstance(l, dict) else l or [])] if st == 200 else []
+ids = [x.get("id") for x in l["files"]] if st == 200 and isinstance(l, dict) and isinstance(l.get("files"), list) else []
 check("/v1/me/files lists live files only", st == 200 and f_png["id"] in ids and (not f_big or f_big.get("id") not in ids), (st, ids))
 
 # 6. guests
 st, _, g = files("POST", "/v1/guest-token")
 gtok = g.get("token") if isinstance(g, dict) else None
-check("POST /v1/guest-token", st in (200, 201) and gtok, (st, g))
+check("POST /v1/guest-token: 201 {token, expires_at, limits}", st == 201 and gtok and "expires_at" in g and "limits" in g, (st, g))
 if gtok:
     st, _, f = upload(b"hello guest\n", "guest.txt", "text/plain", "Guest " + gtok)
     check("guest upload 201", st == 201, (st, f))
@@ -203,7 +205,26 @@ if gtok:
     st, _, r = upload(b"\0" * (args.guest_max_file + 1), "g.bin", "application/octet-stream", "Guest " + gtok)
     check("guest max_file: 413 file_too_large", st == 413 and err_code(r) == "file_too_large", (st, r))
     st, _, r = upload(b"x", "x.txt", "text/plain", "Guest " + gtok[:-2] + ("AA" if not gtok.endswith("AA") else "BB"))
-    check("forged guest token refused", st == 401, (st, r))
+    check("forged guest token: 401 invalid_guest_token", st == 401 and err_code(r) == "invalid_guest_token", (st, r))
+
+# 6b. storage guard: storage.min_free bigger than any disk -> 507 storage_full
+CONFIG = os.path.join(ROOT, "config", "boson.yaml")
+def write_config(text):
+    # config/boson.yaml belongs to uid 65532 (config-init): write through sudo when needed.
+    try:
+        with open(CONFIG, "w") as f: f.write(text)
+    except PermissionError:
+        subprocess.run(["sudo", "tee", CONFIG], input=text.encode(), stdout=subprocess.DEVNULL, check=True)
+original = open(CONFIG).read()
+if "\nfiles:\n" in "\n" + original:
+    write_config(original.replace("\nfiles:\n", "\nfiles:\n  storage: { min_free: 1000TB }\n", 1))
+    ok, last = wait("507", lambda: (lambda r: (r[0] == 507, (r[0], r[2])))(upload(b"tiny\n", "t.txt", "text/plain", bearer)), 60)
+    check("min_free over the free space: 507 storage_full", ok and err_code(last[1]) == "storage_full", last)
+    write_config(original)
+    ok, last = wait("upload again", lambda: (lambda r: (r[0] == 201, (r[0], r[2])))(upload(b"tiny\n", "t.txt", "text/plain", bearer)), 60)
+    check("min_free restored: uploads work again", ok, last)
+else:
+    check("config/boson.yaml has a files: section (CI writes it)", False)
 
 # 7. internal API not routed
 for path in ("/internal/files/status", "/internal/files", "/metrics", "/internal/config/status"):

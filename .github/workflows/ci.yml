@@ -279,8 +279,8 @@ jobs:
         run: |
           set -a; . ./.env; set +a
           net=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$(docker compose ps -q minio)")
-          mc() { docker run --rm --network "$net" --entrypoint sh pgsty/mc:RELEASE.2026-10-26T00-00-00Z -c "mc alias set f http://minio:9000 '$FILES_S3_ACCESS_KEY' '$FILES_S3_SECRET_KEY' >/dev/null && $1"; }
-          mc "echo hi > /tmp/x && mc cp -q /tmp/x f/boson-files/smoke && mc cat f/boson-files/smoke && mc rm f/boson-files/smoke"
+          mc() { docker run --rm --network "$net" -e MC_CONFIG_DIR=/tmp/.mc --entrypoint sh bitnamilegacy/minio-client:2025.7.21-debian-12-r3 -c "mc alias set f http://minio:9000 '$FILES_S3_ACCESS_KEY' '$FILES_S3_SECRET_KEY' >/dev/null && $1"; }
+          mc "printf hi > /tmp/x && mc cp -q /tmp/x f/boson-files/smoke && mc cat f/boson-files/smoke && mc rm f/boson-files/smoke"
           if mc "mc mb f/other-bucket" 2>/dev/null; then echo "files user could create a bucket"; exit 1; fi
           if mc "mc admin info f" 2>/dev/null; then echo "files user has admin access"; exit 1; fi
           pub=$(docker inspect -f '{{range $p, $b := .NetworkSettings.Ports}}{{if $b}}{{$p}} {{end}}{{end}}' "$(docker compose ps -q minio)")

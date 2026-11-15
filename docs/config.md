@@ -99,10 +99,12 @@ admin needs to change it in the panel.
 | `nick_claim.inbound.host` / `.port` / `.tls` / `.user` | string / int / bool / string | `POP3_HOST` / `POP3_PORT` (`995`) / `POP3_TLS` (`true`) / `POP3_USER` | live (the worker reconnects) | api | `settings.manage` |
 | `files.enabled` | bool | `FILES_ENABLED` (`false`) | live | files, auth (`files_url`) | `settings.manage` (Uploads page) |
 | `files.retention`, `files.window` | duration | `72h` | live | files | `settings.manage` |
-| `files.account.quota` / `.max_file` | size (`5GB`, `100MB`) | `5GB` / `100MB` | live | files | `settings.manage` |
+| `files.account.quota` / `.max_file` | size (`5GB`, `100MB`; decimal, `GiB` for binary) | `5GB` / `100MB` | live | files | `settings.manage` |
 | `files.guest.enabled` / `.quota` / `.max_file` | bool / size / size | `true` / `500MB` / `25MB` | live | files | `settings.manage` |
-| `files.storage.driver` | `local` \| `s3` | `local` | live | files | `settings.manage` |
-| `files.storage.s3.endpoint` / `.bucket` / `.region` / `.path_style` / `.public_base_url` | string / string / string / bool / URL | – / – / `auto` / `true` / – | live | files | `settings.manage` |
+| `files.storage.driver` | `local` \| `s3` | `local` | **restart** | files | `settings.manage` |
+| `files.storage.min_free` | size | `2GB` | live | files | `settings.manage` |
+| `files.storage.capacity` | size (s3 only) | – (no guard) | live | files | `settings.manage` |
+| `files.storage.s3.endpoint` / `.bucket` / `.region` / `.path_style` / `.public_base_url` | string / string / string / bool / URL | – / – / `auto` / `true` / – | **restart** | files | `settings.manage` |
 | `admin.directory_registration` | bool | `ADMIN_DIRECTORY_REGISTRATION` | live | admin | `directory.manage` |
 | `admin.directory_hostname` | hostname | `IRC_HOST` (admin's `IRC_CHECK_SERVER_NAME`) | live | admin | `directory.manage` |
 | `admin.tls_check_hosts` | list of `host:port[@dial-host:port]`, ≤ 20 | `ADMIN_TLS_CHECK_HOSTS` | live | admin | `services.manage` |
