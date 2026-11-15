@@ -92,7 +92,7 @@ admin needs to change it in the panel.
 | `directory.main_peer_url` | https URL | `DIRECTORY_MAIN_PEER` | live | directory | `directory.manage` |
 | `directory.sync_every` | duration, 5m–24h | `10m` | live | directory | `directory.manage` |
 | `directory.peers` | list of https URLs | `DIRECTORY_PEERS` | live | directory | `directory.manage` |
-| `nick_claim.enabled` | bool | `NICK_CLAIM_ENABLED` (`false`) | live (starts/stops the mailbox worker) | api | `settings.manage` (Nick claims page) |
+| `nick_claim.enabled` | bool | `NICK_CLAIM_ENABLED` (`false`) | live (starts/stops the mailbox worker) | api | `settings.manage` (Nick registration page) |
 | `nick_claim.email_domain` | domain | `NICK_CLAIM_EMAIL_DOMAIN` (`DOMAIN`) | live (new claims) | api | `settings.manage` |
 | `nick_claim.rate_limit_per_hour` | int | `NICK_CLAIM_RATE_LIMIT_PER_HOUR` (`5`) | live | api | `settings.manage` |
 | `nick_claim.inbound.protocol` | `pop3` | `pop3` | live | api | `settings.manage` |

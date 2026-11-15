@@ -273,7 +273,7 @@ services:
     profiles: [auth]
     # Releases: harbor.floret.dev/boson/auth:<version>. To run an unreleased
     # checkout instead, add compose.auth-src.yaml (see README).
-    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.10.0}
+    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.12.0}
     environment:
       ENV: production
       LOG_LEVEL: ${AUTH_LOG_LEVEL:-info}
@@ -428,7 +428,7 @@ services:
   admin:
     <<: *restart
     profiles: [admin]
-    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.10.1}
+    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.14.0}
     environment:
       ENV: production
       # The stack config file: the panel edits it (Settings pages, Config
@@ -543,7 +543,7 @@ services:
   api:
     <<: *restart
     profiles: [api]
-    image: ${API_IMAGE:-harbor.floret.dev/boson/backend:0.49.1}
+    image: ${API_IMAGE:-harbor.floret.dev/boson/backend:0.54.0}
     command: ["serve"]
     environment: &api-env
       PORT: "3000"
@@ -604,7 +604,7 @@ services:
   # Applies the API's database migrations before it starts (exits when done).
   api-migrate:
     profiles: [api]
-    image: ${API_IMAGE:-harbor.floret.dev/boson/backend:0.49.1}
+    image: ${API_IMAGE:-harbor.floret.dev/boson/backend:0.54.0}
     command: ["migrate", "up"]
     environment: *api-env
     restart: "no"
@@ -630,7 +630,7 @@ services:
   directory:
     <<: *restart
     profiles: [directory]
-    image: ${DIRECTORY_IMAGE:-harbor.floret.dev/boson/directory:1.6.0}
+    image: ${DIRECTORY_IMAGE:-harbor.floret.dev/boson/directory:1.7.0}
     environment:
       ENV: ${DIRECTORY_ENV:-production}
       LOG_LEVEL: ${DIRECTORY_LOG_LEVEL:-info}

@@ -79,7 +79,7 @@ stay in `.env`.
 | Variable | Default | |
 |---|---|---|
 | `DIRECTORY_HOST` | `directory.$DOMAIN` | public hostname (add it to `CERT_HOSTS`) |
-| `DIRECTORY_IMAGE` | `harbor.floret.dev/boson/directory:1.6.0` | |
+| `DIRECTORY_IMAGE` | `harbor.floret.dev/boson/directory:1.7.0` | |
 | `DIRECTORY_INCLUDE_MAIN` | `true` | *default*: your directory also shows everything from directory.boson.chat; `false` = an independent directory |
 | `DIRECTORY_MAIN_PEER` | `https://directory.boson.chat` | *default*: the built-in main peer |
 | `DIRECTORY_PEERS` | – | more directories to import, comma-separated base URLs; each is seeded once on first start (a peer removed later stays removed) |
