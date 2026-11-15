@@ -2,7 +2,7 @@
 #
 # One file for the whole stack's NON-SECRET settings. Every service reads
 # its own section (auth:, branding:, irc:, voice:, directory:, nick_claim:,
-# admin:, plus network:) and picks up changes within a few seconds: no restart,
+# files:, admin:, plus network:) and picks up changes within a few seconds: no restart,
 # except for the few keys marked "restart" below (the admin panel offers
 # the restart).
 #
@@ -11,7 +11,7 @@
 # Removing a key resets it to that default.
 #
 # The admin panel edits this file (Network settings, Branding, Emails,
-# Directory, Voice, IRC, Config file pages). It keeps your comments, key
+# Directory, Voice, IRC, Nick registration, Uploads, Config file pages). It keeps your comments, key
 # order and unknown keys, and notes who saved last in a comment on the
 # `version:` line. You can also edit it by hand; it belongs to uid 65532
 # (config-init sets that on every `docker compose up`), so use sudo:
@@ -23,7 +23,7 @@
 # banner until it's fixed.
 #
 # Secrets (passwords, tokens, keys, SMTP_USER/SMTP_PASSWORD,
-# NICK_CLAIM_POP3_PASSWORD, DSNs) never go
+# NICK_CLAIM_POP3_PASSWORD, FILES_S3_ACCESS_KEY/FILES_S3_SECRET_KEY, DSNs) never go
 # here: they stay in .env. So do deployment values: hostnames, images,
 # published ports, internal URLs.
 #
@@ -268,6 +268,67 @@ version: 1
 #     port: 995
 #     tls: true
 #     user: reg@example.com
+
+# ---- files: uploads with a rolling quota (files profile) ---------------------------
+# Off by default. When on, people upload files (images, video, documents)
+# that the boson app links in chat, served from FILES_HOST. Every upload
+# counts against a per-person quota over a rolling window; deleting a file
+# removes it at once but doesn't give the space back until its upload has
+# left the window. Files are deleted `retention` after upload. Needs the
+# files profile (docs/files.md). The admin panel's Uploads page edits this
+# section; auth reads files.enabled too (files_url in its GET /v1/config,
+# so apps only offer uploads while it's on).
+#
+# Sizes: a byte count or a number with a unit (5GB, 500MB). KB/MB/GB/TB are
+# decimal (1GB = 1000MB = 1,000,000,000 bytes); KiB/MiB/GiB/TiB are binary
+# (1GiB = 1024MiB). Durations: Go durations (72h, 30m, 90s).
+# Everything applies live except storage.driver and storage.s3.*, which
+# need a restart of files (docker compose restart files; the panel offers it).
+# files:
+#   # The switch. false: uploads answer 503 uploads_disabled and apps hide the attach
+#   # button. Existing files stay until they expire.
+#   # Default: FILES_ENABLED (false).
+#   enabled: false
+#   # How long a file is kept after its upload. Default: 72h.
+#   retention: 72h
+#   # The rolling quota window: what one person uploaded in the last
+#   # `window` counts against their quota. Default: 72h.
+#   window: 72h
+#   # Signed-in accounts.
+#   account:
+#     quota: 5GB        # per person per window
+#     max_file: 100MB   # per file
+#   # Guests (no account): short-lived guest tokens, limited per token and
+#   # per IP (the IP gets 3x the quota).
+#   guest:
+#     enabled: true
+#     quota: 500MB
+#     max_file: 25MB
+#   storage:
+#     # local: the files_data volume. s3: any S3-compatible store (the
+#     # minio profile, Cloudflare R2, AWS S3).
+#     driver: local     # restart
+#     # Refuse uploads (507 storage_full) that would leave less than this
+#     # free. local: the volume's free space. s3: what's left of capacity.
+#     min_free: 2GB
+#     # s3 only, optional: a total budget for what files keeps in the bucket
+#     # (S3 has no free-space API), e.g. 15GB for the minio profile on a
+#     # VPS disk with ~24 GB free. Without it s3 has no guard.
+#     # capacity: 15GB
+#     s3:               # restart
+#       # minio profile: http://minio:9000. R2:
+#       # https://<account id>.r2.cloudflarestorage.com.
+#       endpoint: ""
+#       bucket: ""
+#       region: auto
+#       # Bucket in the path (MinIO); false = virtual-hosted style.
+#       path_style: true
+#       # Empty (recommended): every download goes through files' /f/,
+#       # which sets the safe headers. Set to serve straight from the
+#       # bucket's public URL or a CDN instead.
+#       public_base_url: ""
+#     # The keys are secrets: FILES_S3_ACCESS_KEY / FILES_S3_SECRET_KEY in
+#     # .env, never here.
 
 # ---- admin: the admin panel itself -----------------------------------------------
 # admin:

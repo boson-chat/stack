@@ -16,6 +16,8 @@ voice, and automatic TLS, wired together for your own domain.
 | `admin` | `admin` | The admin panel ([boson-chat/admin](https://github.com/boson-chat/admin)): users, invites, sign-in providers, network settings, audit log, stack health, and services control (restart/stop/start, logs); edits [`config/boson.yaml`](docs/config.md) | via Traefik at `https://ADMIN_HOST` |
 | `docker-proxy` | `admin` | [Socket proxy](https://github.com/wollomatic/socket-proxy) that is the admin panel's only access to Docker: list/inspect containers, logs, stats, start/stop/restart; nothing else, only from `admin`, on an internal network | internal |
 | `directory` | `directory` | Optional: a boson network directory ([boson-chat/directory](https://github.com/boson-chat/directory)): website and paginated `/v1` API where networks list themselves (DNS-verified), federated with other directories; includes directory.boson.chat's listings by default ([docs/directory.md](docs/directory.md)) | via Traefik at `https://DIRECTORY_HOST` |
+| `files` | `files` | Optional: uploads ([boson-chat/files](https://github.com/boson-chat/files)) the boson app links in chat, with a rolling per-person quota, guest uploads and expiry; local volume or S3 storage ([docs/files.md](docs/files.md)) | via Traefik at `https://FILES_HOST` |
+| `minio`, `minio-init` | `minio` | Optional: an internal S3 bucket for `files` (MinIO), with a bucket-only user for it | internal |
 | `webroot` | `webroot` | Optional: serves a host directory at `http://WEBROOT_HOST/.well-known/acme-challenge/` for a certbot outside the stack | via Traefik |
 | `wellknown` | `wellknown` | Optional: serves `https://DOMAIN/.well-known/boson.json` (client discovery: IRC, auth and voice endpoints, and the network's branding), generated from `.env`. Only when `DOMAIN` points at this server | via Traefik |
 
@@ -135,7 +137,7 @@ IRC, RoleServ, and what the auth service provides for them:
 ## Profiles
 
 `COMPOSE_PROFILES` in `.env` picks what runs: `irc`, `voice`, `auth`,
-`api`, `directory`, `metrics`, `admin`, `webroot`, `wellknown` (traefik and
+`api`, `directory`, `files`, `minio`, `metrics`, `admin`, `webroot`, `wellknown` (traefik and
 certsync always run).
 `scripts/setup.sh` defaults to `irc,voice,auth`. Examples:
 
@@ -147,6 +149,8 @@ certsync always run).
 - `directory` needs `auth` (its database is in the stack Postgres, and
   owners sign in with the stack's accounts). See
   [docs/directory.md](docs/directory.md).
+- `files` needs `auth` (database, sign-in); add `minio` for S3 storage on
+  the same host. See [docs/files.md](docs/files.md).
 
 ## TLS and certificates
 
@@ -243,8 +247,8 @@ and `../auth` exists.
 Named volumes: `traefik_acme` (certificates), `certs_irc`/`certs_voice`
 (exported copies), `ergo_db` (Ergo accounts, channels, history, last
 known network settings), `voice_data` (voice channel registry), `pg_data`
-(auth, api and directory databases), `directory_media` (directory icons and
-banners), `vm_data` (metrics). Back up `ergo_db`, `voice_data`, `pg_data`,
+(auth, api, directory and files databases), `directory_media` (directory icons and
+banners), `files_data` / `minio_data` (uploads), `vm_data` (metrics). Back up `ergo_db`, `voice_data`, `pg_data`,
 `directory_media` and your `.env` (`AUTH_KEY_ENCRYPTION_KEY` encrypts the signing
 keys in the database).
 

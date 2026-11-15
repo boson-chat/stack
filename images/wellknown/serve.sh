@@ -4,13 +4,15 @@
 # https://DOMAIN/.well-known/boson.json here). Runs as nobody on a read-only
 # root with a tmpfs at /run.
 #
-#   WELLKNOWN_SECTIONS  which sections to publish: irc, voice, auth
+#   WELLKNOWN_SECTIONS  which sections to publish: irc, voice, auth, files
 #                       (comma-separated; compose defaults it to COMPOSE_PROFILES)
 #   IRC_HOST, IRC_PORT  irc section ({"host","port":6697,"tls":true})
 #   AUTH_HOST           auth section ({"url":"https://AUTH_HOST"}), plus the
 #                       network's branding: "branding":"https://AUTH_HOST/v1/branding"
 #                       (docs/branding.md)
 #   VOICE_HOST, VOICE_PORT  voice section ({"addr":"VOICE_HOST:7700","url":"https://VOICE_HOST"})
+#   FILES_HOST          files section ({"url":"https://FILES_HOST"}): uploads
+#                       (docs/files.md)
 set -eu
 
 root=/run/www
@@ -48,6 +50,10 @@ if has voice; then
 	h=$(host VOICE_HOST "${VOICE_HOST:-}")
 	p=$(port VOICE_PORT "${VOICE_PORT:-7700}")
 	json="$json,\"voice\":{\"addr\":\"$h:$p\",\"url\":\"https://$h\"}"
+fi
+if has files; then
+	h=$(host FILES_HOST "${FILES_HOST:-}")
+	json="$json,\"files\":{\"url\":\"https://$h\"}"
 fi
 json="$json}"
 
