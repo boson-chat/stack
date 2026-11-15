@@ -266,3 +266,11 @@ keys in the database).
 - **Compose project name** is `boson`; Traefik only looks at containers of
   that project.
 - Deploying the production host (boson.chat): [docs/deploy-boson-chat.md](docs/deploy-boson-chat.md).
+
+## License
+
+Copyright (C) 2026 bludot / the boson authors
+
+Licensed under the [GNU Affero General Public License v3.0](LICENSE) only (`AGPL-3.0-only`). Third-party code keeps its own license; see [NOTICE](NOTICE).
+
+In plain English: if you run a modified version of this software as a network service, you must offer its source code to the people who use that service.
