@@ -160,6 +160,7 @@ jobs:
           # Mailpit next to the stack (test-only file); auth is pointed at it through auth.smtp.
           docker compose -f compose.yaml -f test/branding/compose.mailpit.yaml up -d --no-deps --wait mailpit
           flags=""; [ "$REQUIRE" = true ] && flags=--require
+          set -o pipefail
           python3 scripts/smoke-branding.py $flags | tee branding.out
           if grep -q '^SKIP ' branding.out; then
             echo "::notice::branding smoke skipped: $(grep -m1 '^SKIP ' branding.out | cut -c6-) (runs once the auth release with branding is the newest; or run this workflow with auth_ref)"
@@ -238,6 +239,7 @@ jobs:
           docker compose -f compose.yaml -f test/nickclaim/compose.mailpit.yaml up -d --no-deps --wait mailpit
       - name: Disabled by default (403 / status), enable in config/boson.yaml, worker polls Mailpit (skipped on an api without nick_claim)
         run: |
+          set -o pipefail
           python3 scripts/smoke-nick-claim.py | tee nick.out
           if grep -q '^SKIP ' nick.out; then
             echo "::notice::nick-claim smoke skipped: $(grep -m1 '^SKIP ' nick.out | cut -c6-) (runs once the backend release with nick_claim is the API_IMAGE default)"

@@ -26,6 +26,7 @@ still run.
 
   scripts/smoke-nick-claim.py [--require] [--addr 127.0.0.1] [--ca local-certs/ca.pem]
 """
+import base64
 import argparse, http.client, json, os, re, secrets, smtplib, socket, ssl, subprocess, sys, tempfile, time
 from email.message import EmailMessage
 
@@ -177,7 +178,14 @@ def sign_in():
     if st != 201: print("register:", st, r); return None
     st, r = https(args.auth_host, "POST", "/v1/login", {"login": user, "password": pw})
     if st != 200 or not isinstance(r, dict): print("login:", st, r); return None
-    return r.get("access_token")
+    tok = r.get("access_token")
+    # The api keys claims to the Boson profile (users row), which a real
+    # user creates at handle setup — POST /me. The secret is opaque to the api.
+    if tok:
+        st, r = https(args.api_host, "POST", "/me", {"handle": f"nicksmoke{tag}",
+                      "encrypted_user_secret": base64.b64encode(secrets.token_bytes(48)).decode()}, tok)
+        if st not in (200, 201, 409): print("profile:", st, r)
+    return tok
 
 def claim(tok):
     return https(args.api_host, "POST", "/me/nick-claims", {"server_id": "irc.smoke.test", "account_nick": f"smoke{tag}"}, tok)
