@@ -729,7 +729,7 @@ services:
   files:
     <<: *restart
     profiles: [files]
-    image: ${FILES_IMAGE:-harbor.floret.dev/boson/files:0.1.0}
+    image: ${FILES_IMAGE:-harbor.floret.dev/boson/files:1.0.1}
     environment:
       ENV: ${FILES_ENV:-production}
       LOG_LEVEL: ${FILES_LOG_LEVEL:-info}
