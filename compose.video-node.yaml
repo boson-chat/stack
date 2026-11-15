@@ -1,0 +1,31 @@
+# A video node: quicvideod on its own box, for a stack whose voice runs
+# elsewhere (docs/video.md#remote-node). On the video box, next to this
+# repo's compose.yaml:
+#
+#   COMPOSE_FILE=compose.yaml:compose.video-node.yaml
+#   COMPOSE_PROFILES=video
+#   VIDEO_HOST=video.example.com
+#   CERT_HOSTS=video.example.com
+#   TLS_ISSUER=admin@example.com
+#   VOICE_HOST=voice.example.com        # the voice server's public host
+#   VIDEO_CONTROL_TOKEN=<same as the voice server's>
+#
+# and on the voice server: VIDEO_HOST=video.example.com,
+# VIDEO_CONTROL_URL=https://video.example.com/control and the same
+# VIDEO_CONTROL_TOKEN.
+services:
+  quicvideod:
+    environment:
+      # quicvoiced's public API serves the ticket JWKS.
+      AUTH_JWKS_URL: ${VIDEO_TICKET_JWKS_URL:-https://${VOICE_HOST:?set VOICE_HOST (the voice server) in .env}/.well-known/video-jwks.json}
+    labels:
+      # quicvoiced reaches the control listener over TLS through Traefik:
+      # https://VIDEO_HOST/control/v1/control/... → :8091/v1/control/...
+      # (bearer token checked by quicvideod).
+      - traefik.http.routers.video-control.rule=Host(`${VIDEO_HOST}`) && PathPrefix(`/control/`)
+      - traefik.http.routers.video-control.entrypoints=websecure
+      - traefik.http.routers.video-control.tls=true
+      - traefik.http.routers.video-control.middlewares=video-control-strip
+      - traefik.http.routers.video-control.service=video-control
+      - traefik.http.middlewares.video-control-strip.stripprefix.prefixes=/control
+      - traefik.http.services.video-control.loadbalancer.server.port=8091

@@ -12,6 +12,7 @@ voice, and automatic TLS, wired together for your own domain.
 | `auth` | `auth` | Accounts ([boson-chat/auth](https://github.com/boson-chat/auth)): sign-up, login, sessions, password reset, signed tokens for voice and IRC | via Traefik at `https://AUTH_HOST` |
 | `postgres` | `auth` | Database for `auth` (Postgres 18) | internal |
 | `quicvoiced` | `voice` | Voice rooms over QUIC ([boson-chat/quicvoice](https://github.com/boson-chat/quicvoice)); accepts tokens from `auth`. Static channels from `VOICE_ROOMS` plus channels created through the rooms API at `https://VOICE_HOST/v1/rooms` (optionally under an IRC channel, lockable to IRC roles) | 7700/udp, via Traefik at `https://VOICE_HOST` |
+| `quicvideod` | `video` | Camera + screen share in voice channels ([boson-chat/quicvideo](https://github.com/boson-chat/quicvideo)): each voice channel's video room. Only quicvoiced's video tickets get in, and quicvoiced keeps its rooms in step with voice. Also runs on its own box ([docs/video.md](docs/video.md)) | 7710/udp (QUIC + WebTransport), via Traefik at `https://VIDEO_HOST` |
 | `victoriametrics` | `metrics` | Scrapes `/metrics` of traefik, auth, quicvoiced (and admin), 90-day retention. Internal only, at `http://victoriametrics:8428` | internal |
 | `admin` | `admin` | The admin panel ([boson-chat/admin](https://github.com/boson-chat/admin)): users, invites, sign-in providers, network settings, audit log, stack health, and services control (restart/stop/start, logs); edits [`config/boson.yaml`](docs/config.md) | via Traefik at `https://ADMIN_HOST` |
 | `docker-proxy` | `admin` | [Socket proxy](https://github.com/wollomatic/socket-proxy) that is the admin panel's only access to Docker: list/inspect containers, logs, stats, start/stop/restart; nothing else, only from `admin`, on an internal network | internal |
@@ -34,7 +35,7 @@ docker compose up -d --build
 Before starting on a real server:
 
 1. DNS A records for your IRC, voice and auth hostnames → this server.
-2. Open 80/tcp and 443/tcp (certificates, auth, WebSocket), 6697/tcp (IRC), 7700/udp (voice).
+2. Open 80/tcp and 443/tcp (certificates, auth, WebSocket), 6697/tcp (IRC), 7700/udp (voice), and 7710/udp with the video profile.
 3. SMTP settings in `.env` so the auth service can send verification and
    password-reset email (needed with `REQUIRE_EMAIL_VERIFICATION=true`).
 4. Create yourself an admin account:
