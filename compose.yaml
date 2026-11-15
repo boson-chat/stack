@@ -241,8 +241,12 @@ services:
       # Default; config/boson.yaml irc.roles_poll_seconds wins.
       ROLES_POLL_SECONDS: ${ROLES_POLL_SECONDS:-10}
       IRC_ROLE_BASE_CAPABILITIES: ${IRC_ROLE_BASE_CAPABILITIES:-nofakelag}
+      # Role channels (docs/roles.md): every channel pushed again this often.
+      ROLE_CHANNELS_RESYNC_SECONDS: ${ROLE_CHANNELS_RESYNC_SECONDS:-300}
     volumes:
       - ./config:/config:ro
+      # The private channels RoleServ locked (to unlock them when they turn public).
+      - roleserv_data:/roleserv
     depends_on:
       ergo:
         condition: service_healthy
@@ -938,6 +942,7 @@ volumes:
   certs_irc:
   certs_voice:
   ergo_db:
+  roleserv_data:
   voice_data:
   pg_data:
   vm_data:

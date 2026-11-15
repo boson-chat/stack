@@ -313,3 +313,69 @@ func nonNil(s []string) []string {
 	}
 	return s
 }
+
+// ChannelAccessFeed is GET /internal/v1/irc/channel-access (auth >= 1.16).
+type ChannelAccessFeed struct {
+	Version  string          `json:"version"`
+	Autojoin bool            `json:"autojoin"`
+	Rejoin   string          `json:"rejoin"` // "login" or "once"
+	Channels []ChannelAccess `json:"channels"`
+}
+
+// ChannelAccess is one channel of the feed.
+type ChannelAccess struct {
+	Channel string `json:"channel"`
+	Private bool   `json:"private"`
+	// Everyone: listed on the Member role (any logged-in account may join).
+	Everyone bool `json:"everyone"`
+	// Accounts may join a private channel (lower-cased).
+	Accounts []string `json:"accounts"`
+}
+
+// ChannelAccess fetches the role channel feed. With etag set and nothing
+// changed, notModified is true. ErrUnsupported if auth doesn't have it.
+func (c *Client) ChannelAccess(ctx context.Context, etag string) (feed ChannelAccessFeed, newETag string, notModified bool, err error) {
+	hdr := map[string]string{}
+	if etag != "" {
+		hdr["If-None-Match"] = etag
+	}
+	resp, err := c.do(ctx, http.MethodGet, c.InternalURL+"/internal/v1/irc/channel-access", c.Token, hdr, nil, &feed)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			err = ErrUnsupported
+		}
+		return feed, "", false, err
+	}
+	if resp.StatusCode == http.StatusNotModified {
+		return ChannelAccessFeed{}, etag, true, nil
+	}
+	return feed, resp.Header.Get("ETag"), false, nil
+}
+
+// Autojoin is one account's auto-join channels (GET/POST
+// /internal/v1/irc/autojoin).
+type Autojoin struct {
+	Account  string   `json:"account"`
+	Enabled  bool     `json:"enabled"`
+	Rejoin   string   `json:"rejoin"`
+	Channels []string `json:"channels"`
+	// Pending: Channels RoleServ hasn't auto-joined the account to yet.
+	Pending []string `json:"pending"`
+}
+
+// Autojoin fetches an account's auto-join channels (ErrNotFound for an
+// account auth doesn't have).
+func (c *Client) Autojoin(ctx context.Context, account string) (Autojoin, error) {
+	var a Autojoin
+	_, err := c.do(ctx, http.MethodGet, c.InternalURL+"/internal/v1/irc/autojoin?account="+url.QueryEscape(account), c.Token, nil, nil, &a)
+	return a, err
+}
+
+// RecordAutojoin tells auth RoleServ joined account to channels (rejoin:
+// once) and returns the account's auto-join channels after that.
+func (c *Client) RecordAutojoin(ctx context.Context, account string, channels []string) (Autojoin, error) {
+	var a Autojoin
+	_, err := c.do(ctx, http.MethodPost, c.InternalURL+"/internal/v1/irc/autojoin", c.Token, nil,
+		map[string]any{"account": account, "channels": nonNil(channels)}, &a)
+	return a, err
+}

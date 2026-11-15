@@ -141,3 +141,51 @@ func (c *Client) AccountOf(ctx context.Context, nick string) (account string, on
 func (c *Client) EraseAccount(ctx context.Context, account string) error {
 	return c.call(ctx, "/v1/ns/unregister", map[string]any{"accountName": account, "erase": true}, nil)
 }
+
+// ChannelAccess is the request of POST /v1/channel_access (patched Ergo,
+// patches/0004): set or clear +i / +R (nil leaves a mode alone) and make
+// Accounts the a:<account> invite exceptions SetBy manages.
+type ChannelAccess struct {
+	Channel        string   `json:"channel"`
+	InviteOnly     *bool    `json:"inviteOnly,omitempty"`
+	RegisteredOnly *bool    `json:"registeredOnly,omitempty"`
+	Accounts       []string `json:"accounts"`
+	SetBy          string   `json:"setBy"`
+}
+
+// ChannelAccessResult is its answer. Exists is false (and nothing changed)
+// when the channel doesn't exist.
+type ChannelAccessResult struct {
+	Exists         bool     `json:"exists"`
+	Registered     bool     `json:"registered"`
+	Added          []string `json:"added"`
+	Removed        []string `json:"removed"`
+	InviteOnly     bool     `json:"inviteOnly"`
+	RegisteredOnly bool     `json:"registeredOnly"`
+}
+
+// SetChannelAccess calls POST /v1/channel_access. It never creates a channel.
+func (c *Client) SetChannelAccess(ctx context.Context, req ChannelAccess) (ChannelAccessResult, error) {
+	if req.Accounts == nil {
+		req.Accounts = []string{}
+	}
+	var out ChannelAccessResult
+	err := c.call(ctx, "/v1/channel_access", req, &out)
+	return out, err
+}
+
+// SajoinResult is the answer of POST /v1/sajoin.
+type SajoinResult struct {
+	// Clients is how many connected clients the account has (0: offline).
+	Clients int               `json:"clients"`
+	Joined  []string          `json:"joined"`
+	Failed  map[string]string `json:"failed"`
+}
+
+// Sajoin calls POST /v1/sajoin (patched Ergo): joins every connected client
+// of account to channels, like SAJOIN.
+func (c *Client) Sajoin(ctx context.Context, account string, channels []string) (SajoinResult, error) {
+	var out SajoinResult
+	err := c.call(ctx, "/v1/sajoin", map[string]any{"accountName": account, "channels": channels}, &out)
+	return out, err
+}

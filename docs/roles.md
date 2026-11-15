@@ -244,6 +244,80 @@ enabled or renamed. (A Member vhost template puts every account in the
 list; fine for a few thousand.) An account that drops out of the list is
 de-opered and loses its vhost.
 
+## Role channels (private channels and auto-join)
+
+Discord-style channel access (auth 1.16+, admin panel Roles page): admins
+attach channels to roles and to **everyone** (the Member role), and mark
+channels **private**. RoleServ enforces it on IRC, so it works for every
+client (mIRC included), not just Boson's.
+
+| | |
+|---|---|
+| **Private** channel | Kept `+i` with an account invite exception `+I a:<account>` for every enabled member of a role that lists it. Anyone else gets `473`. Opers (`SAJOIN`), the founder and ChanServ `AMODE` entries (halfop and up, or `+v`) still get in, as Ergo always allows. A private channel listed on **everyone** is `+R` instead: any logged-in account, no guests. |
+| **Public** channel | Not touched; the role listing only drives auto-join. |
+| Revoking access | Removes the account's `+I` entry. Nobody is kicked: people already in the channel stay until they leave. |
+| Making a channel public again | RoleServ removes its `+i` (or `+R`) and every `+I` entry it added. Entries an op added by hand (`/mode #c +I a:bob`, nick masks) are never touched. |
+| **Auto-join** (`roles.channels.autojoin: true`) | When a member logs in, RoleServ joins every connected client of the account to the channels their roles list with auto-join on. It does the same when a connected member gains a role that adds channels. |
+| `roles.channels.rejoin` | `login` (default): at every login, even after a `/part`. `once`: only the first time a role gives the channel; auth keeps a per-account record, so a `/part` sticks. Losing the role and getting it back counts as a first time again. |
+
+### Making a channel private
+
+RoleServ never creates channels: it locks one only if the channel exists on
+IRC.
+
+1. Create the channel by joining it (`/join #staff`), and **register** it
+   (automatic with `auth.channel_auto_register`, else
+   `/msg ChanServ REGISTER #staff`). Registration keeps `+i` and the `+I`
+   list when the channel empties. An unregistered channel loses them, and
+   RoleServ only locks it again at its next full resync
+   (`ROLE_CHANNELS_RESYNC_SECONDS`, default 300).
+2. In the admin panel, add the channel to the roles that should see it, then
+   mark it private. RoleServ applies it within `ROLES_POLL_SECONDS` (10 s).
+   A private channel that doesn't exist yet is logged once and locked as soon
+   as it shows up (at the next resync).
+
+### How it works
+
+- **Account extbans** (patched Ergo, `images/ergo/patches/0004-*`):
+  `+b`/`+e`/`+I` entries `a:<account>` match clients logged into that account,
+  whatever their nick or host (`EXTBAN=,am`). Ergo 2.19 has no extbans
+  besides `m:` (mute). Its documented alternative, `+I <nick>` with
+  `force-nick-equals-account`, would let a guest using the nick of an account
+  that has never connected to IRC (so has no Ergo account reserving the nick
+  yet) match the entry. `AMODE +v` would also give everyone voice.
+- **Ergo API** (same patch): `POST /v1/channel_access` sets `+i`/`+R` and makes
+  a given account list the `a:` entries one creator (`RoleServ`) manages. It
+  is atomic and idempotent, never creates a channel, and reports whether the
+  channel exists and is registered. `POST /v1/sajoin` joins an account's
+  connected clients, like `SAJOIN`. Using the API instead of IRC commands
+  means no reply parsing, no IRC flood limits, and no `sajoin`/`samode`
+  capabilities for RoleServ.
+- **Feed**: RoleServ polls auth's `GET /internal/v1/irc/channel-access` with
+  `ETag` every `ROLES_POLL_SECONDS`. The version changes on any membership,
+  role channel, private mark or setting change. On a change it pushes every
+  private channel. Every `ROLE_CHANNELS_RESYNC_SECONDS` it pushes them all
+  again anyway. The channels it locked are kept in the `roleserv_data` volume
+  (`/roleserv/role-channels.json`), so it can unlock a channel that turned
+  public even after a restart.
+- **Logins**: RoleServ's oper class (`boson.service`) has the `snomasks`
+  capability and subscribes to Ergo's ACCOUNT snomask (`+s u`). Every login
+  produces `Client [nick!user@host] logged into account [name]`, for SASL at
+  connect and for later `NickServ IDENTIFY` alike. On a login, RoleServ asks
+  auth for the account's channels (`GET /internal/v1/irc/autojoin?account=`)
+  and SAJOINs the client. With `once`, it joins only the `pending` channels
+  and records them (`POST /internal/v1/irc/autojoin`). Account-notify wasn't
+  used because it only reaches clients sharing a channel. The auth-script
+  wasn't used because it runs before registration, when the client can't
+  join yet.
+- **Role gains**: RoleServ remembers each account it saw log in (connected
+  ones only: an offline account is dropped at the next attempt). When the
+  feed version changes, it asks auth again for those accounts and joins the
+  channels they gained.
+
+Limits: accounts that logged in before RoleServ (re)started aren't known
+until their next login, so a role they gain in the meantime is joined then.
+Up to 50,000 tracked accounts.
+
 ## Limitations
 
 - Ergo 2.19 has no per-account switch for creating channels, so
@@ -277,6 +351,11 @@ de-opered and loses its vhost.
 test/roles/run.sh fake                      # patched Ergo + fake auth (full contract) + RoleServ
 AUTH_SRC=../auth test/roles/run.sh real     # patched Ergo + a real auth checkout (>= 1.5)
 ```
+
+[scripts/smoke-role-channels.py](../scripts/smoke-role-channels.py) (CI's
+stack smoke) covers role channels end to end: a private channel joinable
+by role members only, auto-join on login, auto-join on a role grant, and a
+`/part` sticking with `rejoin: once`.
 
 [test/roles/smoke-roles.py](../test/roles/smoke-roles.py) connects like a
 plain IRC client: SASL PLAIN (and OAUTHBEARER against real auth), checks

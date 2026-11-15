@@ -239,13 +239,16 @@ oper-classes:
             - "massmessage"
             - "metadata"
     # RoleServ (and other in-stack services) grant themselves this class
-    # through the API (POST /v1/account_grants), to reply without fakelag.
+    # through the API (POST /v1/account_grants), to reply without fakelag
+    # and to see logins (ACCOUNT snomask) for role channel auto-join.
+    # Joins and channel access go through the API, not SAJOIN/SAMODE.
     {{ q .ServiceClass }}:
         title: Network Service
         # (whoisline, not whois-line: Ergo 2.19's oper-classes key)
         whoisline: "is a network service"
         capabilities:
             - "nofakelag"
+            - "snomasks"
 {{- if .RoleClasses }}
     # Network roles with "IRC operator" on (auth service, admin panel or
     # RoleServ), re-rendered by boson-ergo watch-settings when they change.
@@ -279,7 +282,8 @@ opers:
 {{- if .APIToken }}
 # HTTP API for quicvoiced (founder checks, channel roles: POST /v1/ns/info,
 # /v1/whois), boson-ergo watch-settings and RoleServ (POST /v1/rehash,
-# /v1/account_grants: network roles). Plain HTTP on the compose network
+# /v1/account_grants: network roles; /v1/channel_access, /v1/sajoin: role
+# channels). Plain HTTP on the compose network
 # only; never published or routed by Traefik. Token: ERGO_API_TOKEN.
 api:
     enabled: true

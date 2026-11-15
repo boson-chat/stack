@@ -1,0 +1,647 @@
+From 43a8a0dbb5eb1170afd6ee12387289586e683ba7 Mon Sep 17 00:00:00 2001
+From: James Trotter <james@jamesat.dev>
+Date: Sun, 15 Nov 2026 09:57:06 -0500
+Subject: [PATCH] channels: account extbans (a:account), API channel access and
+ sajoin
+
++b/+e/+I entries a:<account> match clients logged into that account
+(EXTBAN=,am). POST /v1/channel_access syncs a channel's +i and the
+account invite exceptions one creator manages; POST /v1/sajoin joins an
+account's connected clients to channels. Lets an external role system
+keep private channels and auto-join members without parsing IRC.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ docs/API.md             |  35 +++++++
+ docs/MANUAL.md          |   4 +
+ irc/api.go              |   4 +
+ irc/apichannels.go      | 219 ++++++++++++++++++++++++++++++++++++++++
+ irc/apichannels_test.go | 119 ++++++++++++++++++++++
+ irc/channel.go          |  10 +-
+ irc/config.go           |   2 +-
+ irc/usermaskset.go      |  61 ++++++++++-
+ irc/usermaskset_test.go |  34 +++++++
+ 9 files changed, 479 insertions(+), 9 deletions(-)
+ create mode 100644 irc/apichannels.go
+ create mode 100644 irc/apichannels_test.go
+
+diff --git a/docs/API.md b/docs/API.md
+index 71adb5bd..82a9c1d6 100644
+--- a/docs/API.md
++++ b/docs/API.md
+@@ -185,6 +185,41 @@ The response is a JSON object with fields:
+ * `errorCode`: string, optional, machine-readable description of the error. Possible values: `ACCOUNT_DOES_NOT_EXIST`, `UNKNOWN_OPER_CLASS`, `INVALID_VHOST`, `FEATURE_DISABLED`, `UNKNOWN_ERROR`.
+ * `error`: string, optional, human-readable description of the failure
+ 
++`/v1/channel_access`
++--------------------
++
++This endpoint syncs a channel's invite-only mode and its account invite exceptions (`+I a:<account>`, see "account extbans" in the manual). It never creates a channel. The request is a JSON object with fields:
++
++* `channel`: string, name of the channel
++* `inviteOnly`: boolean, optional: set (`true`) or clear (`false`) `+i`. Omit it to leave `+i` alone.
++* `registeredOnly`: boolean, optional: the same for `+R`
++* `accounts`: list of strings, the accounts that must have an `a:<account>` entry on the `+I` list
++* `setBy`: string, optional (default `API`), recorded as the creator of the entries it adds. Existing `a:` entries with this creator whose account is not in `accounts` are removed; entries anyone else added are never touched.
++
++Changes are announced to the channel's members as `MODE` lines from the server and saved with the channel's registration (an unregistered channel loses them when it empties). The response is a JSON object with fields:
++
++* `success`: boolean, whether the request succeeded (`true` for a channel that doesn't exist)
++* `exists`: boolean, whether the channel exists; if false, nothing was changed
++* `registered`: boolean, whether the channel is registered
++* `added`, `removed`: lists of strings, the casefolded accounts whose entries were added and removed
++* `inviteOnly`, `registeredOnly`: booleans, whether the channel is now `+i` / `+R`
++
++`/v1/sajoin`
++------------
++
++This endpoint joins every connected client of an account to channels, with the same semantics as `SAJOIN` (channel modes and bans don't apply; a channel that doesn't exist is created). An always-on client with no attached session is not joined. The request is a JSON object with fields:
++
++* `accountName`: string, name of the account
++* `channels`: list of strings, the channels to join
++
++The response is a JSON object with fields:
++
++* `success`: boolean, whether the request succeeded (`true` with `clients` 0 if nobody is logged into the account)
++* `clients`: number, how many connected clients of the account were joined
++* `joined`: list of strings, the channels every client is now in
++* `failed`: object, maps each channel that couldn't be joined to the reason
++* `errorCode`: string, optional: `ACCOUNT_DOES_NOT_EXIST` for an invalid account name
++
+ `/v1/ns/saregister`
+ -------------------
+ 
+diff --git a/docs/MANUAL.md b/docs/MANUAL.md
+index 3d260737..173bc007 100644
+--- a/docs/MANUAL.md
++++ b/docs/MANUAL.md
+@@ -869,6 +869,10 @@ This means that **bob** will be able to join even without being `/INVITE`'d.
+ 
+ For everything else, this mode acts like the `+b - Ban` mode.
+ 
++#### Account extbans
++
++`+b`, `+e` and `+I` entries of the form `a:<account>` match clients logged into that account, whatever their nick, username or host (`EXTBAN=,am` in `RPL_ISUPPORT`). For example, `/MODE #test +I a:bob` lets anyone logged into the account **bob** join `#test` while it is `+i`. Account names are matched exactly (no wildcards).
++
+ ### +k - Key
+ 
+ This channel mode lets you set a 'key' that other people will need to join your channel. To set a key:
+diff --git a/irc/api.go b/irc/api.go
+index afded580..54b343f6 100644
+--- a/irc/api.go
++++ b/irc/api.go
+@@ -48,6 +48,10 @@ func newAPIHandler(server *Server) http.Handler {
+ 	// account-bound oper status and vhosts from an external system:
+ 	api.mux.HandleFunc("POST /v1/account_grants", api.handleAccountGrants)
+ 
++	// channel access (account invite exceptions) and joins by account:
++	api.mux.HandleFunc("POST /v1/channel_access", api.handleChannelAccess)
++	api.mux.HandleFunc("POST /v1/sajoin", api.handleSajoin)
++
+ 	return api
+ }
+ 
+diff --git a/irc/apichannels.go b/irc/apichannels.go
+new file mode 100644
+index 00000000..45f129ab
+--- /dev/null
++++ b/irc/apichannels.go
+@@ -0,0 +1,219 @@
++// Copyright (c) 2026 James Trotter
++// released under the MIT license
++
++package irc
++
++import (
++	"net/http"
++	"slices"
++
++	"github.com/ergochat/ergo/irc/modes"
++)
++
++// Channel access and joins driven by an external system (the boson stack's
++// RoleServ): private channels are +i with an account extban (a:<account>)
++// on +I per allowed account, and members are joined to channels by account.
++
++// modesPerLine bounds the mode changes in one announced MODE line.
++const modesPerLine = 4
++
++type apiChannelAccessRequest struct {
++	Channel string `json:"channel"`
++	// InviteOnly sets (true) or clears (false) +i; nil leaves it alone.
++	InviteOnly *bool `json:"inviteOnly"`
++	// RegisteredOnly sets or clears +R the same way.
++	RegisteredOnly *bool `json:"registeredOnly"`
++	// Accounts are the accounts that must have an a:<account> entry on +I.
++	Accounts []string `json:"accounts"`
++	// SetBy is recorded as the entries' creator. Entries with this creator
++	// whose account isn't in Accounts are removed; entries anyone else made
++	// are left alone. Default "API".
++	SetBy string `json:"setBy"`
++}
++
++type apiChannelAccessResponse struct {
++	apiGenericResponse
++	// Exists is false when no such channel exists (nothing was changed).
++	Exists     bool     `json:"exists"`
++	Registered bool     `json:"registered"`
++	Added      []string `json:"added"`
++	Removed    []string `json:"removed"`
++	InviteOnly bool     `json:"inviteOnly"`
++	// RegisteredOnly is whether the channel is now +R.
++	RegisteredOnly bool `json:"registeredOnly"`
++}
++
++// handleChannelAccess syncs a channel's +i and its account invite
++// exceptions. It never creates a channel.
++func (a *ergoAPI) handleChannelAccess(w http.ResponseWriter, r *http.Request) {
++	var request apiChannelAccessRequest
++	if err := a.decodeJSONRequest(&request, w, r); err != nil {
++		return
++	}
++	response := apiChannelAccessResponse{Added: []string{}, Removed: []string{}}
++	setBy := request.SetBy
++	if setBy == "" {
++		setBy = "API"
++	}
++	cfSetBy, err := CasefoldName(setBy)
++	if err != nil {
++		response.ErrorCode = "INVALID_SETBY"
++		a.writeJSONResponse(response, w, r)
++		return
++	}
++	want := make(map[string]bool, len(request.Accounts))
++	for _, account := range request.Accounts {
++		cf, err := CasefoldName(account)
++		if err != nil {
++			continue // can't be anyone's account
++		}
++		want[cf] = true
++	}
++
++	channel := a.server.channels.Get(request.Channel)
++	if channel == nil {
++		response.Success = true
++		a.writeJSONResponse(response, w, r)
++		return
++	}
++	response.Success, response.Exists = true, true
++	response.Registered = channel.IsRegistered()
++
++	var applied modes.ModeChanges
++	for mode, on := range map[modes.Mode]*bool{modes.InviteOnly: request.InviteOnly, modes.RegisteredOnly: request.RegisteredOnly} {
++		if on != nil && channel.flags.SetMode(mode, *on) {
++			op := modes.Remove
++			if *on {
++				op = modes.Add
++			}
++			applied = append(applied, modes.ModeChange{Mode: mode, Op: op})
++		}
++	}
++	slices.SortFunc(applied, func(a, b modes.ModeChange) int { return int(a.Mode) - int(b.Mode) })
++	list := channel.lists[modes.InviteMask]
++	have := map[string]bool{}
++	for mask, info := range list.Masks() {
++		account, ok := cutAccountExtban(mask)
++		if !ok {
++			continue
++		}
++		have[account] = true
++		if !want[account] && info.CreatorAccount == cfSetBy {
++			if removed, _ := list.Remove(mask); removed != "" {
++				response.Removed = append(response.Removed, account)
++				applied = append(applied, modes.ModeChange{Mode: modes.InviteMask, Op: modes.Remove, Arg: removed})
++			}
++		}
++	}
++	for account := range want {
++		if have[account] {
++			continue
++		}
++		if added, _ := list.Add(AccountExtbanPrefix+account, setBy, cfSetBy); added != "" {
++			response.Added = append(response.Added, account)
++			applied = append(applied, modes.ModeChange{Mode: modes.InviteMask, Op: modes.Add, Arg: added})
++		}
++	}
++	slices.Sort(response.Added)
++	slices.Sort(response.Removed)
++	response.InviteOnly = channel.flags.HasMode(modes.InviteOnly)
++	response.RegisteredOnly = channel.flags.HasMode(modes.RegisteredOnly)
++
++	var dirty uint
++	for _, change := range applied {
++		if change.Mode == modes.InviteMask {
++			dirty |= IncludeLists
++		} else {
++			dirty |= IncludeModes
++		}
++	}
++	if dirty != 0 {
++		channel.MarkDirty(dirty)
++		channel.announceServerModes(applied)
++	}
++	a.writeJSONResponse(response, w, r)
++}
++
++func cutAccountExtban(mask string) (account string, ok bool) {
++	if len(mask) > len(AccountExtbanPrefix) && mask[:len(AccountExtbanPrefix)] == AccountExtbanPrefix {
++		return mask[len(AccountExtbanPrefix):], true
++	}
++	return "", false
++}
++
++// announceServerModes tells the channel's members about mode changes made
++// by the server (no client source), a few changes per line.
++func (channel *Channel) announceServerModes(applied modes.ModeChanges) {
++	server := channel.server
++	name := channel.Name()
++	members := channel.Members()
++	for len(applied) > 0 {
++		n := min(len(applied), modesPerLine)
++		args := append([]string{name}, applied[:n].Strings()...)
++		applied = applied[n:]
++		for _, member := range members {
++			for _, session := range member.Sessions() {
++				session.Send(nil, server.name, "MODE", args...)
++			}
++		}
++	}
++}
++
++type apiSajoinRequest struct {
++	AccountName string   `json:"accountName"`
++	Channels    []string `json:"channels"`
++}
++
++type apiSajoinResponse struct {
++	apiGenericResponse
++	// Clients is how many connected clients of the account there are (an
++	// always-on client nobody is attached to doesn't count).
++	Clients int `json:"clients"`
++	// Joined are the channels every connected client is now in.
++	Joined []string `json:"joined"`
++	// Failed maps channels that couldn't be joined to the reason.
++	Failed map[string]string `json:"failed"`
++}
++
++// handleSajoin joins every connected client of an account to channels, as
++// SAJOIN does (no +i/+k/+l/ban checks; a missing channel is created).
++func (a *ergoAPI) handleSajoin(w http.ResponseWriter, r *http.Request) {
++	var request apiSajoinRequest
++	if err := a.decodeJSONRequest(&request, w, r); err != nil {
++		return
++	}
++	response := apiSajoinResponse{Joined: []string{}, Failed: map[string]string{}}
++	if _, err := CasefoldName(request.AccountName); err != nil {
++		response.ErrorCode = "ACCOUNT_DOES_NOT_EXIST"
++		a.writeJSONResponse(response, w, r)
++		return
++	}
++	var targets []*Client
++	for _, client := range a.server.accounts.AccountToClients(request.AccountName) {
++		if len(client.Sessions()) > 0 {
++			targets = append(targets, client)
++		}
++	}
++	response.Success = true
++	response.Clients = len(targets)
++	if len(targets) == 0 {
++		a.writeJSONResponse(response, w, r)
++		return
++	}
++	for _, chname := range request.Channels {
++		ok := true
++		for _, client := range targets {
++			rb := NewResponseBuffer(client.Sessions()[0])
++			err, _ := a.server.channels.Join(client, chname, "", true, rb)
++			rb.Send(true)
++			if err != nil {
++				ok = false
++				response.Failed[chname] = err.Error()
++			}
++		}
++		if ok {
++			response.Joined = append(response.Joined, chname)
++		}
++	}
++	a.writeJSONResponse(response, w, r)
++}
+diff --git a/irc/apichannels_test.go b/irc/apichannels_test.go
+new file mode 100644
+index 00000000..8151f752
+--- /dev/null
++++ b/irc/apichannels_test.go
+@@ -0,0 +1,119 @@
++// Copyright (c) 2026 James Trotter
++// released under the MIT license
++
++package irc
++
++import (
++	"bytes"
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"slices"
++	"testing"
++
++	"github.com/ergochat/ergo/irc/modes"
++)
++
++func apiCall(t *testing.T, server *Server, path string, body any, out any) {
++	t.Helper()
++	b, _ := json.Marshal(body)
++	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(b))
++	w := httptest.NewRecorder()
++	newAPIHandler(server).(*ergoAPI).mux.ServeHTTP(w, req)
++	if w.Code != http.StatusOK {
++		t.Fatalf("%s: HTTP %d %s", path, w.Code, w.Body.String())
++	}
++	if err := json.Unmarshal(w.Body.Bytes(), out); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func emptyTestChannel(server *Server, name string) *Channel {
++	channel := NewChannel(server, name, name, false, RegisteredChannel{})
++	server.channels.Lock()
++	server.channels.chans[name] = &channelManagerEntry{channel: channel}
++	server.channels.Unlock()
++	return channel
++}
++
++func TestAPIChannelAccess(t *testing.T) {
++	server := channelExpiryTestServer(t, 0)
++	yes, no := true, false
++
++	var resp apiChannelAccessResponse
++	apiCall(t, server, "/v1/channel_access", apiChannelAccessRequest{Channel: "#nope", InviteOnly: &yes, Accounts: []string{"alice"}}, &resp)
++	if !resp.Success || resp.Exists {
++		t.Fatalf("missing channel: %+v", resp)
++	}
++	if server.channels.Get("#nope") != nil {
++		t.Fatalf("channel_access must not create channels")
++	}
++
++	channel := emptyTestChannel(server, "#staff")
++	// an entry a channel op made by hand is never touched
++	channel.lists[modes.InviteMask].Add("a:zed", "op!o@h", "op")
++	channel.lists[modes.InviteMask].Add("friend!*@*", "op!o@h", "op")
++
++	resp = apiChannelAccessResponse{}
++	apiCall(t, server, "/v1/channel_access", apiChannelAccessRequest{Channel: "#STAFF", InviteOnly: &yes, Accounts: []string{"Alice", "bob", "bad name"}, SetBy: "RoleServ"}, &resp)
++	if !resp.Success || !resp.Exists || resp.Registered || !resp.InviteOnly {
++		t.Fatalf("unexpected response %+v", resp)
++	}
++	if !slices.Equal(resp.Added, []string{"alice", "bob"}) || len(resp.Removed) != 0 {
++		t.Fatalf("added %v removed %v", resp.Added, resp.Removed)
++	}
++	if !channel.flags.HasMode(modes.InviteOnly) || !channel.lists[modes.InviteMask].MatchAccount("bob") {
++		t.Fatalf("modes not applied")
++	}
++	if info := channel.lists[modes.InviteMask].Masks()["a:alice"]; info.CreatorNickmask != "RoleServ" || info.CreatorAccount != "roleserv" {
++		t.Fatalf("creator not recorded: %+v", info)
++	}
++
++	// idempotent
++	resp = apiChannelAccessResponse{}
++	apiCall(t, server, "/v1/channel_access", apiChannelAccessRequest{Channel: "#staff", InviteOnly: &yes, Accounts: []string{"alice", "bob"}, SetBy: "RoleServ"}, &resp)
++	if len(resp.Added)+len(resp.Removed) != 0 {
++		t.Fatalf("second sync changed things: %+v", resp)
++	}
++
++	// revoke bob, and alice is not listed by zed's op entry: only RoleServ's go
++	resp = apiChannelAccessResponse{}
++	apiCall(t, server, "/v1/channel_access", apiChannelAccessRequest{Channel: "#staff", Accounts: []string{"alice"}, SetBy: "RoleServ"}, &resp)
++	if !slices.Equal(resp.Removed, []string{"bob"}) || channel.lists[modes.InviteMask].MatchAccount("bob") {
++		t.Fatalf("bob not revoked: %+v", resp)
++	}
++	if !channel.lists[modes.InviteMask].MatchAccount("zed") || !channel.lists[modes.InviteMask].Match("friend!x@y") {
++		t.Fatalf("hand-made entries were removed")
++	}
++	if !channel.flags.HasMode(modes.InviteOnly) {
++		t.Fatalf("nil inviteOnly must leave +i alone")
++	}
++
++	// public again
++	resp = apiChannelAccessResponse{}
++	apiCall(t, server, "/v1/channel_access", apiChannelAccessRequest{Channel: "#staff", InviteOnly: &no, SetBy: "RoleServ"}, &resp)
++	if resp.InviteOnly || channel.flags.HasMode(modes.InviteOnly) || !slices.Equal(resp.Removed, []string{"alice"}) {
++		t.Fatalf("not made public: %+v", resp)
++	}
++
++	// registered users only
++	resp = apiChannelAccessResponse{}
++	apiCall(t, server, "/v1/channel_access", apiChannelAccessRequest{Channel: "#staff", RegisteredOnly: &yes, SetBy: "RoleServ"}, &resp)
++	if !resp.RegisteredOnly || !channel.flags.HasMode(modes.RegisteredOnly) || resp.InviteOnly {
++		t.Fatalf("+R not set: %+v", resp)
++	}
++}
++
++func TestAPISajoinOffline(t *testing.T) {
++	server := channelExpiryTestServer(t, 0)
++	var resp apiSajoinResponse
++	apiCall(t, server, "/v1/sajoin", apiSajoinRequest{AccountName: "alice", Channels: []string{"#a"}}, &resp)
++	if !resp.Success || resp.Clients != 0 || len(resp.Joined) != 0 {
++		t.Fatalf("offline account: %+v", resp)
++	}
++	resp = apiSajoinResponse{}
++	apiCall(t, server, "/v1/sajoin", apiSajoinRequest{AccountName: "bad name", Channels: []string{"#a"}}, &resp)
++	if resp.Success || resp.ErrorCode != "ACCOUNT_DOES_NOT_EXIST" {
++		t.Fatalf("bad account: %+v", resp)
++	}
++}
+diff --git a/irc/channel.go b/irc/channel.go
+index 8c8bb686..d89d3b1c 100644
+--- a/irc/channel.go
++++ b/irc/channel.go
+@@ -814,20 +814,20 @@ func (channel *Channel) Join(client *Client, key string, isSajoin bool, rb *Resp
+ 
+ 		// #1901: +h and up exempt from all restrictions, but +v additionally exempts from +i:
+ 		if channel.flags.HasMode(modes.InviteOnly) && persistentMode == 0 &&
+-			!channel.lists[modes.InviteMask].Match(details.nickMaskCasefolded) {
++			!channel.lists[modes.InviteMask].MatchClient(details.nickMaskCasefolded, details.account) {
+ 			return errInviteOnly, forward
+ 		}
+ 
+-		if channel.lists[modes.BanMask].Match(details.nickMaskCasefolded) &&
+-			!channel.lists[modes.ExceptMask].Match(details.nickMaskCasefolded) &&
+-			!channel.lists[modes.InviteMask].Match(details.nickMaskCasefolded) {
++		if channel.lists[modes.BanMask].MatchClient(details.nickMaskCasefolded, details.account) &&
++			!channel.lists[modes.ExceptMask].MatchClient(details.nickMaskCasefolded, details.account) &&
++			!channel.lists[modes.InviteMask].MatchClient(details.nickMaskCasefolded, details.account) {
+ 			// do not forward people who are banned:
+ 			return errBanned, ""
+ 		}
+ 
+ 		if details.account == "" &&
+ 			(channel.flags.HasMode(modes.RegisteredOnly) || channel.server.Defcon() <= 2) &&
+-			!channel.lists[modes.InviteMask].Match(details.nickMaskCasefolded) {
++			!channel.lists[modes.InviteMask].MatchClient(details.nickMaskCasefolded, details.account) {
+ 			return errRegisteredOnly, forward
+ 		}
+ 	}
+diff --git a/irc/config.go b/irc/config.go
+index c41ce939..97afe9e8 100644
+--- a/irc/config.go
++++ b/irc/config.go
+@@ -1963,7 +1963,7 @@ func (config *Config) generateISupport() (err error) {
+ 	if config.Extjwt.Default.Enabled() || len(config.Extjwt.Services) != 0 {
+ 		isupport.Add("EXTJWT", "1")
+ 	}
+-	isupport.Add("EXTBAN", ",m")
++	isupport.Add("EXTBAN", ",am")
+ 	isupport.Add("FORWARD", "f")
+ 	isupport.Add("INVEX", "")
+ 	isupport.Add("KICKLEN", strconv.Itoa(config.Limits.KickLen))
+diff --git a/irc/usermaskset.go b/irc/usermaskset.go
+index b4e551f3..87c22cb5 100644
+--- a/irc/usermaskset.go
++++ b/irc/usermaskset.go
+@@ -28,6 +28,27 @@ type UserMaskSet struct {
+ 	masks                  map[string]MaskInfo
+ 	regexp                 atomic.Pointer[regexp.Regexp]
+ 	muteRegexp             atomic.Pointer[regexp.Regexp]
++	// accounts are the casefolded names of the account extbans (a:name)
++	accounts atomic.Pointer[map[string]struct{}]
++}
++
++// AccountExtbanPrefix marks an account extban: a:<account> matches clients
++// logged into that account, whatever their nick or host.
++const AccountExtbanPrefix = "a:"
++
++// canonicalizeListMask canonicalizes a +b/+e/+I mask: an account extban
++// becomes a:<casefolded account> (no wildcards), anything else goes through
++// CanonicalizeMaskWildcard.
++func canonicalizeListMask(mask string) (string, error) {
++	mask = strings.TrimSpace(mask)
++	if len(mask) > len(AccountExtbanPrefix) && strings.EqualFold(mask[:len(AccountExtbanPrefix)], AccountExtbanPrefix) {
++		cfaccount, err := CasefoldName(mask[len(AccountExtbanPrefix):])
++		if err != nil {
++			return "", errInvalidCharacter
++		}
++		return AccountExtbanPrefix + cfaccount, nil
++	}
++	return CanonicalizeMaskWildcard(mask)
+ }
+ 
+ func NewUserMaskSet() *UserMaskSet {
+@@ -36,7 +57,7 @@ func NewUserMaskSet() *UserMaskSet {
+ 
+ // Add adds the given mask to this set.
+ func (set *UserMaskSet) Add(mask, creatorNickmask, creatorAccount string) (maskAdded string, err error) {
+-	casefoldedMask, err := CanonicalizeMaskWildcard(mask)
++	casefoldedMask, err := canonicalizeListMask(mask)
+ 	if err != nil {
+ 		return
+ 	}
+@@ -67,7 +88,7 @@ func (set *UserMaskSet) Add(mask, creatorNickmask, creatorAccount string) (maskA
+ 
+ // Remove removes the given mask from this set.
+ func (set *UserMaskSet) Remove(mask string) (maskRemoved string, err error) {
+-	mask, err = CanonicalizeMaskWildcard(mask)
++	mask, err = canonicalizeListMask(mask)
+ 	if err != nil {
+ 		return
+ 	}
+@@ -117,6 +138,36 @@ func (set *UserMaskSet) Match(userhost string) bool {
+ 	return regexp.MatchString(userhost)
+ }
+ 
++// MatchAccount reports whether an account extban (a:name) matches the
++// casefolded account name ("" never matches).
++func (set *UserMaskSet) MatchAccount(cfaccount string) bool {
++	if cfaccount == "" {
++		return false
++	}
++	accounts := set.accounts.Load()
++	if accounts == nil {
++		return false
++	}
++	_, ok := (*accounts)[cfaccount]
++	return ok
++}
++
++// MatchClient matches a client by its n!u@h against the standard bans and
++// by its casefolded account against the account extbans.
++func (set *UserMaskSet) MatchClient(userhost, cfaccount string) bool {
++	return set.Match(userhost) || set.MatchAccount(cfaccount)
++}
++
++// AccountMasks returns the casefolded accounts of the account extbans.
++func (set *UserMaskSet) AccountMasks() (result []string) {
++	if accounts := set.accounts.Load(); accounts != nil {
++		for account := range *accounts {
++			result = append(result, account)
++		}
++	}
++	return
++}
++
+ // MatchMute matches the given NUH against the mute extbans.
+ func (set *UserMaskSet) MatchMute(userhost string) bool {
+ 	regexp := set.MuteRegexp()
+@@ -141,8 +192,11 @@ func (set *UserMaskSet) setRegexp() {
+ 	set.RLock()
+ 	maskExprs := make([]string, 0, len(set.masks))
+ 	var muteExprs []string
++	accounts := make(map[string]struct{})
+ 	for mask := range set.masks {
+-		if strings.HasPrefix(mask, "m:") {
++		if strings.HasPrefix(mask, AccountExtbanPrefix) {
++			accounts[mask[len(AccountExtbanPrefix):]] = struct{}{}
++		} else if strings.HasPrefix(mask, "m:") {
+ 			muteExprs = append(muteExprs, mask[2:])
+ 		} else {
+ 			maskExprs = append(maskExprs, mask)
+@@ -163,4 +217,5 @@ func (set *UserMaskSet) setRegexp() {
+ 
+ 	set.regexp.Store(re)
+ 	set.muteRegexp.Store(muteRe)
++	set.accounts.Store(&accounts)
+ }
+diff --git a/irc/usermaskset_test.go b/irc/usermaskset_test.go
+index 412dd196..aa061364 100644
+--- a/irc/usermaskset_test.go
++++ b/irc/usermaskset_test.go
+@@ -34,3 +34,37 @@ func TestUserMaskSet(t *testing.T) {
+ 		t.Errorf("unexpected MatchMute() succeeded")
+ 	}
+ }
++
++func TestUserMaskSetAccountExtban(t *testing.T) {
++	s := NewUserMaskSet()
++	added, err := s.Add("a:Alice", "RoleServ", "roleserv")
++	if err != nil || added != "a:alice" {
++		t.Fatalf("Add(a:Alice) = %q, %v; want a:alice", added, err)
++	}
++	if s.Match("alice!~alice@host") {
++		t.Errorf("an account extban must not match by nick")
++	}
++	if !s.MatchAccount("alice") || !s.MatchClient("guest!~g@host", "alice") {
++		t.Errorf("account extban should match the account")
++	}
++	if s.MatchAccount("bob") || s.MatchAccount("") || s.MatchClient("alice!~alice@host", "") {
++		t.Errorf("account extban matched the wrong client")
++	}
++	if got := s.AccountMasks(); len(got) != 1 || got[0] != "alice" {
++		t.Errorf("AccountMasks() = %v", got)
++	}
++	if again, _ := s.Add("A:ALICE", "", ""); again != "" {
++		t.Errorf("duplicate account extban was added as %q", again)
++	}
++	if removed, _ := s.Remove("a:ALICE"); removed != "a:alice" {
++		t.Errorf("Remove(a:ALICE) = %q", removed)
++	}
++	if s.MatchAccount("alice") {
++		t.Errorf("removed account extban still matches")
++	}
++	// a restored registration (SetMasks) keeps account extbans working
++	s.SetMasks(map[string]MaskInfo{"a:carol": {}, "dave!*@*": {}})
++	if !s.MatchAccount("carol") || !s.Match("dave!~d@h") || s.Match("a:carol!*@*") {
++		t.Errorf("SetMasks lost the account extban split")
++	}
++}
+-- 
+2.56.1
+

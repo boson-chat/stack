@@ -2,7 +2,8 @@
 # Ergo (https://github.com/ergochat/ergo) built from source with the patches
 # in patches/ (account-bound operator status and vhosts from the auth-script,
 # see docs/roles.md; channel auto-registration and expiry, and account
-# removal over the API, see docs/irc-channels.md), plus boson-ergo: renders ircd.yaml from the environment,
+# removal over the API, see docs/irc-channels.md; account extbans and the
+# channel access / sajoin API for role channels, see docs/roles.md), plus boson-ergo: renders ircd.yaml from the environment,
 # checks SASL logins against the boson auth service, syncs roles and runs
 # RoleServ.
 ARG ERGO_VERSION=v2.19.1
@@ -34,8 +35,9 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags=
 FROM ghcr.io/ergochat/ergo:${ERGO_VERSION}
 # Run unprivileged (upstream runs as root). uid 10000 matches the old
 # UnrealIRCd image, so the certs_irc volume contract is unchanged.
+# /roleserv: RoleServ's state (role channels it locked), a volume in compose.
 RUN addgroup -g 10000 ergo && adduser -D -H -u 10000 -G ergo -h /ircd ergo \
- && chown -R ergo:ergo /ircd
+ && chown -R ergo:ergo /ircd && mkdir -p /roleserv && chown ergo:ergo /roleserv
 COPY --from=ergo /out/ergo /ircd-bin/ergo
 COPY --from=helper /out/boson-ergo /usr/local/bin/boson-ergo
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
