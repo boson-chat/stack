@@ -444,7 +444,7 @@ services:
   admin:
     <<: *restart
     profiles: [admin]
-    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.14.0}
+    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.17.0}
     environment:
       ENV: production
       # The stack config file: the panel edits it (Settings pages, Config
@@ -466,17 +466,29 @@ services:
       # IRC health (Ergo): set ADMIN_IRC_CHECK= (empty) without the irc profile.
       IRC_CHECK: ${ADMIN_IRC_CHECK-ircs://ergo:6697}
       IRC_CHECK_SERVER_NAME: ${IRC_HOST}
-      # Endpoints the admin's BROWSER times ("from you" latency); also its CSP connect-src.
-      PUBLIC_PROBE_TARGETS: >-
-        ${ADMIN_PUBLIC_PROBES:-auth=https://${AUTH_HOST}/healthz,quicvoiced=https://${VOICE_HOST}/healthz,irc=wss://${IRC_HOST}/webirc,api=https://${API_HOST:-api.localhost}/health}
       GRAFANA_URL: ${GRAFANA_URL:-}
-      HEALTH_TARGETS: >-
-        auth=http://auth:8081/healthz,auth=http://auth:8081/readyz,quicvoiced=http://quicvoiced:8080/healthz,victoriametrics=http://victoriametrics:8428/health${ADMIN_API_HEALTH-,api=http://api:3000/health}
-      VERSION_TARGETS: auth=http://auth:8081/metrics,quicvoiced=http://quicvoiced:8080/version
-      # host:port to report, @ where to dial it from inside the network.
-      # Default; config/boson.yaml admin.tls_check_hosts wins.
-      TLS_CHECK_HOSTS: >-
-        ${ADMIN_TLS_CHECK_HOSTS:-${VOICE_HOST}:443@traefik:443,${AUTH_HOST}:443@traefik:443,${ADMIN_HOST:-admin.localhost}:443@traefik:443,${IRC_HOST}:6697}
+      # The Stack page shows the compose services that have a container
+      # (through docker-proxy below), so a profile that's off isn't shown as
+      # down. It has built-in health, version and public ("from you") probes
+      # for auth, quicvoiced, IRC, api, directory, files, victoriametrics and
+      # minio; the public ones use these hostnames (empty = no probe).
+      AUTH_HOST: ${AUTH_HOST:-}
+      VOICE_HOST: ${VOICE_HOST:-}
+      IRC_HOST: ${IRC_HOST:-}
+      API_HOST: ${API_HOST:-}
+      DIRECTORY_HOST: ${DIRECTORY_HOST:-}
+      FILES_HOST: ${FILES_HOST:-}
+      # name=url,... added to the built-in probes, or replacing them for that
+      # name; with ADMIN_DOCKER_PROXY_URL= (empty) they are the whole list.
+      HEALTH_TARGETS: ${ADMIN_HEALTH_TARGETS:-}
+      VERSION_TARGETS: ${ADMIN_VERSION_TARGETS:-}
+      PUBLIC_PROBE_TARGETS: ${ADMIN_PUBLIC_PROBES:-}
+      # Certificates: every CERT_HOSTS hostname on 443 dialled at traefik,
+      # IRC_HOST on 6697. ADMIN_TLS_CHECK_HOSTS (host:port[@dial-host:port])
+      # replaces that list; config/boson.yaml admin.tls_check_hosts wins.
+      CERT_HOSTS: ${CERT_HOSTS:-${IRC_HOST:-},${VOICE_HOST:-},${AUTH_HOST:-}}
+      TLS_EDGE_ADDR: traefik:443
+      TLS_CHECK_HOSTS: ${ADMIN_TLS_CHECK_HOSTS:-}
       # Services control (restart/stop/start, logs) through docker-proxy below.
       # Empty ADMIN_DOCKER_PROXY_URL= turns it off.
       DOCKER_PROXY_URL: ${ADMIN_DOCKER_PROXY_URL-http://docker-proxy:2375}
