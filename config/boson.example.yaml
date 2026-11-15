@@ -340,5 +340,6 @@ version: 1
 #   directory_hostname: irc.example.com
 #   # Certificates the Overview watches: host:port, optionally
 #   # @dial-host:dial-port to reach it from inside the stack. Up to 20.
-#   # Default: ADMIN_TLS_CHECK_HOSTS (voice, auth, admin via traefik; IRC).
+#   # Default: ADMIN_TLS_CHECK_HOSTS, else every CERT_HOSTS hostname (443
+#   # via traefik; IRC_HOST on 6697).
 #   tls_check_hosts: [irc.example.com:6697, voice.example.com:443@traefik:443]

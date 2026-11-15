@@ -107,7 +107,7 @@ admin needs to change it in the panel.
 | `files.storage.s3.endpoint` / `.bucket` / `.region` / `.path_style` / `.public_base_url` | string / string / string / bool / URL | – / – / `auto` / `true` / – | **restart** | files | `settings.manage` |
 | `admin.directory_registration` | bool | `ADMIN_DIRECTORY_REGISTRATION` | live | admin | `directory.manage` |
 | `admin.directory_hostname` | hostname | `IRC_HOST` (admin's `IRC_CHECK_SERVER_NAME`) | live | admin | `directory.manage` |
-| `admin.tls_check_hosts` | list of `host:port[@dial-host:port]`, ≤ 20 | `ADMIN_TLS_CHECK_HOSTS` | live | admin | `services.manage` |
+| `admin.tls_check_hosts` | list of `host:port[@dial-host:port]`, ≤ 20 | `ADMIN_TLS_CHECK_HOSTS`, else every `CERT_HOSTS` host (443 via traefik, `IRC_HOST` on 6697) | live | admin | `services.manage` |
 
 `auth → ergo` means auth owns the value and ergo/quicvoiced get it from
 auth's internal settings API as before. Secrets that used to sit next to
