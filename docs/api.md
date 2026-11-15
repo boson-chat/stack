@@ -1,8 +1,7 @@
 # The boson API (`api` profile)
 
 The backend the boson desktop client talks to: profiles, nick claims and
-avatars ([boson-chat/boson](https://github.com/boson-chat/boson)
-`backend/`). It's optional; enable it with `api` in `COMPOSE_PROFILES`.
+avatars ([boson-chat/backend](https://github.com/boson-chat/backend)). It's optional; enable it with `api` in `COMPOSE_PROFILES`.
 
 | Service | What it does |
 |---|---|

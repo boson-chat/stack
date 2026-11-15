@@ -347,7 +347,7 @@ VOICE_ROOMS=general:General
 
 Remove any `QUICVOICE_IMAGE=` override older than 1.4.0. Don't add the
 `wellknown` profile: `boson.chat` is the website on Cloudflare, which serves
-`/.well-known/boson.json` itself (boson-chat/boson `website/public/`).
+`/.well-known/boson.json` itself (boson-chat/website `public/`).
 
 ```sh
 cd "$STACK" && git pull --ff-only

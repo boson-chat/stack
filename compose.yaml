@@ -536,7 +536,7 @@ services:
 
   # ---- api (optional): the boson backend API --------------------------------
   # Profiles, nick claims and avatars for the boson client
-  # (github.com/boson-chat/boson backend/). Uses the stack Postgres and the
+  # (github.com/boson-chat/backend). Uses the stack Postgres and the
   # auth service. Nick claims (docs/nick-claim.md) are off unless
   # config/boson.yaml nick_claim.enabled (or NICK_CLAIM_ENABLED) says so;
   # R2_* (avatars) is optional: empty disables it. See docs/api.md.
