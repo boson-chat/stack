@@ -3,7 +3,8 @@
 # Configure in .env (see .env.example / scripts/setup.sh), then:
 #   docker compose up -d --build
 # Which parts run is chosen by COMPOSE_PROFILES in .env
-# (irc, voice, auth, api, directory, metrics, admin, webroot, wellknown). traefik and
+# (irc, voice, auth, api, directory, files, minio, metrics, admin, webroot,
+# wellknown). traefik and
 # certsync always run.
 # Install-specific additions: traefik/dynamic/*.yml and compose.override.yaml.
 name: boson
@@ -259,6 +260,10 @@ services:
       DIRECTORY_DB_PASSWORD: ${DIRECTORY_DB_PASSWORD:-}
       DIRECTORY_DB_USER: ${DIRECTORY_DB_USER:-directory}
       DIRECTORY_DB_NAME: ${DIRECTORY_DB_NAME:-directory}
+      # ... and the files service's (files profile).
+      FILES_DB_PASSWORD: ${FILES_DB_PASSWORD:-}
+      FILES_DB_USER: ${FILES_DB_USER:-files}
+      FILES_DB_NAME: ${FILES_DB_NAME:-files}
     volumes:
       - pg_data:/var/lib/postgresql
       - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
@@ -310,6 +315,11 @@ services:
       # RoleServ's token for the acting endpoints (/internal/v1/acting/*):
       # changes made on behalf of the IRC user who asked. docs/roles.md.
       INTERNAL_ACTING_TOKEN: ${ROLESERV_AUTH_TOKEN:-}
+      # GET /v1/config files_url: the files profile's public URL, published
+      # only while uploads are on (FILES_ENABLED default; config/boson.yaml
+      # files.enabled wins). Safe to set without the files profile.
+      FILES_PUBLIC_URL: https://${FILES_HOST:-files.${DOMAIN:-localhost}}
+      FILES_ENABLED: ${FILES_ENABLED:-false}
     volumes:
       # Read-only: boson.yaml (auth:, network:, branding:) and the branding
       # images in config/branding/, served at /v1/branding/assets/.
@@ -438,7 +448,7 @@ services:
       # status listener (compose network only, never published).
       BOSON_CONFIG: /config/boson.yaml
       CONFIG_STATUS_TARGETS: >-
-        ${ADMIN_CONFIG_STATUS_TARGETS:-auth=http://auth:8081/internal/config/status,quicvoiced=http://quicvoiced:8080/internal/config/status,directory=http://directory:8081/internal/config/status,ergo=http://ergo:8098/internal/config/status,api=http://api:3001/internal/config/status}
+        ${ADMIN_CONFIG_STATUS_TARGETS:-auth=http://auth:8081/internal/config/status,quicvoiced=http://quicvoiced:8080/internal/config/status,directory=http://directory:8081/internal/config/status,ergo=http://ergo:8098/internal/config/status,api=http://api:3001/internal/config/status,files=http://files:3001/internal/config/status}
       PUBLIC_URL: https://${ADMIN_HOST:-admin.${DOMAIN:-localhost}}
       # Seals the admin's auth tokens in the session cookie (32 random bytes, base64).
       SESSION_KEY: ${ADMIN_SESSION_KEY:-}
@@ -484,6 +494,11 @@ services:
       # sets ADMIN_DIRECTORY_LOCAL_URL=http://directory:8080 with the profile.
       DIRECTORY_LOCAL_URL: ${ADMIN_DIRECTORY_LOCAL_URL:-}
       DIRECTORY_INTERNAL_TOKEN: ${DIRECTORY_INTERNAL_TOKEN:-}
+      # The files service's internal listener (files profile): the Uploads
+      # page's live status, moderation and users' usage. docs/files.md.
+      # Empty ADMIN_FILES_INTERNAL_URL= without the profile.
+      BOSON_FILES_INTERNAL_URL: ${ADMIN_FILES_INTERNAL_URL-http://files:3001}
+      BOSON_FILES_INTERNAL_TOKEN: ${FILES_INTERNAL_TOKEN:-}
     volumes:
       # rw: the panel saves config/boson.yaml (temp file + rename in this dir)
       # and the Branding page's images in config/branding/.
@@ -688,6 +703,149 @@ services:
     # certificate. The legacy https://API_HOST/servers route is in
     # traefik/dynamic/directory.yml (DIRECTORY_SERVES_LEGACY).
 
+  # ---- files (optional): uploads with a rolling quota --------------------------
+  # github.com/boson-chat/files: users (and guests) upload files the boson
+  # client links in chat. Public API + downloads at https://FILES_HOST (its
+  # own host, never the app's or auth's origin); internal listener :3001
+  # (X-Internal-Token: the admin panel), never routed. Own database in the
+  # stack Postgres (needs the auth profile), files in the files_data volume
+  # (storage.driver: local) or any S3-compatible bucket (s3; see the minio
+  # profile). Settings: config/boson.yaml files: (the admin panel's Uploads
+  # page). Off unless files.enabled (or FILES_ENABLED). See docs/files.md.
+  files-data-init:
+    profiles: [files]
+    image: busybox:1.37.0
+    command: ["sh", "-c", "chown 65532:65532 /data && chmod 750 /data"]
+    volumes:
+      - files_data:/data
+    restart: "no"
+
+  files:
+    <<: *restart
+    profiles: [files]
+    image: ${FILES_IMAGE:-harbor.floret.dev/boson/files:0.1.0}
+    environment:
+      ENV: ${FILES_ENV:-production}
+      LOG_LEVEL: ${FILES_LOG_LEVEL:-info}
+      HTTP_ADDR: ":8080"
+      INTERNAL_ADDR: ":3001"
+      FILES_PUBLIC_URL: https://${FILES_HOST:-files.${DOMAIN:-localhost}}
+      # The admin panel's calls (X-Internal-Token on :3001).
+      INTERNAL_TOKEN: ${FILES_INTERNAL_TOKEN:-}
+      # Signs guest upload tokens (POST /v1/guest-token).
+      FILES_GUEST_SECRET: ${FILES_GUEST_SECRET:-}
+      # config/boson.yaml (files:) wins over the env defaults.
+      BOSON_CONFIG: /config/boson.yaml
+      # Default; config/boson.yaml files.enabled wins.
+      FILES_ENABLED: ${FILES_ENABLED:-false}
+      # Accounts: the stack's auth access tokens, checked against its JWKS.
+      AUTH_ISSUER: https://${AUTH_HOST}
+      AUTH_JWKS_URL: http://auth:8080/.well-known/jwks.json
+      DATABASE_URL: postgres://${FILES_DB_USER:-files}:${FILES_DB_PASSWORD:-}@postgres:5432/${FILES_DB_NAME:-files}?sslmode=disable
+      # storage.driver: local
+      FILES_DATA_DIR: /data
+      # storage.driver: s3. Secrets: only here, never in the file. With the
+      # minio profile these are the bucket-only user minio-init creates.
+      FILES_S3_ACCESS_KEY: ${FILES_S3_ACCESS_KEY:-}
+      FILES_S3_SECRET_KEY: ${FILES_S3_SECRET_KEY:-}
+      # Client IPs (guest quotas, rate limits) from Traefik's X-Forwarded-For.
+      TRUSTED_PROXIES: ${STACK_SUBNET:-10.203.53.0/24}
+    volumes:
+      - files_data:/data
+      - ./config:/config:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      files-data-init:
+        condition: service_completed_successfully
+      config-init:
+        condition: service_completed_successfully
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.files.rule=Host(`${FILES_HOST:-files.${DOMAIN:-localhost}}`)
+      - traefik.http.routers.files.entrypoints=websecure
+      - traefik.http.routers.files.tls=true
+      # Public listener only; :3001 (internal API, /metrics) is never routed.
+      - traefik.http.services.files.loadbalancer.server.port=8080
+    # Note: FILES_HOST must be in CERT_HOSTS so Traefik gets its certificate.
+
+  # ---- minio (optional): an S3-compatible bucket for files ---------------------
+  # For files with storage.driver: s3 on this host. Internal only: the S3 API
+  # (9000) and the console (9001) are neither published nor routed; files
+  # proxies every download through /f/. Upstream MinIO no longer publishes
+  # images, so this uses the pgsty community builds (same code, RELEASE tags).
+  # Then in config/boson.yaml: files.storage: { driver: s3, s3: { endpoint:
+  # "http://minio:9000", bucket: boson-files, region: auto, path_style: true } }.
+  # docs/files.md.
+  minio:
+    <<: *restart
+    profiles: [minio]
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    # Refuses to start without root credentials (MinIO would fall back to
+    # minioadmin/minioadmin). Checked here, not with ${VAR:?}, so installs
+    # without the profile don't need them.
+    entrypoint: ["sh", "-ec"]
+    command:
+      - |
+        if [ -z "$$MINIO_ROOT_USER" ] || [ -z "$$MINIO_ROOT_PASSWORD" ]; then
+          echo "minio: set MINIO_ROOT_USER and MINIO_ROOT_PASSWORD in .env (scripts/setup.sh)" >&2
+          exit 1
+        fi
+        exec /usr/bin/docker-entrypoint.sh minio server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
+      MINIO_BROWSER_REDIRECT: "off"
+    # Sized for a 2 GB VPS.
+    mem_limit: ${MINIO_MEM_LIMIT:-320m}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # Creates the bucket and the files service's own user (FILES_S3_ACCESS_KEY
+  # / FILES_S3_SECRET_KEY) with a policy limited to that bucket, then exits.
+  # Idempotent: safe on every `up`; a changed secret key is applied.
+  minio-init:
+    profiles: [minio]
+    image: pgsty/mc:RELEASE.2026-10-26T00-00-00Z
+    entrypoint: ["sh", "-ec"]
+    command:
+      - |
+        if [ -z "$$FILES_S3_ACCESS_KEY" ] || [ -z "$$FILES_S3_SECRET_KEY" ]; then
+          echo "minio-init: set FILES_S3_ACCESS_KEY and FILES_S3_SECRET_KEY in .env (scripts/setup.sh)" >&2
+          exit 1
+        fi
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null
+        mc mb --ignore-existing "local/$$BUCKET"
+        cat > /tmp/policy.json <<EOF
+        {"Version":"2012-10-17","Statement":[
+         {"Effect":"Allow","Action":["s3:ListBucket","s3:GetBucketLocation"],"Resource":["arn:aws:s3:::$$BUCKET"]},
+         {"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::$$BUCKET/*"]}]}
+        EOF
+        mc admin policy create local boson-files /tmp/policy.json
+        mc admin user add local "$$FILES_S3_ACCESS_KEY" "$$FILES_S3_SECRET_KEY"
+        # (no grep in the mc image)
+        case "$$(mc admin policy entities local --user "$$FILES_S3_ACCESS_KEY")" in
+        *boson-files*) echo "policy already attached" ;;
+        *) mc admin policy attach local boson-files --user "$$FILES_S3_ACCESS_KEY" ;;
+        esac
+        echo "minio-init: bucket $$BUCKET, user $$FILES_S3_ACCESS_KEY (policy boson-files)"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
+      BUCKET: ${FILES_S3_BUCKET:-boson-files}
+      FILES_S3_ACCESS_KEY: ${FILES_S3_ACCESS_KEY:-}
+      FILES_S3_SECRET_KEY: ${FILES_S3_SECRET_KEY:-}
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+
   # ---- webroot (optional) ---------------------------------------------------
   # Serves WEBROOT_DIR at http://WEBROOT_HOST/.well-known/acme-challenge/ for
   # a certbot (webroot mode) on this host that manages a cert outside the
@@ -709,8 +867,8 @@ services:
 
   # ---- wellknown (optional) -------------------------------------------------
   # Serves https://DOMAIN/.well-known/boson.json, which the boson client reads
-  # to find this server's IRC, auth and voice endpoints from just the domain,
-  # and (with auth) the network's branding: https://AUTH_HOST/v1/branding.
+  # to find this server's IRC, auth, voice and files endpoints from just the
+  # domain, and (with auth) the network's branding: https://AUTH_HOST/v1/branding.
   # Only for installs where DOMAIN itself points at this server; add DOMAIN to
   # CERT_HOSTS. Generated from .env at every start (images/wellknown/serve.sh).
   wellknown:
@@ -723,12 +881,13 @@ services:
     tmpfs:
       - /run:uid=65534,gid=65534,size=1m
     environment:
-      # Sections to publish (irc, auth, voice). Default: whichever of those
+      # Sections to publish (irc, auth, voice, files). Default: whichever of those
       # profiles are on. Set it when a part runs elsewhere (e.g. legacy IRC).
       WELLKNOWN_SECTIONS: ${WELLKNOWN_SECTIONS:-${COMPOSE_PROFILES:-}}
       IRC_HOST: ${IRC_HOST}
       AUTH_HOST: ${AUTH_HOST}
       VOICE_HOST: ${VOICE_HOST}
+      FILES_HOST: ${FILES_HOST:-files.${DOMAIN:-localhost}}
     volumes:
       - ./images/wellknown/serve.sh:/serve.sh:ro
     labels:
@@ -755,3 +914,5 @@ volumes:
   pg_data:
   vm_data:
   directory_media:
+  files_data:
+  minio_data:

@@ -163,10 +163,12 @@ The boson client asks for a domain (e.g. `boson.chat`) and reads
 {"version":1,
  "irc":{"host":"irc.boson.chat","port":6697,"tls":true},
  "auth":{"url":"https://auth.boson.chat"},
- "voice":{"addr":"voice.boson.chat:7700","url":"https://voice.boson.chat"}}
+ "voice":{"addr":"voice.boson.chat:7700","url":"https://voice.boson.chat"},
+ "files":{"url":"https://files.boson.chat"}}
 ```
 
-Any section may be missing (no `voice` key = no voice on this network).
+Any section may be missing (no `voice` key = no voice on this network; no
+`files` key = no uploads, see [files.md](files.md)).
 Served as `application/json` with `Access-Control-Allow-Origin: *`. When the
 file isn't there, the client falls back to `irc.`/`auth.`/`voice.<domain>`
 (QUIC to `voice.<domain>:7700` with ALPN `quicvoice/1`), so the standard
@@ -179,12 +181,12 @@ For installs where `DOMAIN` itself points at this server:
 ```sh
 COMPOSE_PROFILES=irc,voice,auth,wellknown
 CERT_HOSTS=irc.example.com,voice.example.com,auth.example.com,example.com
-# Optional. Default: the irc/auth/voice profiles that are on.
-#WELLKNOWN_SECTIONS=irc,auth,voice
+# Optional. Default: the irc/auth/voice/files profiles that are on.
+#WELLKNOWN_SECTIONS=irc,auth,voice,files
 ```
 
 The `wellknown` service (busybox httpd, read-only, as `nobody`) writes the
-file from `IRC_HOST`, `AUTH_HOST`, `VOICE_HOST` and `WELLKNOWN_SECTIONS` at
+file from `IRC_HOST`, `AUTH_HOST`, `VOICE_HOST`, `FILES_HOST` and `WELLKNOWN_SECTIONS` at
 every start (`images/wellknown/serve.sh`), and Traefik routes only
 `https://DOMAIN/.well-known/boson.json` to it, adding
 `Access-Control-Allow-Origin: *` and `Cache-Control: public, max-age=300`.

@@ -222,6 +222,73 @@ jobs:
           COMPOSE_PROFILES: auth,directory
         run: docker compose logs
 
+  files:
+    name: files profile smoke (uploads, quota window, guests, expiry, headers)
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_PROFILES: auth,files,wellknown
+    steps:
+      - uses: actions/checkout@v4
+      - name: Files image pullable? (skipped until the release is published)
+        id: img
+        run: |
+          img=${FILES_IMAGE:-$(sed -n 's/^ *image: \${FILES_IMAGE:-\(.*\)}$/\1/p' compose.yaml)}
+          [ -n "$img" ] || { echo "no FILES_IMAGE default in compose.yaml"; exit 1; }
+          if docker pull -q "$img"; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::$img isn't published yet: files smoke skipped"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Local .env + a files section with short test limits
+        if: steps.img.outputs.ok == 'true'
+        run: |
+          scripts/setup.sh --local
+          cat >> config/boson.yaml <<'EOF'
+          files:
+            enabled: true
+            retention: 20s
+            window: 30s
+            account: { quota: 3MB, max_file: 2MB }
+            guest: { enabled: true, quota: 1MB, max_file: 512KB }
+          EOF
+      - name: Start traefik, certsync, postgres, auth, files, wellknown
+        if: steps.img.outputs.ok == 'true'
+        run: docker compose up -d --wait --wait-timeout 300
+      - name: Upload, headers, range, quota, no refund, guests, discovery, expiry, rolling window
+        if: steps.img.outputs.ok == 'true'
+        run: python3 scripts/smoke-files.py
+      - name: Logs on failure
+        if: failure() && steps.img.outputs.ok == 'true'
+        run: docker compose logs files auth postgres
+
+  minio:
+    name: minio profile (bucket, bucket-only user, idempotent init)
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_PROFILES: minio
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/setup.sh --local
+      - name: Start minio, run minio-init twice
+        run: |
+          docker compose up -d --wait --wait-timeout 180 minio
+          docker compose run --rm minio-init
+          docker compose run --rm minio-init
+      - name: The files user can use its bucket and nothing else
+        run: |
+          set -a; . ./.env; set +a
+          net=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$(docker compose ps -q minio)")
+          mc() { docker run --rm --network "$net" --entrypoint sh pgsty/mc:RELEASE.2026-10-26T00-00-00Z -c "mc alias set f http://minio:9000 '$FILES_S3_ACCESS_KEY' '$FILES_S3_SECRET_KEY' >/dev/null && $1"; }
+          mc "echo hi > /tmp/x && mc cp -q /tmp/x f/boson-files/smoke && mc cat f/boson-files/smoke && mc rm f/boson-files/smoke"
+          if mc "mc mb f/other-bucket" 2>/dev/null; then echo "files user could create a bucket"; exit 1; fi
+          if mc "mc admin info f" 2>/dev/null; then echo "files user has admin access"; exit 1; fi
+          if docker compose port minio 9000 2>/dev/null | grep -q .; then echo "minio published on the host"; exit 1; fi
+          echo ok
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs minio minio-init
+
   nick-claim:
     name: nick claims (api profile; off by default, hot reload, Mailpit POP3)
     runs-on: ubuntu-latest
@@ -268,7 +335,7 @@ jobs:
 
   publish:
     name: publish images to Harbor
-    needs: [helper, smoke, directory, nick-claim, roles, acme]
+    needs: [helper, smoke, directory, files, minio, nick-claim, roles, acme]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:

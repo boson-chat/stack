@@ -45,7 +45,7 @@ means "use the env value, else the default". Removing a key resets it; the
 panel's **Reset to default** does exactly that.
 
 Each service reads only its own section (`auth:`, `branding:`, `irc:`,
-`voice:`, `directory:`, `nick_claim:`, `admin:`, and the shared `network:`) and ignores keys it
+`voice:`, `directory:`, `nick_claim:`, `files:`, `admin:`, and the shared `network:`) and ignores keys it
 doesn't know. `version: 1` is required at the top.
 
 ## Keys (schema v1)
@@ -97,13 +97,19 @@ admin needs to change it in the panel.
 | `nick_claim.rate_limit_per_hour` | int | `NICK_CLAIM_RATE_LIMIT_PER_HOUR` (`5`) | live | api | `settings.manage` |
 | `nick_claim.inbound.protocol` | `pop3` | `pop3` | live | api | `settings.manage` |
 | `nick_claim.inbound.host` / `.port` / `.tls` / `.user` | string / int / bool / string | `POP3_HOST` / `POP3_PORT` (`995`) / `POP3_TLS` (`true`) / `POP3_USER` | live (the worker reconnects) | api | `settings.manage` |
+| `files.enabled` | bool | `FILES_ENABLED` (`false`) | live | files, auth (`files_url`) | `settings.manage` (Uploads page) |
+| `files.retention`, `files.window` | duration | `72h` | live | files | `settings.manage` |
+| `files.account.quota` / `.max_file` | size (`5GB`, `100MB`) | `5GB` / `100MB` | live | files | `settings.manage` |
+| `files.guest.enabled` / `.quota` / `.max_file` | bool / size / size | `true` / `500MB` / `25MB` | live | files | `settings.manage` |
+| `files.storage.driver` | `local` \| `s3` | `local` | live | files | `settings.manage` |
+| `files.storage.s3.endpoint` / `.bucket` / `.region` / `.path_style` / `.public_base_url` | string / string / string / bool / URL | – / – / `auto` / `true` / – | live | files | `settings.manage` |
 | `admin.directory_registration` | bool | `ADMIN_DIRECTORY_REGISTRATION` | live | admin | `directory.manage` |
 | `admin.directory_hostname` | hostname | `IRC_HOST` (admin's `IRC_CHECK_SERVER_NAME`) | live | admin | `directory.manage` |
 | `admin.tls_check_hosts` | list of `host:port[@dial-host:port]`, ≤ 20 | `ADMIN_TLS_CHECK_HOSTS` | live | admin | `services.manage` |
 
 `auth → ergo` means auth owns the value and ergo/quicvoiced get it from
 auth's internal settings API as before. Secrets that used to sit next to
-these (`SMTP_USER`, `SMTP_PASSWORD`, `NICK_CLAIM_POP3_PASSWORD`, tokens, keys) stay in `.env` and are
+these (`SMTP_USER`, `SMTP_PASSWORD`, `NICK_CLAIM_POP3_PASSWORD`, `FILES_S3_ACCESS_KEY` / `FILES_S3_SECRET_KEY`, tokens, keys) stay in `.env` and are
 never written to this file. Peers added in the panel's Directory page are
 still kept in the directory's peer table (`directory.peers` only seeds it).
 
