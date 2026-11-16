@@ -364,7 +364,7 @@ services:
   quicvoiced:
     <<: *restart
     profiles: [voice]
-    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.8.0}
+    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.10.0}
     ports:
       - "7700:7700/udp"
     environment:
