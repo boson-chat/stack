@@ -85,7 +85,7 @@ VIDEO_CONTROL_TOKEN=<same>
 | `VIDEO_TICKET_JWKS_URL` | `http://quicvoiced:8090/...` (node: `https://VOICE_HOST/...`) | Where quicvideod gets the ticket key |
 | `VIDEO_MAX_PARTICIPANTS` | 20 | Per video room |
 | `VIDEO_WEBTRANSPORT_ORIGINS` | `*` | Browser origins allowed to open WebTransport sessions |
-| `QUICVIDEO_IMAGE` | `harbor.floret.dev/boson/quicvideo:1.7.4` | |
+| `QUICVIDEO_IMAGE` | `harbor.floret.dev/boson/quicvideo:1.8.1` | |
 
 Metrics: the `metrics` profile scrapes `quicvideod:8080/metrics`.
 
