@@ -1,0 +1,20 @@
+boson stack
+Copyright (C) 2026 bludot / the boson authors
+Licensed under the GNU Affero General Public License v3.0 only (see LICENSE).
+
+Third-party software built or shipped by this repository keeps its own
+license:
+
+- images/ergo: builds Ergo (https://github.com/ergochat/ergo), Copyright
+  the Ergo authors, MIT License, with the patches in images/ergo/patches
+  applied. Ergo's own code stays under its MIT License; its license text
+  ships in the upstream source and image.
+- images/certsync: copies traefik-certs-dumper (ldez/traefik-certs-dumper,
+  Apache-2.0) into an Alpine Linux image.
+
+The compose files run these upstream images unmodified, each under its
+own license: Traefik (MIT), PostgreSQL (PostgreSQL License),
+VictoriaMetrics (Apache-2.0), wollomatic/socket-proxy (MIT), MinIO and
+MinIO client (AGPL-3.0, Bitnami images), BusyBox (GPL-2.0) and the Ergo
+base image (MIT). Running them alongside the boson services is mere
+aggregation.
