@@ -364,7 +364,7 @@ services:
   quicvoiced:
     <<: *restart
     profiles: [voice]
-    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.8.0}
+    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.10.0}
     ports:
       - "7700:7700/udp"
     environment:
@@ -508,7 +508,7 @@ services:
   admin:
     <<: *restart
     profiles: [admin]
-    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.17.0}
+    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.19.0}
     environment:
       ENV: production
       # The stack config file: the panel edits it (Settings pages, Config
@@ -542,6 +542,7 @@ services:
       API_HOST: ${API_HOST:-}
       DIRECTORY_HOST: ${DIRECTORY_HOST:-}
       FILES_HOST: ${FILES_HOST:-}
+      VIDEO_HOST: ${VIDEO_HOST:-}
       # name=url,... added to the built-in probes, or replacing them for that
       # name; with ADMIN_DOCKER_PROXY_URL= (empty) they are the whole list.
       HEALTH_TARGETS: ${ADMIN_HEALTH_TARGETS:-}
