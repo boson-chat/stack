@@ -364,7 +364,7 @@ services:
   quicvoiced:
     <<: *restart
     profiles: [voice]
-    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.7.0}
+    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.8.0}
     ports:
       - "7700:7700/udp"
     environment:
@@ -447,7 +447,7 @@ services:
   quicvideod:
     <<: *restart
     profiles: [video]
-    image: ${QUICVIDEO_IMAGE:-harbor.floret.dev/boson/quicvideo:1.7.2}
+    image: ${QUICVIDEO_IMAGE:-harbor.floret.dev/boson/quicvideo:1.7.4}
     ports:
       # QUIC for the apps and WebTransport (HTTP/3, /wt) for browsers.
       - "7710:7710/udp"
