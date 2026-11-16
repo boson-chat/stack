@@ -50,7 +50,7 @@ local_ca() {
 			extendedKeyUsage=serverAuth
 			subjectKeyIdentifier=hash
 			authorityKeyIdentifier=keyid,issuer
-			subjectAltName=DNS:localhost,DNS:*.localhost,DNS:irc.localhost,DNS:voice.localhost,DNS:auth.localhost,DNS:admin.localhost,DNS:api.localhost,DNS:directory.localhost,DNS:files.localhost,IP:127.0.0.1,IP:::1
+			subjectAltName=DNS:localhost,DNS:*.localhost,DNS:irc.localhost,DNS:voice.localhost,DNS:auth.localhost,DNS:admin.localhost,DNS:api.localhost,DNS:directory.localhost,DNS:files.localhost,DNS:video.localhost,IP:127.0.0.1,IP:::1
 		EXT
 		openssl x509 -req -in cert.csr -CA ca.pem -CAkey ca.key -CAcreateserial -days 825 \
 			-extfile cert.ext -out cert.pem 2>/dev/null
@@ -106,6 +106,7 @@ if [ "${1:-}" = "--local" ]; then
 	API_HOST=api.localhost
 	DIRECTORY_HOST=directory.localhost
 	FILES_HOST=files.localhost
+	VIDEO_HOST=video.localhost
 	ADMIN_EMAIL=admin@localhost
 	TLS_ISSUER=local
 	ACME_CA_SERVER=
@@ -125,6 +126,7 @@ else
 	API_HOST="api.$DOMAIN"
 	DIRECTORY_HOST="directory.$DOMAIN"
 	FILES_HOST="files.$DOMAIN"
+	VIDEO_HOST="video.$DOMAIN"
 	ask ADMIN_EMAIL "Admin email (also used for Let's Encrypt)" "admin@$DOMAIN"
 	ask TLS_ISSUER "TLS: Let's Encrypt email, or 'local' for a self-made local CA" "$ADMIN_EMAIL"
 	ACME_CA_SERVER=
@@ -132,7 +134,10 @@ else
 		ask STAGING "Use the Let's Encrypt staging CA (test certs, no rate limits)? y/N" "n"
 		case "$STAGING" in [yY]*) ACME_CA_SERVER=https://acme-staging-v02.api.letsencrypt.org/directory ;; esac
 	fi
-	ask PROFILES "Parts to run (irc, voice, auth, api, directory, files, minio, metrics, admin)" "irc,voice,auth,api"
+	ask PROFILES "Parts to run (irc, voice, video, auth, api, directory, files, minio, metrics, admin)" "irc,voice,auth,api"
+	case ",$PROFILES," in *,video,*)
+		ask VIDEO_HOST "Video hostname (camera + screen share in voice channels)" "video.$DOMAIN" ;;
+	esac
 	case ",$PROFILES," in *,voice,*)
 		ask VOICE_ROOMS "Voice channels (id:Display Name, comma-separated)" "general:General" ;;
 	*) VOICE_ROOMS=general:General ;;
@@ -179,6 +184,10 @@ case ",$PROFILES," in *,files,*)
 	CERT_LIST="$CERT_LIST,$FILES_HOST"
 	DNS_LIST="$FILES_HOST, $DNS_LIST" ;;
 esac
+case ",$PROFILES," in *,video,*)
+	CERT_LIST="$CERT_LIST,$VIDEO_HOST"
+	DNS_LIST="$VIDEO_HOST, $DNS_LIST" ;;
+esac
 case ",$PROFILES," in *,wellknown,*)
 	CERT_LIST="$CERT_LIST,$DOMAIN"
 	DNS_LIST="$DOMAIN, $DNS_LIST" ;;
@@ -198,6 +207,8 @@ umask 077
 	echo "API_HOST=$API_HOST"
 	echo "DIRECTORY_HOST=$DIRECTORY_HOST"
 	echo "FILES_HOST=$FILES_HOST"
+	# VIDEO_HOST set = video in voice channels is on (docs/video.md).
+	case ",$PROFILES," in *,video,*) echo "VIDEO_HOST=$VIDEO_HOST" ;; esac
 	echo "CERT_HOSTS=$CERT_LIST"
 	echo "ADMIN_EMAIL=$ADMIN_EMAIL"
 	echo "TLS_ISSUER=$TLS_ISSUER"
@@ -245,6 +256,8 @@ umask 077
 		echo "ADMIN_FILES_INTERNAL_URL=" ;;
 	esac
 	echo "VOICE_JWT_SECRET=$(rand 64)"
+	# quicvoiced -> quicvideod control link (video profile / a video node).
+	echo "VIDEO_CONTROL_TOKEN=$(openssl rand -hex 32)"
 	echo "VOICE_ROOMS=$VOICE_ROOMS"
 	echo "SMTP_HOST="
 	echo "SMTP_PORT=587"

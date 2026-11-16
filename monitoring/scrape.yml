@@ -10,6 +10,9 @@ scrape_configs:
   - job_name: quicvoiced
     static_configs:
       - targets: ["quicvoiced:8080"]
+  - job_name: quicvideod
+    static_configs:
+      - targets: ["quicvideod:8080"]   # video profile; down (no data) otherwise
   - job_name: auth
     static_configs:
       - targets: ["auth:8081"]   # internal listener serves /metrics

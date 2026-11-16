@@ -3,8 +3,8 @@
 # Configure in .env (see .env.example / scripts/setup.sh), then:
 #   docker compose up -d --build
 # Which parts run is chosen by COMPOSE_PROFILES in .env
-# (irc, voice, auth, api, directory, files, minio, metrics, admin, webroot,
-# wellknown). traefik and
+# (irc, voice, video, auth, api, directory, files, minio, metrics, admin,
+# webroot, wellknown). traefik and
 # certsync always run.
 # Install-specific additions: traefik/dynamic/*.yml and compose.override.yaml.
 name: boson
@@ -126,11 +126,13 @@ services:
       CERTSYNC_TARGETS: >-
         ${IRC_HOST}:/certs/irc:10000:fullchain.pem:privkey.pem
         ${VOICE_HOST}:/certs/voice:65532:tls.crt:tls.key
+        ${VIDEO_HOST:-}:/certs/video:65532:tls.crt:tls.key
     volumes:
       - traefik_acme:/acme:ro
       - ./local-certs:/local-certs:ro
       - certs_irc:/certs/irc
       - certs_voice:/certs/voice
+      - certs_video:/certs/video
     depends_on: [traefik]
 
   # ---- irc ------------------------------------------------------------------
@@ -362,7 +364,7 @@ services:
   quicvoiced:
     <<: *restart
     profiles: [voice]
-    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.7.0}
+    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.8.0}
     ports:
       - "7700:7700/udp"
     environment:
@@ -404,6 +406,17 @@ services:
       AUTH_AUDIENCE: quicvoice
       # Optional: HS256 tokens from `quicvoiced token` (legacy / testing).
       JWT_SECRET: ${VOICE_JWT_SECRET:-}
+      # Video in voice channels (docs/video.md; quicvoice 1.8+). VIDEO_HOST
+      # set = on: quicvoiced hands people in a channel a ticket for its video
+      # room on quicvideod (video profile, or a remote node), signed with the
+      # key in voice_data, and keeps quicvideod's rooms in step with voice.
+      VIDEO_QUIC_URL: ${VIDEO_QUIC_URL:-${VIDEO_HOST:+quic://${VIDEO_HOST}:7710}}
+      VIDEO_WEBTRANSPORT_URL: ${VIDEO_WEBTRANSPORT_URL:-${VIDEO_HOST:+https://${VIDEO_HOST}:7710/wt}}
+      VIDEO_TICKET_KEY_FILE: /data/video-ticket.key
+      # quicvideod's control listener: the local video profile by default;
+      # https://VIDEO_HOST/control for a remote node (compose.video-node.yaml).
+      VIDEO_CONTROL_URL: ${VIDEO_CONTROL_URL:-${VIDEO_HOST:+http://quicvideod:8091}}
+      VIDEO_CONTROL_TOKEN: ${VIDEO_CONTROL_TOKEN:-}
     volumes:
       - certs_voice:/certs:ro
       - voice_data:/data
@@ -425,6 +438,53 @@ services:
       - traefik.http.routers.voice.entrypoints=websecure
       - traefik.http.routers.voice.tls=true
       - traefik.http.services.voice.loadbalancer.server.port=8090
+
+  # ---- video ----------------------------------------------------------------
+  # quicvideod: camera + screen share for voice channels (docs/video.md). It
+  # trusts only quicvoiced's video tickets (its JWKS) and takes membership
+  # from quicvoiced over the control listener (8091, compose network only).
+  # Run it on its own box instead with compose.video-node.yaml.
+  quicvideod:
+    <<: *restart
+    profiles: [video]
+    image: ${QUICVIDEO_IMAGE:-harbor.floret.dev/boson/quicvideo:1.7.4}
+    ports:
+      # QUIC for the apps and WebTransport (HTTP/3, /wt) for browsers.
+      - "7710:7710/udp"
+    environment:
+      ENV: production
+      QUIC_ADDR: ":7710"
+      # Internal: /healthz, /version, /metrics. Never routed.
+      HTTP_ADDR: ":8080"
+      # /healthz and /v1/info, routed at https://VIDEO_HOST.
+      PUBLIC_HTTP_ADDR: ":8090"
+      CONTROL_HTTP_ADDR: ":8091"
+      # Required (quicvideod won't start without it); scripts/setup.sh makes one.
+      CONTROL_TOKEN: ${VIDEO_CONTROL_TOKEN:-}
+      # Every video room is a voice channel: rooms voice doesn't list are
+      # emptied when its membership snapshot arrives.
+      VOICE_SYNC: "true"
+      TLS_CERT_FILE: /certs/tls.crt
+      TLS_KEY_FILE: /certs/tls.key
+      AUTH_JWKS_URL: ${VIDEO_TICKET_JWKS_URL:-http://quicvoiced:8090/.well-known/video-jwks.json}
+      AUTH_ISSUER: voice
+      AUTH_AUDIENCE: quicvideo
+      ROOM_MAX_PARTICIPANTS: ${VIDEO_MAX_PARTICIPANTS:-20}
+      # Browsers allowed to open WebTransport sessions (comma-separated
+      # origins; * = any).
+      WEBTRANSPORT_ORIGINS: ${VIDEO_WEBTRANSPORT_ORIGINS:-*}
+    volumes:
+      - certs_video:/certs:ro
+    depends_on:
+      certsync:
+        condition: service_started
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.video.rule=Host(`${VIDEO_HOST:-video.invalid}`)
+      - traefik.http.routers.video.entrypoints=websecure
+      - traefik.http.routers.video.tls=true
+      - traefik.http.routers.video.service=video
+      - traefik.http.services.video.loadbalancer.server.port=8090
 
   # ---- metrics --------------------------------------------------------------
   victoriametrics:
@@ -941,6 +1001,7 @@ volumes:
   traefik_acme:
   certs_irc:
   certs_voice:
+  certs_video:
   ergo_db:
   roleserv_data:
   voice_data:

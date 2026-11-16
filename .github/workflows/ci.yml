@@ -53,9 +53,11 @@ jobs:
       - name: Build auth from auth-src (compose.auth-src.yaml)
         if: inputs.auth_ref != ''
         run: printf 'COMPOSE_FILE=compose.yaml:compose.auth-src.yaml\nAUTH_SRC=./auth-src\n' >> .env
-      - name: Start traefik, certsync, ergo, postgres, auth, quicvoiced, victoriametrics, wellknown
+      - name: Video on (VIDEO_HOST; docs/video.md)
+        run: echo "VIDEO_HOST=video.localhost" >> .env
+      - name: Start traefik, certsync, ergo, postgres, auth, quicvoiced, quicvideod, victoriametrics, wellknown
         env:
-          COMPOSE_PROFILES: irc,voice,auth,metrics,wellknown
+          COMPOSE_PROFILES: irc,voice,video,auth,metrics,wellknown
         run: docker compose up -d --build --wait --wait-timeout 300
       - name: Auth signup + IRC SASL (PLAIN, wrong password, OAUTHBEARER) + channel creation + voice token
         run: |
@@ -175,9 +177,23 @@ jobs:
           if grep -q '^SKIP ' role-channels.out; then
             echo "::notice::role channels smoke skipped: $(grep -m1 '^SKIP ' role-channels.out | cut -c6-) (runs once the auth release with role channels is the newest; or run this workflow with auth_ref)"
           fi
+      - name: Video profile (https://video.localhost/v1/info; ticket JWKS on quicvoice >= 1.8.0, skipped on older images)
+        run: |
+          c() { curl -sS --cacert local-certs/ca.pem "$@"; }
+          c -f https://video.localhost/v1/info |
+            python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["quic_port"]==7710 and d["webtransport_path"]=="/wt", d; print("video info:", d)'
+          code=$(c -o /dev/null -w '%{http_code}' https://video.localhost/metrics)
+          [ "$code" = 404 ] || { echo "/metrics on the video host: $code, want 404"; exit 1; }
+          code=$(c -o jwks.json -w '%{http_code}' https://voice.localhost/.well-known/video-jwks.json)
+          if [ "$code" = 404 ]; then
+            echo "::notice::video ticket JWKS skipped: the quicvoice image predates video tickets (boson-chat/quicvoice#9)"
+            exit 0
+          fi
+          python3 -c 'import json; k=json.load(open("jwks.json"))["keys"]; assert len(k)==1 and k[0]["crv"]=="Ed25519", k; print("video JWKS kid", k[0]["kid"])'
+          docker compose logs quicvoiced | grep -q "video for voice channels on"
       - name: VictoriaMetrics scrapes auth, quicvoiced and traefik
         env:
-          COMPOSE_PROFILES: irc,voice,auth,metrics
+          COMPOSE_PROFILES: irc,voice,video,auth,metrics
         run: |
           for i in $(seq 1 30); do
             up=$(docker compose exec -T victoriametrics wget -qO- 'http://127.0.0.1:8428/api/v1/query?query=up' || true)
@@ -189,7 +205,7 @@ jobs:
       - name: Logs on failure
         if: failure()
         env:
-          COMPOSE_PROFILES: irc,voice,auth,metrics,wellknown
+          COMPOSE_PROFILES: irc,voice,video,auth,metrics,wellknown
         run: docker compose logs
 
   directory:
