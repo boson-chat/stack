@@ -361,6 +361,24 @@ curl -fsS https://boson.chat/.well-known/boson.json                             
 and with a voice token (see [voice.md](voice.md#room-list-api)):
 `curl -fsS https://voice.boson.chat/v1/rooms -H "Authorization: Bearer $VOICE"`.
 
+## Host metrics (node-exporter)
+
+The `metrics` profile includes `node-exporter` (VPS health in the admin
+panel: job `node`, `instance="host"`). It listens only on the stack
+network's gateway, and ufw (22, 80, 443, 6667, 6697, 7700/udp) drops traffic
+from the stack bridge to the host too, so open 9100 to the stack subnet only
+(nothing on the public interface changes):
+
+```sh
+cd "$STACK"
+grep -E '^(STACK_SUBNET|NODE_EXPORTER_ADDR)=' .env   # none: 10.203.53.0/24 and 10.203.53.1
+docker network inspect boson_default -f '{{range .IPAM.Config}}{{.Subnet}} gw {{.Gateway}}{{end}}'
+sudo ufw allow from 10.203.53.0/24 to 10.203.53.1 port 9100 proto tcp comment 'boson node-exporter'
+git pull && docker compose up -d     # starts node-exporter, recreates victoriametrics (extra_hosts)
+curl -s -m 3 http://<public IP>:9100/ ; echo "exit $?"   # from outside: must fail
+docker compose exec victoriametrics wget -qO- 'http://127.0.0.1:8428/api/v1/query?query=up{job="node"}'   # value "1" within ~30 s
+```
+
 ## Open questions
 
 - **auth rate limits for SASL:** auth 1.0.0 ignores `X-Forwarded-For` on its

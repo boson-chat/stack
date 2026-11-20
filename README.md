@@ -13,7 +13,8 @@ voice, and automatic TLS, wired together for your own domain.
 | `postgres` | `auth` | Database for `auth` (Postgres 18) | internal |
 | `quicvoiced` | `voice` | Voice rooms over QUIC ([boson-chat/quicvoice](https://github.com/boson-chat/quicvoice)); accepts tokens from `auth`. Static channels from `VOICE_ROOMS` plus channels created through the rooms API at `https://VOICE_HOST/v1/rooms` (optionally under an IRC channel, lockable to IRC roles) | 7700/udp, via Traefik at `https://VOICE_HOST` |
 | `quicvideod` | `video` | Camera + screen share in voice channels ([boson-chat/quicvideo](https://github.com/boson-chat/quicvideo)): each voice channel's video room. Only quicvoiced's video tickets get in, and quicvoiced keeps its rooms in step with voice. Also runs on its own box ([docs/video.md](docs/video.md)) | 7710/udp (QUIC + WebTransport), via Traefik at `https://VIDEO_HOST` |
-| `victoriametrics` | `metrics` | Scrapes `/metrics` of traefik, auth, quicvoiced (and admin), 90-day retention. Internal only, at `http://victoriametrics:8428` | internal |
+| `victoriametrics` | `metrics` | Scrapes `/metrics` of traefik, auth, quicvoiced, admin and the host (`node-exporter`), 90-day retention. Internal only, at `http://victoriametrics:8428` | internal |
+| `node-exporter` | `metrics` | Host metrics of the machine the stack runs on (CPU, memory, load, PSI, disks, network, uptime), scraped as job `node`, `instance="host"`; the admin panel's host health. Host network, listening only on the stack network's gateway (see **Host metrics** under [Notes](#notes)) | internal |
 | `admin` | `admin` | The admin panel ([boson-chat/admin](https://github.com/boson-chat/admin)): users, invites, sign-in providers, network settings, audit log, stack health, and services control (restart/stop/start, logs); edits [`config/boson.yaml`](docs/config.md) | via Traefik at `https://ADMIN_HOST` |
 | `docker-proxy` | `admin` | [Socket proxy](https://github.com/wollomatic/socket-proxy) that is the admin panel's only access to Docker: list/inspect containers, logs, stats, start/stop/restart; nothing else, only from `admin`, on an internal network | internal |
 | `directory` | `directory` | Optional: a boson network directory ([boson-chat/directory](https://github.com/boson-chat/directory)): website and paginated `/v1` API where networks list themselves (DNS-verified), federated with other directories; includes directory.boson.chat's listings by default ([docs/directory.md](docs/directory.md)) | via Traefik at `https://DIRECTORY_HOST` |
@@ -265,6 +266,23 @@ keys in the database).
   `10.203.53.0/24`) so `auth` (`TRUSTED_PROXIES`) and Ergo
   (`proxy-allowed-from`) trust X-Forwarded-For from Traefik. Pick another
   range if it collides with something on the host.
+- **Host metrics (`node-exporter`, `metrics` profile):**
+  [node-exporter](https://github.com/prometheus/node_exporter) reports the
+  host, not a container: host PID namespace, the host's `/` read-only at
+  `/host`, and host networking so the network collectors see the real
+  interfaces. Collectors: cpu, meminfo, loadavg, pressure (PSI), filesystem
+  (no overlay/tmpfs/Docker mounts), diskstats, netdev (no `lo`, `veth*`,
+  `br-*`, `docker*`), netstat, stat (boot time), time, uname, os; everything
+  else is off. VictoriaMetrics scrapes it as job `node` with
+  `instance="host"`. It is never bound to `0.0.0.0`: it listens on
+  `NODE_EXPORTER_ADDR:9100` (default `10.203.53.1`, the gateway of the
+  default `STACK_SUBNET`; change both together), an address only containers
+  on the stack network route to. Host firewalls that drop incoming traffic
+  by default (ufw) also drop it from the stack bridge, so allow it once:
+  `sudo ufw allow from 10.203.53.0/24 to 10.203.53.1 port 9100 proto tcp`.
+  Until then the `node` target shows as down; nothing else is affected.
+  Per-container CPU/memory (cAdvisor) is not included: too heavy for a small
+  VPS; the admin panel's services page already shows `docker stats`.
 - **Images:** `certsync` and `ergo` are built from `images/` and published to
   `harbor.floret.dev/boson/stack-*` by CI on every push to `main`
   (`stack-certsync:latest`, `stack-ergo:2.19.1`, plus `:sha-<commit>`).

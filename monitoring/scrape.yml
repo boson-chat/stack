@@ -19,3 +19,12 @@ scrape_configs:
   - job_name: admin
     static_configs:
       - targets: ["admin:8081"]
+  # Host metrics (node-exporter, metrics profile). It runs on the host network,
+  # bound to the stack network's gateway; victoriametrics maps
+  # host.docker.internal to that address (NODE_EXPORTER_ADDR). instance is
+  # fixed to "host" so queries don't depend on the address.
+  - job_name: node
+    static_configs:
+      - targets: ["host.docker.internal:9100"]
+        labels:
+          instance: host
