@@ -290,7 +290,7 @@ services:
     profiles: [auth]
     # Releases: harbor.floret.dev/boson/auth:<version>. To run an unreleased
     # checkout instead, add compose.auth-src.yaml (see README).
-    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.12.0}
+    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.19.0}
     environment:
       ENV: production
       LOG_LEVEL: ${AUTH_LOG_LEVEL:-info}
@@ -331,6 +331,12 @@ services:
       # only while uploads are on (FILES_ENABLED default; config/boson.yaml
       # files.enabled wins). Safe to set without the files profile.
       FILES_PUBLIC_URL: https://${FILES_HOST:-files.${DOMAIN:-localhost}}
+      # Friends: "People in my servers" (who may send you friend requests)
+      # asks Ergo's API whether two people share a channel (irc profile).
+      # Empty ERGO_API_TOKEN = that setting lets nobody through. Friends and
+      # private calls need nothing else here (docs/friends-calls.md).
+      ERGO_API_URL: ${AUTH_ERGO_API_URL:-http://ergo:8089}
+      ERGO_API_TOKEN: ${ERGO_API_TOKEN:-}
       FILES_ENABLED: ${FILES_ENABLED:-false}
     volumes:
       # Read-only: boson.yaml (auth:, network:, branding:) and the branding
@@ -364,7 +370,7 @@ services:
   quicvoiced:
     <<: *restart
     profiles: [voice]
-    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.13.0}
+    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.14.0}
     ports:
       - "7700:7700/udp"
     environment:

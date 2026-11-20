@@ -135,6 +135,10 @@ to its public API (`:8090`), never to `:8080` (`/metrics`).
   if your website lives elsewhere, publish the same file there.
 
 Details, the JSON formats and examples: [docs/voice.md](docs/voice.md).
+
+Friends and private 1:1 calls (ringing only while the app is open) run on
+`auth` and `quicvoiced` with nothing extra to deploy:
+[docs/friends-calls.md](docs/friends-calls.md).
 Text channel creation policy, IRC roles and channel locks (exact Ergo
 commands): [docs/irc-channels.md](docs/irc-channels.md). Network roles on
 IRC, RoleServ, and what the auth service provides for them:
