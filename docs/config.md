@@ -60,6 +60,7 @@ admin needs to change it in the panel.
 | `auth.registration` | `open` \| `invite` \| `closed` | `REGISTRATION` | live | auth | `settings.manage` |
 | `auth.require_email_verification` | bool | `REQUIRE_EMAIL_VERIFICATION` | live | auth | `settings.manage` |
 | `auth.guest_access` | bool | `true` (`IRC_REQUIRE_SASL`) | live | auth → ergo | `settings.manage` |
+| `auth.guest_voice` | bool (only with `guest_access`) | `false` | live | auth | `settings.manage` |
 | `auth.channel_creation` | `registered` \| `admins` | `IRC_CHANNEL_CREATION` | live | auth → ergo | `settings.manage` |
 | `auth.voice_channel_creation` | `admins` \| `founders` \| `registered` | `VOICE_CHANNEL_CREATION` | live | auth → quicvoiced | `settings.manage` |
 | `auth.channel_auto_register` | bool | `true` | live | auth → ergo | `settings.manage` |

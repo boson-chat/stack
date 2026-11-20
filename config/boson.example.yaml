@@ -53,6 +53,12 @@ version: 1
 #   # Let people connect to IRC with just a nickname (no account).
 #   # Default: true (IRC_REQUIRE_SASL=true on ergo turns guests off).
 #   guest_access: true
+#   # Let guests (no account) join voice rooms, and so video, under their
+#   # IRC nick with a guest badge. Nicks that belong to an account are
+#   # refused; rooms limited to channel members or roles stay closed to
+#   # guests. Only takes effect while guest_access is true (auth 1.18+).
+#   # Default: false.
+#   guest_voice: false
 #   # Who can create text channels: registered | admins.
 #   # Default: IRC_CHANNEL_CREATION (ergo) / registered.
 #   channel_creation: registered

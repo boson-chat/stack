@@ -104,7 +104,11 @@ acting API). Ergo is built with a small patch for this
 (whether people can use IRC without an account) are polled by `boson-ergo watch-settings` every
 `SETTINGS_POLL_SECONDS` (30), which re-renders `ircd.yaml` and rehashes Ergo
 on a change; `voice_channel_creation` (`admins | founders | registered`) is
-read by quicvoiced (cached 30 s). See
+read by quicvoiced (cached 30 s). `guest_voice` (default `false`; auth 1.18+)
+lets guests join voice rooms, and so video, under their unverified IRC nick
+with a guest badge, while `guest_access` is on: auth mints them a guest voice
+token (`POST /v1/voice/guest-token`) and refuses nicks that belong to an
+account. See
 [docs/irc-channels.md](docs/irc-channels.md) and [docs/voice.md](docs/voice.md).
 
 The auth internal listener (`:8081`: `/internal/v1/*`, `/metrics`) is only
