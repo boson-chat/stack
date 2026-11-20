@@ -1,5 +1,5 @@
 # boson stack: Traefik (TLS + routing), Ergo (IRC), auth + Postgres
-# (accounts), quicvoiced (voice), VictoriaMetrics (metrics).
+# (accounts), quicvoiced (voice), VictoriaMetrics + node-exporter (metrics).
 # Configure in .env (see .env.example / scripts/setup.sh), then:
 #   docker compose up -d --build
 # Which parts run is chosen by COMPOSE_PROFILES in .env
@@ -499,8 +499,62 @@ services:
     volumes:
       - ./monitoring/scrape.yml:/etc/vm/scrape.yml:ro
       - vm_data:/storage
+    # node-exporter (below) runs on the host network and listens only on the
+    # stack network's gateway address; scrape.yml targets this name.
+    extra_hosts:
+      - host.docker.internal:${NODE_EXPORTER_ADDR:-10.203.53.1}
     # Internal only: the admin panel (and Grafana, if you add one) query
     # http://victoriametrics:8428. Not published on the host.
+
+  # Host metrics (CPU, memory, load, disks, network, PSI) of the machine
+  # running the stack, scraped as job "node". It has to see the HOST, not a
+  # container: host PID namespace, the host's / read-only at /host, and the
+  # host network namespace (network_mode: host) so netdev/netstat report the
+  # host's interfaces.
+  #
+  # Host networking means it isn't on the stack network, so it is NOT bound to
+  # 0.0.0.0: it listens on the stack network's gateway (the host's address on
+  # the stack bridge, the first address of STACK_SUBNET; set
+  # NODE_EXPORTER_ADDR when you change STACK_SUBNET). Only containers on the
+  # stack network (victoriametrics) can route to it; nothing on the public
+  # interface can. With a host firewall that drops incoming traffic by default
+  # (ufw), allow the stack subnet to reach it once:
+  #   ufw allow from 10.203.53.0/24 to 10.203.53.1 port 9100 proto tcp
+  node-exporter:
+    <<: *restart
+    profiles: [metrics]
+    image: prom/node-exporter:v1.12.1
+    network_mode: host
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    command:
+      - --path.rootfs=/host
+      - --web.listen-address=${NODE_EXPORTER_ADDR:-10.203.53.1}:9100
+      # Only what the admin panel's host view needs; the rest are off.
+      - --collector.disable-defaults
+      - --collector.cpu
+      - --collector.meminfo
+      - --collector.loadavg
+      - --collector.pressure
+      - --collector.filesystem
+      - --collector.diskstats
+      - --collector.netdev
+      - --collector.netstat
+      - --collector.stat       # node_boot_time_seconds (uptime), context switches
+      - --collector.time
+      - --collector.uname
+      - --collector.os
+      # Real disks only: no container overlays, tmpfs, or Docker's own mounts.
+      - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|erofs|sysfs|tracefs|tmpfs|ramfs|fuse\..*)$$
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|run|sys|snap|var/lib/docker/.+|var/lib/containers/storage/.+)($$|/)
+      - --collector.netdev.device-exclude=^(lo|veth.*|br-.*|docker.*)$$
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://${NODE_EXPORTER_ADDR:-10.203.53.1}:9100/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   # ---- admin (SLOT: upcoming admin panel, not released yet) -----------------
   # Off unless COMPOSE_PROFILES includes "admin". Image and env are the

@@ -55,7 +55,7 @@ jobs:
         run: printf 'COMPOSE_FILE=compose.yaml:compose.auth-src.yaml\nAUTH_SRC=./auth-src\n' >> .env
       - name: Video on (VIDEO_HOST; docs/video.md)
         run: echo "VIDEO_HOST=video.localhost" >> .env
-      - name: Start traefik, certsync, ergo, postgres, auth, quicvoiced, quicvideod, victoriametrics, wellknown
+      - name: Start traefik, certsync, ergo, postgres, auth, quicvoiced, quicvideod, victoriametrics, node-exporter, wellknown
         env:
           COMPOSE_PROFILES: irc,voice,video,auth,metrics,wellknown
         run: docker compose up -d --build --wait --wait-timeout 300
@@ -191,17 +191,36 @@ jobs:
           fi
           python3 -c 'import json; k=json.load(open("jwks.json"))["keys"]; assert len(k)==1 and k[0]["crv"]=="Ed25519", k; print("video JWKS kid", k[0]["kid"])'
           docker compose logs quicvoiced | grep -q "video for voice channels on"
-      - name: VictoriaMetrics scrapes auth, quicvoiced and traefik
+      - name: VictoriaMetrics scrapes auth, quicvoiced, traefik and node (host metrics)
         env:
           COMPOSE_PROFILES: irc,voice,video,auth,metrics
         run: |
           for i in $(seq 1 30); do
             up=$(docker compose exec -T victoriametrics wget -qO- 'http://127.0.0.1:8428/api/v1/query?query=up' || true)
-            n=$(echo "$up" | python3 -c 'import sys,json; r=json.load(sys.stdin)["data"]["result"]; print(sum(1 for m in r if m["metric"]["job"] in ("auth","quicvoiced","traefik") and m["value"][1]=="1"))' 2>/dev/null || echo 0)
-            [ "$n" = 3 ] && { echo "all 3 targets up"; exit 0; }
+            n=$(echo "$up" | python3 -c 'import sys,json; r=json.load(sys.stdin)["data"]["result"]; print(sum(1 for m in r if m["metric"]["job"] in ("auth","quicvoiced","traefik","node") and m["value"][1]=="1"))' 2>/dev/null || echo 0)
+            [ "$n" = 4 ] && { echo "all 4 targets up"; exit 0; }
             sleep 5
           done
           echo "$up"; exit 1
+      - name: node-exporter reports the host and is only reachable from the stack network
+        env:
+          COMPOSE_PROFILES: irc,voice,video,auth,metrics
+        run: |
+          q() { docker compose exec -T victoriametrics wget -qO- "http://127.0.0.1:8428/api/v1/query?query=$1"; }
+          q 'up%7Bjob%3D%22node%22%2Cinstance%3D%22host%22%7D' |
+            python3 -c 'import sys,json; r=json.load(sys.stdin)["data"]["result"]; assert len(r)==1 and r[0]["value"][1]=="1", r; print("up{job=node,instance=host} = 1")'
+          q 'node_memory_MemAvailable_bytes%7Bjob%3D%22node%22%7D' |
+            python3 -c 'import sys,json; r=json.load(sys.stdin)["data"]["result"]; assert len(r)==1 and float(r[0]["value"][1])>0, r; print("MemAvailable:", r[0]["value"][1])'
+          # Host, not container: the host's interfaces (no veth/docker/br-) and a real root filesystem.
+          q 'count%20by%20(device)%20(node_network_receive_bytes_total%7Bjob%3D%22node%22%7D)' |
+            python3 -c 'import sys,json; d=[m["metric"]["device"] for m in json.load(sys.stdin)["data"]["result"]]; print("netdev:", d); assert d and not any(x.startswith(("veth","docker","br-","lo")) for x in d), d'
+          q 'node_filesystem_size_bytes%7Bjob%3D%22node%22%2Cmountpoint%3D%22%2F%22%7D' |
+            python3 -c 'import sys,json; r=json.load(sys.stdin)["data"]["result"]; assert r and r[0]["metric"]["fstype"]!="overlay", r; print("/:", r[0]["metric"]["fstype"], r[0]["value"][1])'
+          # Bound to the stack gateway only: not on loopback or the runner's own address.
+          if curl -s -m 3 http://127.0.0.1:9100/metrics >/dev/null; then echo "node-exporter answers on 127.0.0.1"; exit 1; fi
+          ip=$(hostname -I | awk '{print $1}')
+          if curl -s -m 3 "http://$ip:9100/metrics" >/dev/null; then echo "node-exporter answers on $ip"; exit 1; fi
+          echo ok
       - name: Logs on failure
         if: failure()
         env:
