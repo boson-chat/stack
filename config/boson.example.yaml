@@ -220,6 +220,12 @@ version: 1
 #   # Rooms the server holds at once, and people per room (0 = no limit).
 #   max_rooms: 0
 #   max_participants: 0
+#   # Voice bitrate cap in kbit/s (quicvoiced >= 1.13): the most a person
+#   # sends in rooms without their own cap; a room's own: max_kbps on its
+#   # entry in rooms, like { id: music, name: Music, max_kbps: 128 }. The app
+#   # sends min(the person's Voice quality: 32 / 64 / 128, the cap). Advisory:
+#   # quicvoiced announces it (older apps ignore it). Default: no cap.
+#   max_kbps: 0
 #   # Caches (live): how long auth's settings and Ergo's founder answers are reused.
 #   settings_ttl: 30s
 #   ergo_cache_ttl: 30s
