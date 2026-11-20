@@ -82,10 +82,11 @@ admin needs to change it in the panel.
 | `irc.persistent_history` | bool | `IRC_PERSISTENT_HISTORY` | **restart** | ergo | `services.manage` |
 | `irc.history_expire` | Ergo duration (`7d`) | built-in | live (rehash) | ergo | `services.manage` |
 | `irc.log_level` | `debug`/`info`/`warn`/`error` | built-in | live (rehash) | ergo | `services.manage` |
-| `voice.rooms` | list of `{id, name}` | `VOICE_ROOMS` | live | quicvoiced | `settings.manage` |
+| `voice.rooms` | list of `{id, name, max_kbps}` (`max_kbps` optional, quicvoiced ≥ 1.13) | `VOICE_ROOMS` | live | quicvoiced | `settings.manage` |
 | `voice.rooms_strict` | bool | `VOICE_ROOMS_STRICT` | live | quicvoiced | `settings.manage` |
 | `voice.max_rooms_per_user` | int | `VOICE_ROOMS_MAX_PER_USER` | live | quicvoiced | `settings.manage` |
 | `voice.max_rooms`, `voice.max_participants` | int (0 = no limit) | built-in | live | quicvoiced | `settings.manage` |
+| `voice.max_kbps` | int kbit/s, 6–510 (0 / absent = no cap; quicvoiced ≥ 1.13) | none | live | quicvoiced → app | `settings.manage` |
 | `voice.settings_ttl`, `voice.ergo_cache_ttl` | duration | built-in | live | quicvoiced | hand edit |
 | `voice.quic_addr`, `voice.http_addr`, `voice.public_http_addr`, `voice.max_datagrams_per_sec`, `voice.max_datagram_payload` | listeners / limits | built-in | **restart** | quicvoiced | hand edit |
 | `directory.name` / `.operator` / `.contact` | string | `DIRECTORY_NAME` / `DIRECTORY_OPERATOR` / `DIRECTORY_CONTACT` | live | directory | `directory.manage` |

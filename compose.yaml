@@ -364,7 +364,7 @@ services:
   quicvoiced:
     <<: *restart
     profiles: [voice]
-    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.10.0}
+    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.13.0}
     ports:
       - "7700:7700/udp"
     environment:
@@ -562,7 +562,7 @@ services:
   admin:
     <<: *restart
     profiles: [admin]
-    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.19.0}
+    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.23.0}
     environment:
       ENV: production
       # The stack config file: the panel edits it (Settings pages, Config
