@@ -485,7 +485,7 @@ func TestLoginAccount(t *testing.T) {
 func TestConnectNick(t *testing.T) {
 	for text, want := range map[string]string{
 		"\x0314-\x0fCONNECT\x0314-\x03 Client connected [Guest1] [u:~u] [h:203.0.113.5] [ip:203.0.113.5] [r:Boson guest]": "Guest1",
-		"-CONNECT- Client connected [alice] [u:~a] [h:h] [ip:::1] [r:x]":                                                     "alice",
+		"-CONNECT- Client connected [alice] [u:~a] [h:h] [ip:::1] [r:x]":                                                  "alice",
 	} {
 		if got, ok := ConnectNick(text); !ok || got != want {
 			t.Errorf("ConnectNick(%q) = %q, %v", text, got, ok)

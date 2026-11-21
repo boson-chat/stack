@@ -511,40 +511,42 @@ if MODE == "fake":
     g.send("QUIT")
 
     # an account: joined on its first login only (a /part sticks)
-    h = Client("hank", PW["hank"])
+    http("POST", AUTH_TEST + "/test/state", {"users": {"ivy": []}})  # a new account (password pw-ivy)
+    h = Client("ivy", "pw-ivy")
     check("network channels: an account is joined to #lobby on its first login", lobby_joined(h), h.log[-5:])
     h.send("PART #Lobby"); h.drain(1); h.send("QUIT"); time.sleep(1)
-    h = Client("hank", PW["hank"]); h.drain(5)
+    h = Client("ivy", "pw-ivy"); h.drain(5)
     check("network channels: after /part, the next login doesn't join #lobby again",
           not any(" JOIN " in l and "#lobby" in l.lower() for l in h.log), [l for l in h.log if " JOIN " in l])
 
     # creation policy "Only admins" (auth channel_creation: admins): members
     # can join network channels, but can't create channels; admins can.
     http("POST", AUTH_TEST + "/test/state", {"settings": {"channel_creation": "admins"}})
-    time.sleep(5)  # SETTINGS_POLL_SECONDS 2: re-render + rehash
-    b = Client("bob", PW["bob"])
-    b.send("JOIN #bob-made-this")
-    got = b.collect(lambda l: (" 403 " in l or " JOIN " in l) and "#bob-made-this" in l, 8)
+    # frank (no roles) and alice (Admin: irc.chanreg) are still connected
+    n = [0]
+    def try_create(c, prefix):
+        n[0] += 1; ch = f"#{prefix}-{n[0]}"
+        c.drain(0.2); c.send("JOIN " + ch)
+        return c.collect(lambda l: ch in l and (" 403 " in l or " JOIN " in l), 8)
+    got = eventually(lambda: (lambda g: g if any(" 403 " in l for l in g) else None)(try_create(frank, "frank-new")), 20, 1) or []
     check("channel_creation=admins: a member can't create a channel (403)",
           any(" 403 " in l and "Only server operators can create new channels" in l for l in got), got[-3:])
-    b.send("JOIN #rules")
-    got = b.collect(lambda l: "#rules" in l and (" JOIN " in l or " 403 " in l or " 47" in l), 8)
+    frank.drain(0.2); frank.send("JOIN #rules")
+    got = frank.collect(lambda l: "#rules" in l and (" JOIN " in l or " 403 " in l or " 47" in l), 8)
     check("channel_creation=admins: a member joins a network channel (#rules)", any(" JOIN " in l for l in got), got[-3:])
-    a = Client("alice", PW["alice"])  # Admin role: irc.chanreg
-    a.send("JOIN #admin-made-this")
-    got = a.collect(lambda l: "#admin-made-this" in l and (" JOIN " in l or " 403 " in l), 8)
+    got = try_create(alice, "alice-new")
     check("channel_creation=admins: an admin (irc.chanreg) creates a channel", any(" JOIN " in l for l in got), got[-3:])
     http("POST", AUTH_TEST + "/test/state", {"settings": {"channel_creation": "registered"}})
 
     # removing #rules from the list: RoleServ registered it, so it's dropped
     http("POST", AUTH_TEST + "/test/state", {"network": {"channels": [
         {"channel": "#lobby", "name": "#Lobby", "topic": "Welcome to the smoke", "autojoin": True}]}})
-    got = eventually(lambda: "not registered" in cs(b, "INFO #rules"), 15, 2)
+    got = eventually(lambda: "not registered" in cs(frank, "INFO #rules"), 15, 2)
     check("network channels: a channel removed from the list is unregistered", got)
-    check("network channels: its members weren't kicked", not any(" KICK " in l and "#rules" in l for l in b.log))
-    info = cs(b, "INFO #lobby")
+    check("network channels: its members weren't kicked", not any(" KICK " in l and "#rules" in l for l in frank.log))
+    info = cs(frank, "INFO #lobby")
     check("network channels: #lobby stays registered", "alice" in info.lower(), info)
-    for c in (a, b, h): c.send("QUIT")
+    h.send("QUIT")
 
 # RoleServ's account can't be taken over through auth
 rs = Client("RoleServ", "anything", nick="RoleServ", register=False)
