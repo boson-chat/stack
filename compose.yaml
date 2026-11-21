@@ -715,7 +715,7 @@ services:
   api:
     <<: *restart
     profiles: [api]
-    image: ${API_IMAGE:-harbor.floret.dev/boson/backend:0.54.0}
+    image: ${API_IMAGE:-harbor.floret.dev/boson/backend:0.57.0}
     command: ["serve"]
     environment: &api-env
       PORT: "3000"
@@ -756,6 +756,14 @@ services:
       CLOUDFLARE_R2_ENDPOINT: ${R2_ENDPOINT:-}
       CLOUDFLARE_R2_BUCKET: ${R2_BUCKET:-}
       CLOUDFLARE_CDN_BASE_URL: ${CDN_BASE_URL:-}
+      # Link previews for the web client (GET /v1/unfurl, backend >= 0.57.0;
+      # docs/api.md): the API fetches public pages through an SSRF guard.
+      # Client addresses (for the per-address limit) come from Traefik's
+      # X-Forwarded-For.
+      UNFURL_ENABLED: ${API_UNFURL_ENABLED:-true}
+      UNFURL_RATE_PER_IP: ${API_UNFURL_RATE_PER_IP:-120}
+      UNFURL_RATE_PER_USER: ${API_UNFURL_RATE_PER_USER:-60}
+      TRUSTED_PROXIES: ${STACK_SUBNET:-10.203.53.0/24}
     labels:
       - traefik.enable=true
       - traefik.http.routers.api.rule=Host(`${API_HOST:-api.${DOMAIN:-localhost}}`)
@@ -776,7 +784,7 @@ services:
   # Applies the API's database migrations before it starts (exits when done).
   api-migrate:
     profiles: [api]
-    image: ${API_IMAGE:-harbor.floret.dev/boson/backend:0.54.0}
+    image: ${API_IMAGE:-harbor.floret.dev/boson/backend:0.57.0}
     command: ["migrate", "up"]
     environment: *api-env
     restart: "no"
@@ -1084,7 +1092,7 @@ services:
   web:
     <<: *restart
     profiles: [web]
-    image: ${WEB_IMAGE:-harbor.floret.dev/boson/web:0.88.0}
+    image: ${WEB_IMAGE:-harbor.floret.dev/boson/web:0.89.0}
     environment:
       BOSON_AUTH_URL: https://${AUTH_HOST:-auth.invalid}
       BOSON_API_URL: ${WEB_API_URL:-https://${API_HOST:-api.${DOMAIN:-localhost}}}

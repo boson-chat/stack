@@ -45,6 +45,12 @@ browser origins follow by default (each has its own override):
 | quicvoiced | `VOICE_WEBTRANSPORT_ORIGINS` (or `voice.web_origins`) | voice over WebTransport at `https://VOICE_HOST:7700/wt`, and its room API |
 | quicvideod | `VIDEO_WEBTRANSPORT_ORIGINS` (default any) | video over WebTransport at `https://VIDEO_HOST:7710/wt` |
 
+Link previews and Spotify cards come from the Boson API (`GET /v1/unfurl`,
+backend 0.57.0 or later, the `api` profile; see [api.md](api.md#link-previews)), so
+`WEB_API_URL` must point at an API that has it. YouTube videos play through a
+small wrapper page the web container serves from `WEB_HOST` itself
+(`/youtube-embed.html`, framable only by the app).
+
 Calls need a browser with WebTransport and WebCodecs (Chrome, Edge, Firefox; Safari where it has WebTransport);
 elsewhere the app is chat-only and says why. The UDP ports
 (7700, 7710) are the same ones the desktop app uses.
