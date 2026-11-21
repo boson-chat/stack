@@ -33,6 +33,46 @@ How a change reaches Ergo:
 So an admin-panel change takes effect on IRC within about
 `SETTINGS_POLL_SECONDS`.
 
+**Who counts as an admin:** an account whose network roles include the
+`irc.chanreg` permission. Any `irc.*` permission makes a role an IRC operator
+role, so its members are opered at login with that capability (docs/roles.md).
+The built-in **Owner** and **Admin** roles have it; Moderator and Member
+don't. In the admin panel the setting reads "Who can create channels: Anyone
+signed in / Only admins". The boson client reads `channel_creation` from
+auth's `GET /v1/config` and hides "create channel" for people who can't.
+
+With `admins`, people can still join every channel that exists: the
+**network channels** below (which always exist), role channels, and channels
+an admin created.
+
+## Network channels (fixed channels and auto-join for new users)
+
+`irc.channels` in `config/boson.yaml` (admin panel: Settings → Network
+channels) lists channels that belong to the network:
+
+```yaml
+irc:
+  channels:
+    - { name: "#lobby", topic: "Welcome!", autojoin: true }
+    - { name: "#help" }
+  channel_founder: thelion   # default: the earliest Owner, else RoleServ
+  autojoin_guests: true      # default true
+```
+
+| | |
+|---|---|
+| **Always exist** | RoleServ creates each one (with no members) and registers it to `channel_founder` through the patched Ergo API (`POST /v1/channel_ensure`, patch 0005), before anyone is joined to it. Nobody can create it first and become its founder, with any `channel_creation`. A channel already registered to someone else is left with them (logged). Network channels never expire (`EXPIRY OFF`). |
+| **Topic** | Set when RoleServ first sees a non-empty topic, and again whenever it changes in the file. A `/topic` by the channel's ops stays until the file's topic changes. |
+| **Auto-join: accounts** | On an account's **first login** (Ergo's ACCOUNT snomask), RoleServ SAJOINs it to the `autojoin: true` channels and records that in auth (`irc_autojoined`), so a `/part` sticks. A channel added to the list later is joined once at each account's next login (and right away for accounts RoleServ saw log in). Existing accounts count as new for a channel they've never been auto-joined to. Independent of `roles.channels.autojoin`. |
+| **Auto-join: guests** | With `autojoin_guests`, a client that connects without an account (a Boson guest, or a plain IRC client without SASL: HexChat, irssi) is SAJOINed by nick (`POST /v1/sajoin {"nick"}`) about a second after it connects (Ergo's CONNECT snomask, `+s c`). Once per nick per 24 h (kept in RoleServ's memory), so a reconnecting guest that left isn't pulled back. A client that logs in later is handled as an account (joining again is a no-op). |
+| **Removing one** | A channel RoleServ registered is unregistered when it's removed from the list (`POST /v1/channel_drop`); nobody is kicked, and it goes away when it empties. A channel that was registered to someone else before is just no longer managed. |
+
+Why not Ergo's own `channels.auto-join`: it joins every client at every
+connect (so a `/part` never sticks, and accounts get it at every login), as
+a normal JOIN (a missing channel would be created with the joiner as op).
+
+Status: `docker compose logs roleserv | grep -E "network channels|auto-join"`.
+
 ## Channel registration: automatic, and expiry of unused channels
 
 Two more network settings (auth 1.7+, admin panel → Network settings →

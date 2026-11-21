@@ -320,6 +320,39 @@ type ChannelAccessFeed struct {
 	Autojoin bool            `json:"autojoin"`
 	Rejoin   string          `json:"rejoin"` // "login" or "once"
 	Channels []ChannelAccess `json:"channels"`
+	// Network: the network channels (irc.channels; auth >= the network
+	// channels release). Absent from older auth: no network channels.
+	Network NetworkChannels `json:"network"`
+}
+
+// NetworkChannels are the feed's network channels: they always exist,
+// registered to Founder, and the Autojoin ones are joined by new accounts
+// (first login) and, with AutojoinGuests, by guests when they connect.
+type NetworkChannels struct {
+	// Founder is the account network channels are registered to ("" =
+	// RoleServ's own account).
+	Founder        string           `json:"founder"`
+	AutojoinGuests bool             `json:"autojoin_guests"`
+	Channels       []NetworkChannel `json:"channels"`
+}
+
+// NetworkChannel is one network channel.
+type NetworkChannel struct {
+	Channel  string `json:"channel"` // casefolded
+	Name     string `json:"name"`    // as written
+	Topic    string `json:"topic"`
+	Autojoin bool   `json:"autojoin"`
+}
+
+// AutojoinChannels are the network channels guests and new accounts join.
+func (n NetworkChannels) AutojoinChannels() []string {
+	var out []string
+	for _, c := range n.Channels {
+		if c.Autojoin {
+			out = append(out, c.Channel)
+		}
+	}
+	return out
 }
 
 // ChannelAccess is one channel of the feed.
@@ -361,6 +394,11 @@ type Autojoin struct {
 	Channels []string `json:"channels"`
 	// Pending: Channels RoleServ hasn't auto-joined the account to yet.
 	Pending []string `json:"pending"`
+	// Network: the auto-join network channels (joined once per account,
+	// whatever Enabled and Rejoin say); NetworkPending: the ones RoleServ
+	// hasn't joined the account to yet.
+	Network        []string `json:"network"`
+	NetworkPending []string `json:"network_pending"`
 }
 
 // Autojoin fetches an account's auto-join channels (ErrNotFound for an

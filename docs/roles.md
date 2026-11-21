@@ -257,7 +257,7 @@ client (mIRC included), not just Boson's.
 | **Public** channel | Not touched; the role listing only drives auto-join. |
 | Revoking access | Removes the account's `+I` entry. Nobody is kicked: people already in the channel stay until they leave. |
 | Making a channel public again | RoleServ removes its `+i` (or `+R`) and every `+I` entry it added. Entries an op added by hand (`/mode #c +I a:bob`, nick masks) are never touched. |
-| **Auto-join** (`roles.channels.autojoin: true`) | When a member logs in, RoleServ joins every connected client of the account to the channels their roles list with auto-join on. It does the same when a connected member gains a role that adds channels. |
+| **Auto-join** (`roles.channels.autojoin: true`) | Only for channels assigned to roles (admin panel: Roles → Channels): with none assigned it does nothing. For channels every new user should join (e.g. `#lobby`), use the network channels (`irc.channels`, docs/irc-channels.md "Network channels"). When a member logs in, RoleServ joins every connected client of the account to the channels their roles list with auto-join on. It does the same when a connected member gains a role that adds channels. |
 | `roles.channels.rejoin` | `login` (default): at every login, even after a `/part`. `once`: only the first time a role gives the channel; auth keeps a per-account record, so a `/part` sticks. Losing the role and getting it back counts as a first time again. |
 
 ### Making a channel private

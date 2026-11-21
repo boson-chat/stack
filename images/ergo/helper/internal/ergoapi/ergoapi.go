@@ -189,3 +189,47 @@ func (c *Client) Sajoin(ctx context.Context, account string, channels []string) 
 	err := c.call(ctx, "/v1/sajoin", map[string]any{"accountName": account, "channels": channels}, &out)
 	return out, err
 }
+
+// SajoinNick calls POST /v1/sajoin with a nick (patch 0005): joins that one
+// client (logged in or not) to channels. Clients is 0 if nobody has the nick.
+func (c *Client) SajoinNick(ctx context.Context, nick string, channels []string) (SajoinResult, error) {
+	var out SajoinResult
+	err := c.call(ctx, "/v1/sajoin", map[string]any{"nick": nick, "channels": channels}, &out)
+	return out, err
+}
+
+// ChannelEnsure is the request of POST /v1/channel_ensure (patch 0005).
+type ChannelEnsure struct {
+	Channel    string `json:"channel"`
+	Founder    string `json:"founder"`
+	Topic      string `json:"topic,omitempty"`
+	SetTopic   bool   `json:"setTopic,omitempty"`
+	TopicSetBy string `json:"topicSetBy,omitempty"`
+	NoExpire   bool   `json:"noExpire,omitempty"`
+}
+
+// ChannelEnsureResult is its answer.
+type ChannelEnsureResult struct {
+	Created      bool   `json:"created"`
+	Registered   bool   `json:"registered"`
+	Founder      string `json:"founder"`
+	TopicChanged bool   `json:"topicChanged"`
+}
+
+// EnsureChannel calls POST /v1/channel_ensure: the channel exists (created
+// with no members if needed) and is registered (to Founder if it wasn't).
+func (c *Client) EnsureChannel(ctx context.Context, req ChannelEnsure) (ChannelEnsureResult, error) {
+	var out ChannelEnsureResult
+	err := c.call(ctx, "/v1/channel_ensure", req, &out)
+	return out, err
+}
+
+// DropChannel calls POST /v1/channel_drop: unregisters channel if founder
+// founds it. dropped is false when it doesn't (or doesn't exist).
+func (c *Client) DropChannel(ctx context.Context, channel, founder string) (dropped bool, err error) {
+	var out struct {
+		Dropped bool `json:"dropped"`
+	}
+	err = c.call(ctx, "/v1/channel_drop", map[string]string{"channel": channel, "founder": founder}, &out)
+	return out.Dropped, err
+}
