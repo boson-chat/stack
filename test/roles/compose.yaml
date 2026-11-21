@@ -31,6 +31,8 @@ x-ergo-env: &ergo-env
   SETTINGS_POLL_SECONDS: "2"
   # channel expiry in seconds instead of days, for smoke-roles.py's channel checks
   IRC_CHANNEL_EXPIRE_AFTER: 20s
+  # the smoke opens more than Ergo's 32 connections per 10 minutes from one IP
+  IRC_IP_LIMITS_EXEMPT: "0.0.0.0/0,::/0"
 
 services:
   ergo:

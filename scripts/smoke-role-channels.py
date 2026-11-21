@@ -13,6 +13,9 @@ clients over TLS:
    sending JOIN.
 3. Auto-join on role grant: a connected user given the role is joined.
 4. rejoin: once: after a /part, the next login doesn't join again.
+5. Network channels (irc.channels; auth with the feed's "network", else
+   skipped): a fresh guest (no SASL) is joined to the auto-join channel on
+   connect; a new account on its first login, and not again after /part.
 
 Puts config/boson.yaml back at the end. auth without the role channel API
 (404) is skipped: exit 0 with a SKIP line; --require makes that a failure.
@@ -123,7 +126,7 @@ def wait_settings(autojoin, rejoin):
 
 # ---- IRC ----
 class Client:
-    """A logged-in IRC client (SASL PLAIN) that records what it sees."""
+    """A logged-in IRC client (SASL PLAIN; pw None: a guest) that records what it sees."""
     def __init__(self, user, pw):
         self.user, self.lines, self.q = user, [], queue.Queue()
         raw = socket.create_connection((args.addr, 6697), timeout=30)
@@ -149,7 +152,7 @@ class Client:
             if parts[0] == "PING": self.send("PONG " + parts[1]); continue
             cmd = parts[1] if len(parts) > 1 else ""
             if cmd == "CAP" and len(parts) > 4 and parts[3] == "LS" and parts[4] != "*":
-                self.send("CAP REQ :sasl")
+                self.send("CAP REQ :sasl" if pw is not None else "CAP END")
             elif cmd == "CAP" and len(parts) > 3 and parts[3] == "ACK":
                 self.send("AUTHENTICATE PLAIN")
             elif parts[0] == "AUTHENTICATE" and parts[1] == "+":
@@ -261,6 +264,42 @@ def run():
     check("once: after /part, the next login doesn't rejoin", rejoined is None, rejoined or "")
     for c in (carol, bob, alice, again):
         c.close()
+    network_channels()
+
+def network_channels():
+    lobby = f"#nc-lobby-{tag}"
+    entry = f"  channels:\n    - {{name: \"{lobby}\", topic: smoke, autojoin: true}}\n".encode()
+    if re.search(rb"^irc:[ \t]*(#.*)?$", original, re.M):  # an irc: block already: add the key to it
+        put(CONF, re.sub(rb"^irc:[ \t]*(#.*)?\n", lambda m: m.group(0) + entry, original, count=1, flags=re.M))
+    else:
+        put(CONF, original.rstrip(b"\n") + b"\n\nirc:\n" + entry)
+    end, f = time.time() + args.timeout, {}
+    while time.time() < end:
+        f = feed()
+        if "network" not in f: break
+        if any(c.get("channel") == lobby for c in f["network"].get("channels") or []): break
+        time.sleep(2)
+    if "network" not in f:
+        if args.require: check("auth serves network channels", False, "no network in the feed with --require")
+        else: print("SKIP network channels: auth's feed has no network channels (older than the network channels release)")
+        return
+    if not check("auth serves the network channel", any(c.get("channel") == lobby for c in f["network"].get("channels") or []), f.get("network")):
+        return
+    time.sleep(args.poll + 3)  # RoleServ ensures it
+    guest = Client(f"ncguest{tag}", None)
+    got = guest.wait(joined(lobby), 15)
+    check("network channels: a fresh guest is joined on connect", got is not None, guest.lines[-5:])
+    guest.close()
+    pw, _ = create_user(f"ncuser{tag}")
+    u = Client(f"ncuser{tag}", pw)
+    got = u.wait(joined(lobby), 15)
+    check("network channels: a new account is joined on its first login", got is not None, u.lines[-5:])
+    u.send("PART " + lobby); u.wait(r" PART " + re.escape(lobby), 10); u.close()
+    time.sleep(2)
+    u = Client(f"ncuser{tag}", pw)
+    again = u.wait(joined(lobby), 12)
+    check("network channels: not joined again after /part", again is None, again or "")
+    u.close()
 
 try:
     run()

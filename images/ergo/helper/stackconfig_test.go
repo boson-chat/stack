@@ -32,6 +32,11 @@ irc:
   log_level: DEBUG
   persistent_history: false
   something_new: 1
+  # auth's (served to RoleServ on its feed), not read here
+  channels:
+    - {name: "#lobby", topic: "Welcome", autojoin: true}
+  channel_founder: thelion
+  autojoin_guests: true
 voice: {rooms: []}
 `))
 	if err != nil {

@@ -192,10 +192,36 @@ version: 1
 #   history_expire: 7d
 #   # Ergo's log level: debug, info, warn, error.
 #   log_level: info
+#
+#   # ---- network channels (read by auth, enforced by RoleServ; docs/irc-channels.md
+#   # "Network channels") ----
+#   # Channels that always exist and belong to the network: RoleServ creates
+#   # and registers them (founder below) and they never expire, so nobody can
+#   # create one first and take it over. With auth.channel_creation: admins,
+#   # members can only join these, role channels and channels that already
+#   # exist. Up to 100. Admin panel: Settings → Network channels.
+#   channels:
+#     - name: "#lobby"            # #, then 1-63 printable ASCII, no space/comma
+#       topic: "Welcome!"         # optional; set when it changes here (a /topic on IRC stays until then)
+#       # New accounts are joined on their first login (a /part sticks: auth
+#       # records it), and guests / clients without an account when they
+#       # connect (once per nick per 24 h). Default: false.
+#       autojoin: true
+#     - name: "#help"
+#   # The account network channels are registered to. A channel already
+#   # registered to someone else is left with them. Default: the earliest
+#   # Owner (auth), else RoleServ.
+#   channel_founder: thelion
+#   # Also join guests and clients without an account to the auto-join
+#   # channels when they connect. Default: true.
+#   autojoin_guests: true
 
 # ---- roles: role channels (auth; enforced by RoleServ) ----------------------------
 # Channels are attached to roles (and "everyone") and marked private in the
 # admin panel's Roles page; see docs/roles.md "Role channels".
+# roles.channels.autojoin only joins channels assigned to roles (Roles →
+# Channels); with no role channels it does nothing. Channels everyone joins
+# are irc.channels (autojoin: true) above.
 # roles:
 #   channels:
 #     # RoleServ joins members to their roles' auto-join channels when they

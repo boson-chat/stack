@@ -37,13 +37,28 @@ type Bot struct {
 	// of every client that logs in: RoleServ subscribes to Ergo's ACCOUNT
 	// snomask (+s u, needs the snomasks capability in its oper class).
 	OnLogin func(ctx context.Context, account string)
+	// OnConnect, if set, is called (in its own goroutine) with the nick of
+	// every client that connects (Ergo's CONNECT snomask, +s c), for
+	// auto-joining guests to the network channels.
+	OnConnect func(ctx context.Context, nick string)
 }
 
 var (
 	ircFormatting = regexp.MustCompile("\x03(\\d{1,2}(,\\d{1,2})?)?|[\x02\x0f\x11\x16\x1d\x1e\x1f]")
 	// Ergo's login snomask: "-ACCOUNT- Client [nick!user@host] logged into account [name]".
 	loginNotice = regexp.MustCompile(`^-ACCOUNT- Client \[[^\]]*\] logged into account \[([^\]\s]+)\]$`)
+	// Ergo's connect snomask: "-CONNECT- Client connected [nick] [u:user] [h:host] [ip:ip] [r:realname]".
+	connectNotice = regexp.MustCompile(`^-CONNECT- Client connected \[([^\]\s]+)\] \[u:`)
 )
+
+// ConnectNick returns the nick of an Ergo connect snomask notice.
+func ConnectNick(text string) (string, bool) {
+	m := connectNotice.FindStringSubmatch(strings.TrimSpace(ircFormatting.ReplaceAllString(text, "")))
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
+}
 
 // LoginAccount returns the account of an Ergo login snomask notice.
 func LoginAccount(text string) (string, bool) {
@@ -170,8 +185,8 @@ func (b *Bot) runOnce(ctx context.Context) error {
 				class := b.Class
 				if _, err := b.Session.ApplyGrants(gctx, b.Nick, roles.Grant{OperClass: &class, WhoisLine: "is a network service"}); err != nil {
 					b.Logf("granting %s the %s oper class (no fakelag): %v", b.Nick, b.Class, err)
-				} else if b.OnLogin != nil {
-					_ = c.send("MODE " + m.Param(0) + " +s u")
+				} else if masks := b.snomasks(); masks != "" {
+					_ = c.send("MODE " + m.Param(0) + " +s " + masks)
 				}
 				cancel()
 			}
@@ -179,11 +194,13 @@ func (b *Bot) runOnce(ctx context.Context) error {
 			return fmt.Errorf("server: %s", m.Param(0))
 		case "NOTICE":
 			// Server notices have a server name (no "!") as their source.
-			if b.OnLogin == nil || !registered || strings.Contains(m.Source, "!") || !strings.EqualFold(m.Param(0), b.Nick) {
+			if !registered || strings.Contains(m.Source, "!") || !strings.EqualFold(m.Param(0), b.Nick) {
 				continue
 			}
-			if account, ok := LoginAccount(m.Param(1)); ok && !strings.EqualFold(account, b.Nick) {
+			if account, ok := LoginAccount(m.Param(1)); ok && b.OnLogin != nil && !strings.EqualFold(account, b.Nick) {
 				go b.OnLogin(ctx, account)
+			} else if nick, ok := ConnectNick(m.Param(1)); ok && b.OnConnect != nil && !strings.EqualFold(nick, b.Nick) {
+				go b.OnConnect(ctx, nick)
 			}
 		case "PRIVMSG":
 			if !registered || !strings.EqualFold(m.Param(0), b.Nick) {
@@ -275,4 +292,17 @@ func Parse(line string) Message {
 		}
 	}
 	return m
+}
+
+// snomasks are the server notice masks the bot needs (u: logins, c:
+// connects).
+func (b *Bot) snomasks() string {
+	out := ""
+	if b.OnLogin != nil {
+		out += "u"
+	}
+	if b.OnConnect != nil {
+		out += "c"
+	}
+	return out
 }

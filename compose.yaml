@@ -180,6 +180,7 @@ services:
       IRC_REQUIRE_SASL: ${IRC_REQUIRE_SASL:-false}
       # Default; config/boson.yaml irc.require_sasl_exempt wins.
       IRC_REQUIRE_SASL_EXEMPT: ${IRC_REQUIRE_SASL_EXEMPT:-}
+      IRC_IP_LIMITS_EXEMPT: ${IRC_IP_LIMITS_EXEMPT:-}
       # Ergo's HTTP API on :8089 for quicvoiced (founder checks, channel
       # roles), RoleServ and the role sync. Compose network only: not
       # published, not routed. Empty = off.
@@ -295,7 +296,7 @@ services:
     profiles: [auth]
     # Releases: harbor.floret.dev/boson/auth:<version>. To run an unreleased
     # checkout instead, add compose.auth-src.yaml (see README).
-    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.19.0}
+    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.20.0}
     environment:
       ENV: production
       LOG_LEVEL: ${AUTH_LOG_LEVEL:-info}
@@ -580,7 +581,7 @@ services:
   admin:
     <<: *restart
     profiles: [admin]
-    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.24.0}
+    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.25.0}
     environment:
       ENV: production
       # The stack config file: the panel edits it (Settings pages, Config

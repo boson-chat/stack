@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -149,5 +151,29 @@ func TestRender(t *testing.T) {
 	env["OPER_PASSWORD_HASH"] = "plain"
 	if _, err := render(func(k string) string { return env[k] }, "", dir, netSettings{ChannelCreation: policyRegistered}, nil); err == nil {
 		t.Fatal("non-bcrypt oper hash accepted")
+	}
+}
+
+func TestRenderIPLimitsExempt(t *testing.T) {
+	dir := t.TempDir()
+	env := map[string]string{
+		"IRC_HOST": "irc.example.com", "DOMAIN": "example.com",
+		"OPER_PASSWORD_HASH":   "$2a$04$0123456789abcdef0123456789abcdef0123456789abcdef01234",
+		"IRC_IP_LIMITS_EXEMPT": "10.0.0.0/8, 192.0.2.7",
+	}
+	get := func(k string) string { return env[k] }
+	if _, err := render(get, "", dir, netSettings{ChannelCreation: policyRegistered}, nil); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "ircd.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "- \"10.0.0.0/8\"") || !strings.Contains(string(b), "- \"192.0.2.7\"") {
+		t.Fatalf("exempt nets not rendered:\n%s", b)
+	}
+	env["IRC_IP_LIMITS_EXEMPT"] = "nope"
+	if _, err := render(get, "", dir, netSettings{ChannelCreation: policyRegistered}, nil); err == nil {
+		t.Fatal("bad net accepted")
 	}
 }

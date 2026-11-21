@@ -50,6 +50,12 @@ func (a *fakeAuth) Autojoin(_ context.Context, account string) (roles.Autojoin, 
 			aj.Pending = append(aj.Pending, ch)
 		}
 	}
+	aj.Network = a.feed.Network.AutojoinChannels()
+	for _, ch := range aj.Network {
+		if !slices.Contains(a.recorded[strings.ToLower(account)], ch) {
+			aj.NetworkPending = append(aj.NetworkPending, ch)
+		}
+	}
 	return aj, nil
 }
 
@@ -72,10 +78,76 @@ type fakeErgo struct {
 	joined   map[string][]string // account → channels
 	failNext bool
 	pushes   int
+	founders map[string]string // registered channel → founder
+	topics   map[string]string
+	ensures  int
+	dropped  []string
+	guests   map[string]bool     // connected nicks without an account
+	accounts map[string]string   // connected nick → account
+	nickJoin map[string][]string // nick → channels (SajoinNick)
+}
+
+func (e *fakeErgo) EnsureChannel(_ context.Context, req ergoapi.ChannelEnsure) (ergoapi.ChannelEnsureResult, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.ensures++
+	if e.failNext {
+		e.failNext = false
+		return ergoapi.ChannelEnsureResult{}, errors.New("boom")
+	}
+	ch := strings.ToLower(req.Channel)
+	var res ergoapi.ChannelEnsureResult
+	if !e.exists[ch] {
+		e.exists[ch], res.Created = true, true
+	}
+	if e.founders[ch] == "" {
+		e.founders[ch], res.Registered = strings.ToLower(req.Founder), true
+	}
+	res.Founder = e.founders[ch]
+	if req.SetTopic && e.topics[ch] != req.Topic {
+		e.topics[ch], res.TopicChanged = req.Topic, true
+	}
+	return res, nil
+}
+
+func (e *fakeErgo) DropChannel(_ context.Context, channel, founder string) (bool, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.founders[channel] != strings.ToLower(founder) {
+		return false, nil
+	}
+	delete(e.founders, channel)
+	e.dropped = append(e.dropped, channel)
+	return true, nil
+}
+
+func (e *fakeErgo) AccountOf(_ context.Context, nick string) (string, bool, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if a, ok := e.accounts[nick]; ok {
+		return a, true, nil
+	}
+	return "", e.guests[nick], nil
+}
+
+func (e *fakeErgo) SajoinNick(_ context.Context, nick string, channels []string) (ergoapi.SajoinResult, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !e.guests[nick] && e.accounts[nick] == "" {
+		return ergoapi.SajoinResult{Joined: []string{}}, nil
+	}
+	for _, ch := range channels {
+		if !e.exists[ch] {
+			panic("SAJOIN to a channel that wasn't ensured: " + ch)
+		}
+	}
+	e.nickJoin[nick] = append(e.nickJoin[nick], channels...)
+	return ergoapi.SajoinResult{Clients: 1, Joined: channels}, nil
 }
 
 func newErgo() *fakeErgo {
-	return &fakeErgo{exists: map[string]bool{}, modes: map[string]string{}, invex: map[string][]string{}, online: map[string]bool{}, joined: map[string][]string{}}
+	return &fakeErgo{exists: map[string]bool{}, modes: map[string]string{}, invex: map[string][]string{}, online: map[string]bool{}, joined: map[string][]string{},
+		founders: map[string]string{}, topics: map[string]string{}, guests: map[string]bool{}, accounts: map[string]string{}, nickJoin: map[string][]string{}}
 }
 
 func (e *fakeErgo) SetChannelAccess(_ context.Context, req ergoapi.ChannelAccess) (ergoapi.ChannelAccessResult, error) {
