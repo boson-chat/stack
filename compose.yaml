@@ -465,7 +465,7 @@ services:
   quicvideod:
     <<: *restart
     profiles: [video]
-    image: ${QUICVIDEO_IMAGE:-harbor.floret.dev/boson/quicvideo:1.12.0}
+    image: ${QUICVIDEO_IMAGE:-harbor.floret.dev/boson/quicvideo:1.14.1}
     ports:
       # QUIC for the apps and WebTransport (HTTP/3, /wt) for browsers.
       - "7710:7710/udp"
