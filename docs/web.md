@@ -63,7 +63,7 @@ these are the guards:
 | Addresses | The address actually dialed (after DNS, so a name that rebinds to an internal address is caught) must be public: loopback, private, link-local, CGNAT, multicast, documentation and reserved ranges (v4 and v6) are refused. | `WEBIRC_ALLOW_PRIVATE` (false; dev/e2e only) |
 | Aliases | The only internal targets: a requested `host:port` is sent to `target:port` instead, plaintext, internal addresses allowed. This network's own Ergo by default. | `WEBIRC_ALIASES` (`IRC_HOST:6697` and `IRC_HOST:6667` → `ergo:6680`) |
 | Allow / deny | Hostname globs (`*.libera.chat`); deny wins; an empty allow list means any public network. | `WEBIRC_UPSTREAM_ALLOW`, `WEBIRC_UPSTREAM_DENY` |
-| Per client IP | Concurrent connections, and new connections a minute (a token bucket: that many at once, then one every 60 s / N). | `WEBIRC_MAX_PER_IP` (5), `WEBIRC_RATE_PER_MIN` (10); 0 = no cap |
+| Per client IP | Concurrent connections, and new connections a minute (a token bucket: that many at once, then one every 60 s / N). | `WEBIRC_MAX_PER_IP` (30), `WEBIRC_RATE_PER_MIN` (60); 0 = no cap |
 | Lines | After registration a client may send `WEBIRC_THROTTLE_BURST` lines at once, then `WEBIRC_THROTTLE` a second (registration itself isn't throttled). Networks add their own flood control on top (Ergo: 5 lines, then 2 a second). | `WEBIRC_THROTTLE` (4), `WEBIRC_THROTTLE_BURST` (20) |
 | Origins | Only pages from these origins may open the WebSocket (non-browser clients send none; the caps above still apply). | `WEBIRC_ORIGINS` (`https://WEB_HOST`) |
 | Client IP | Read from `X-Forwarded-For` only from the stack network (Traefik), rightmost first, so a client can't claim an address. | `WEBIRC_TRUSTED_PROXIES` (`STACK_SUBNET`) |
