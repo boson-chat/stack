@@ -21,6 +21,7 @@ voice, and automatic TLS, wired together for your own domain.
 | `files` | `files` | Optional: uploads ([boson-chat/files](https://github.com/boson-chat/files)) the boson app links in chat, with a rolling per-person quota, guest uploads and expiry; local volume or S3 storage ([docs/files.md](docs/files.md)) | via Traefik at `https://FILES_HOST` |
 | `minio`, `minio-init` | `minio` | Optional: an internal S3 bucket for `files` (MinIO), with a bucket-only user for it | internal |
 | `webroot` | `webroot` | Optional: serves a host directory at `http://WEBROOT_HOST/.well-known/acme-challenge/` for a certbot outside the stack | via Traefik |
+| `webircgateway` | `web` | The browser client's IRC connections ([webircgateway](https://github.com/kiwiirc/webircgateway) with Boson's guards): WebSocket in, TCP/TLS out to any IRC network on IRC ports, never to internal addresses, per-IP caps, WEBIRC to this network's Ergo ([docs/web.md](docs/web.md)) | via Traefik at `wss://WEB_HOST/webirc/websocket/` |
 | `wellknown` | `wellknown` | Optional: serves `https://DOMAIN/.well-known/boson.json` (client discovery: IRC, auth and voice endpoints, and the network's branding), generated from `.env`. Only when `DOMAIN` points at this server | via Traefik |
 
 Planned: SSO (OIDC/SAML) in the auth service, video, the admin panel, and the
@@ -287,9 +288,10 @@ keys in the database).
   Until then the `node` target shows as down; nothing else is affected.
   Per-container CPU/memory (cAdvisor) is not included: too heavy for a small
   VPS; the admin panel's services page already shows `docker stats`.
-- **Images:** `certsync` and `ergo` are built from `images/` and published to
-  `harbor.floret.dev/boson/stack-*` by CI on every push to `main`
-  (`stack-certsync:latest`, `stack-ergo:2.19.1`, plus `:sha-<commit>`).
+- **Images:** `certsync`, `ergo` and `webircgateway` are built from
+  `images/` and published to `harbor.floret.dev/boson/stack-*` by CI on
+  every push to `main` (`stack-certsync:latest`, `stack-ergo:2.19.1`,
+  `stack-webircgateway:1.1.0-boson.1`, plus `:sha-<commit>`).
 - **Compose project name** is `boson`; Traefik only looks at containers of
   that project.
 - Deploying the production host (boson.chat): [docs/deploy-boson-chat.md](docs/deploy-boson-chat.md).

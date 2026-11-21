@@ -35,6 +35,25 @@ jobs:
       - run: go vet ./...
       - run: go test -race -count=1 ./...
 
+  webircgateway:
+    name: webircgateway policy (Go, patched upstream)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - name: Upstream at the pinned commit + our patches and policy
+        run: |
+          commit=$(sed -n 's/^ARG WEBIRCGATEWAY_COMMIT=//p' images/webircgateway/Dockerfile)
+          git clone -q https://github.com/kiwiirc/webircgateway.git /tmp/wig
+          git -C /tmp/wig checkout -q "$commit"
+          for p in images/webircgateway/patches/*.patch; do git -C /tmp/wig apply --whitespace=nowarn "$PWD/$p"; done
+          cp images/webircgateway/src/*.go /tmp/wig/pkg/webircgateway/
+          test -z "$(gofmt -l images/webircgateway/src)" || (gofmt -l images/webircgateway/src && exit 1)
+      - working-directory: /tmp/wig
+        run: go vet ./pkg/webircgateway/ && go test -race -count=1 ./pkg/webircgateway/
+
   smoke:
     name: local stack smoke (Traefik + auth + Ergo SASL)
     runs-on: ubuntu-latest
@@ -55,9 +74,11 @@ jobs:
         run: printf 'COMPOSE_FILE=compose.yaml:compose.auth-src.yaml\nAUTH_SRC=./auth-src\n' >> .env
       - name: Video on (VIDEO_HOST; docs/video.md)
         run: echo "VIDEO_HOST=video.localhost" >> .env
-      - name: Start traefik, certsync, ergo, postgres, auth, quicvoiced, quicvideod, victoriametrics, node-exporter, wellknown
+      - name: Web gateway on (WEB_HOST; docs/web.md), small per-IP caps for the smoke
+        run: printf 'WEB_HOST=chat.localhost\nWEBIRC_MAX_PER_IP=3\nWEBIRC_RATE_PER_MIN=8\n' >> .env
+      - name: Start traefik, certsync, ergo, postgres, auth, quicvoiced, quicvideod, victoriametrics, node-exporter, wellknown, webircgateway
         env:
-          COMPOSE_PROFILES: irc,voice,video,auth,metrics,wellknown
+          COMPOSE_PROFILES: irc,voice,video,auth,metrics,wellknown,web
         run: docker compose up -d --build --wait --wait-timeout 300
       - name: Auth signup + IRC SASL (PLAIN, wrong password, OAUTHBEARER) + channel creation + voice token
         run: |
@@ -221,10 +242,17 @@ jobs:
           ip=$(hostname -I | awk '{print $1}')
           if curl -s -m 3 "http://$ip:9100/metrics" >/dev/null; then echo "node-exporter answers on $ip"; exit 1; fi
           echo ok
+      - name: Web gateway (wss://chat.localhost/webirc/websocket/ → Ergo with WEBIRC; refusals; per-IP caps)
+        env:
+          COMPOSE_PROFILES: irc,voice,video,auth,metrics,wellknown,web
+        run: |
+          set -o pipefail
+          gw=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$(docker compose ps -q webircgateway)")
+          python3 scripts/smoke-webirc.py --gateway-ip "$gw"
       - name: Logs on failure
         if: failure()
         env:
-          COMPOSE_PROFILES: irc,voice,video,auth,metrics,wellknown
+          COMPOSE_PROFILES: irc,voice,video,auth,metrics,wellknown,web
         run: docker compose logs
 
   directory:
@@ -381,7 +409,7 @@ jobs:
 
   publish:
     name: publish images to Harbor
-    needs: [helper, smoke, directory, files, minio, nick-claim, roles, acme]
+    needs: [helper, webircgateway, smoke, directory, files, minio, nick-claim, roles, acme]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
@@ -413,7 +441,7 @@ jobs:
         if: steps.creds.outputs.ok == 'true'
         run: |
           # <dir>:<tag>; every image also gets :sha-<commit>.
-          for img in certsync:latest ergo:2.19.1; do
+          for img in certsync:latest ergo:2.19.1 webircgateway:1.1.0-boson.1; do
             name=${img%%:*}; tag=${img#*:}
             docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --push \
               --label org.opencontainers.image.source=https://github.com/${{ github.repository }} \

@@ -11,6 +11,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
+	"gopkg.in/yaml.v3"
 )
 
 type fakeSettings struct {
@@ -365,5 +368,74 @@ func TestGuestAccessRememberedAndWatched(t *testing.T) {
 	w.tick(context.Background())
 	if rehashes != first+1 || !strings.Contains(readConf(t, dir), "require-sasl:\n        enabled: false") {
 		t.Fatalf("auth down: rehashes %d", rehashes)
+	}
+}
+
+func TestRenderWebIRC(t *testing.T) {
+	dir := t.TempDir()
+	env := map[string]string{
+		"IRC_HOST": "irc.example.com", "DOMAIN": "example.com",
+		"OPER_PASSWORD_HASH": "$2a$04$0123456789abcdef0123456789abcdef0123456789abcdef01234",
+	}
+	get := func(k string) string { return env[k] }
+	conf := func() string {
+		t.Helper()
+		if _, err := render(get, "", dir, netSettings{ChannelCreation: policyRegistered}, nil); err != nil {
+			t.Fatal(err)
+		}
+		b, err := os.ReadFile(filepath.Join(dir, "ircd.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	if c := conf(); strings.Contains(c, "webirc:") {
+		t.Fatal("webirc block without WEBIRC_PASSWORD")
+	}
+	env["WEBIRC_PASSWORD"] = "short"
+	if _, err := render(get, "", dir, netSettings{ChannelCreation: policyRegistered}, nil); err == nil {
+		t.Fatal("short password accepted")
+	}
+	env["WEBIRC_PASSWORD"] = "gw-test-password-q8Zr1xLm"
+	c := conf()
+	if !strings.Contains(c, "webirc:") || !strings.Contains(c, `- "10.203.53.0/24"`) || strings.Contains(c, env["WEBIRC_PASSWORD"]) {
+		t.Fatalf("webirc block:\n%s", c)
+	}
+	var y struct {
+		Server struct {
+			WebIRC []struct {
+				Password string   `yaml:"password"`
+				Hosts    []string `yaml:"hosts"`
+			} `yaml:"webirc"`
+			IPLimits struct {
+				Exempted []string `yaml:"exempted"`
+			} `yaml:"ip-limits"`
+		} `yaml:"server"`
+	}
+	if err := yaml.Unmarshal([]byte(c), &y); err != nil {
+		t.Fatal(err)
+	}
+	if len(y.Server.WebIRC) != 1 || bcrypt.CompareHashAndPassword([]byte(y.Server.WebIRC[0].Password), []byte(env["WEBIRC_PASSWORD"])) != nil {
+		t.Fatalf("hash: %+v", y.Server.WebIRC)
+	}
+	if strings.Join(y.Server.IPLimits.Exempted, ",") != "localhost,10.203.53.0/24" {
+		t.Fatalf("exempted: %v", y.Server.IPLimits.Exempted)
+	}
+	// Re-rendering reuses the hash: no change, no rehash.
+	if changed, err := render(get, "", dir, netSettings{ChannelCreation: policyRegistered}, nil); err != nil || changed {
+		t.Fatalf("re-render changed=%v err=%v", changed, err)
+	}
+	// A new password gets a new hash.
+	env["WEBIRC_PASSWORD"] = "fedcba9876543210fedcba9876543210"
+	if c2 := conf(); c2 == c {
+		t.Fatal("new password, same config")
+	}
+	env["WEBIRC_HOSTS"] = "10.1.0.5, 10.2.0.0/16"
+	if c3 := conf(); !strings.Contains(c3, `- "10.1.0.5"`) || !strings.Contains(c3, `- "10.2.0.0/16"`) {
+		t.Fatal("WEBIRC_HOSTS ignored")
+	}
+	env["WEBIRC_HOSTS"] = "not-a-net"
+	if _, err := render(get, "", dir, netSettings{ChannelCreation: policyRegistered}, nil); err == nil {
+		t.Fatal("bad WEBIRC_HOSTS accepted")
 	}
 }

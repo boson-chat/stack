@@ -50,7 +50,7 @@ local_ca() {
 			extendedKeyUsage=serverAuth
 			subjectKeyIdentifier=hash
 			authorityKeyIdentifier=keyid,issuer
-			subjectAltName=DNS:localhost,DNS:*.localhost,DNS:irc.localhost,DNS:voice.localhost,DNS:auth.localhost,DNS:admin.localhost,DNS:api.localhost,DNS:directory.localhost,DNS:files.localhost,DNS:video.localhost,IP:127.0.0.1,IP:::1
+			subjectAltName=DNS:localhost,DNS:*.localhost,DNS:irc.localhost,DNS:voice.localhost,DNS:auth.localhost,DNS:admin.localhost,DNS:api.localhost,DNS:directory.localhost,DNS:files.localhost,DNS:video.localhost,DNS:chat.localhost,IP:127.0.0.1,IP:::1
 		EXT
 		openssl x509 -req -in cert.csr -CA ca.pem -CAkey ca.key -CAcreateserial -days 825 \
 			-extfile cert.ext -out cert.pem 2>/dev/null
@@ -256,6 +256,8 @@ umask 077
 		echo "ADMIN_FILES_INTERNAL_URL=" ;;
 	esac
 	echo "VOICE_JWT_SECRET=$(rand 64)"
+	# Ergo trusts the web gateway's WEBIRC with it (web profile, docs/web.md).
+	echo "WEBIRC_PASSWORD=$(openssl rand -hex 24)"
 	# quicvoiced -> quicvideod control link (video profile / a video node).
 	echo "VIDEO_CONTROL_TOKEN=$(openssl rand -hex 32)"
 	echo "VOICE_ROOMS=$VOICE_ROOMS"

@@ -1,0 +1,184 @@
+diff --git a/pkg/webircgateway/client.go b/pkg/webircgateway/client.go
+index 43d3fe7..902fe79 100644
+--- a/pkg/webircgateway/client.go
++++ b/pkg/webircgateway/client.go
+@@ -58,6 +58,7 @@ type Client struct {
+ 	RemotePort       int
+ 	DestHost         string
+ 	DestPort         int
++	DestTLSInsecure  bool
+ 	DestTLS          bool
+ 	IrcState         *irc.State
+ 	Encoding         string
+@@ -318,6 +319,9 @@ func (c *Client) makeUpstreamConnection() (io.ReadWriteCloser, error) {
+ 		// Connect directly to the IRCd
+ 		dialer := net.Dialer{}
+ 		dialer.Timeout = time.Second * time.Duration(upstreamConfig.Timeout)
++		// boson: refuse internal destinations at connect time (after DNS,
++		// so a rebinding name can't slip past a check made earlier).
++		dialer.Control = bosonDialControl(upstreamConfig.AllowPrivate)
+ 
+ 		if upstreamConfig.LocalAddr != "" {
+ 			parsedIP := net.ParseIP(upstreamConfig.LocalAddr)
+@@ -336,7 +340,7 @@ func (c *Client) makeUpstreamConnection() (io.ReadWriteCloser, error) {
+ 		if upstreamConfig.Protocol == "unix" {
+ 			conn, connErr = dialer.Dial("unix", upstreamConfig.Hostname)
+ 		} else {
+-			upstreamStr := fmt.Sprintf("%s:%d", upstreamConfig.Hostname, upstreamConfig.Port)
++			upstreamStr := net.JoinHostPort(upstreamConfig.Hostname, strconv.Itoa(upstreamConfig.Port))
+ 			conn, connErr = dialer.Dial(upstreamConfig.Protocol, upstreamStr)
+ 		}
+ 
+@@ -346,6 +350,7 @@ func (c *Client) makeUpstreamConnection() (io.ReadWriteCloser, error) {
+ 			if errString = typeOfErr(connErr); errString != "" {
+ 				errString = "err_" + errString
+ 			}
++			client.SendIrcError(bosonDialError(connErr))
+ 			client.SendClientSignal("state", "closed", errString)
+ 			client.StartShutdown("err_connecting_upstream")
+ 			return nil, errors.New("error connecting upstream")
+@@ -364,11 +369,17 @@ func (c *Client) makeUpstreamConnection() (io.ReadWriteCloser, error) {
+ 		}
+ 
+ 		if upstreamConfig.TLS {
+-			tlsConfig := &tls.Config{InsecureSkipVerify: true}
++			// boson: verify the network's certificate (upstream skipped it).
++			tlsConfig := &tls.Config{ServerName: upstreamConfig.Hostname, InsecureSkipVerify: upstreamConfig.TLSInsecure}
+ 			tlsConn := tls.Client(conn, tlsConfig)
++			if dialer.Timeout > 0 {
++				_ = tlsConn.SetDeadline(time.Now().Add(dialer.Timeout))
++			}
+ 			err := tlsConn.Handshake()
++			_ = tlsConn.SetDeadline(time.Time{})
+ 			if err != nil {
+ 				client.Log(3, "Error connecting to the upstream IRCd. %s", err.Error())
++				client.SendIrcError("Gateway refused (tls): " + bosonTLSError(err))
+ 				client.SendClientSignal("state", "closed", "err_tls")
+ 				client.StartShutdown("err_connecting_upstream")
+ 				return nil, errors.New("error connecting upstream")
+diff --git a/pkg/webircgateway/client_command_handlers.go b/pkg/webircgateway/client_command_handlers.go
+index d5d1fcc..354e687 100644
+--- a/pkg/webircgateway/client_command_handlers.go
++++ b/pkg/webircgateway/client_command_handlers.go
+@@ -39,7 +39,7 @@ func (c *Client) ProcessLineFromUpstream(data string) string {
+ 
+ 		// Throttle writes if configured, but only after registration is complete. Typical IRCd
+ 		// behavior is to not throttle registration commands.
+-		client.ThrottledRecv.Limiter = rate.NewLimiter(rate.Limit(client.UpstreamConfig.Throttle), 1)
++		client.ThrottledRecv.Limiter = rate.NewLimiter(rate.Limit(client.UpstreamConfig.Throttle), bosonThrottleBurst())
+ 	}
+ 	if pLen > 0 && m.Command == "005" {
+ 		tokenPairs := m.Params[1 : pLen-1]
+@@ -297,6 +297,9 @@ func (c *Client) ProcessLineFromClient(line string) (string, error) {
+ 			return "", nil
+ 		}
+ 
++		// boson: HOST host:+port insecure — accept a self-signed certificate.
++		c.DestTLSInsecure = len(message.Params) > 1 && strings.EqualFold(message.Params[1], "insecure")
++
+ 		// Parse host:+port into the c.dest* vars
+ 		portSep := strings.LastIndex(addr, ":")
+ 		if portSep == -1 {
+diff --git a/pkg/webircgateway/config.go b/pkg/webircgateway/config.go
+index 019d955..0299b22 100644
+--- a/pkg/webircgateway/config.go
++++ b/pkg/webircgateway/config.go
+@@ -28,6 +28,11 @@ type ConfigUpstream struct {
+ 	Proxy                *ConfigProxy
+ 	Protocol             string
+ 	LocalAddr            string
++	// boson: skip upstream certificate verification (HOST host:+port insecure).
++	TLSInsecure bool
++	// boson: the destination may resolve to an internal address (an
++	// operator-configured alias such as ergo:6667).
++	AllowPrivate bool
+ }
+ 
+ // ConfigServer - A web server config
+diff --git a/pkg/webircgateway/gateway_utils.go b/pkg/webircgateway/gateway_utils.go
+index 4b2a38d..ae4b8b9 100644
+--- a/pkg/webircgateway/gateway_utils.go
++++ b/pkg/webircgateway/gateway_utils.go
+@@ -86,13 +86,19 @@ func (s *Gateway) GetRemoteAddressFromRequest(req *http.Request) net.IP {
+ 		return remoteIP
+ 	}
+ 
+-	headerVal := req.Header.Get("x-forwarded-for")
+-	ips := strings.Split(headerVal, ",")
+-	ipStr := strings.Trim(ips[0], " ")
+-	if ipStr != "" {
+-		ip := net.ParseIP(ipStr)
+-		if ip != nil {
+-			remoteIP = ip
++	// boson: the client can send its own X-Forwarded-For; proxies append
++	// to it. Walk from the right, past our own proxies: the first address
++	// that isn't one of them is the client (upstream took the leftmost,
++	// which the client controls).
++	ips := strings.Split(strings.Join(req.Header.Values("x-forwarded-for"), ","), ",")
++	for i := len(ips) - 1; i >= 0; i-- {
++		ip := net.ParseIP(strings.TrimSpace(ips[i]))
++		if ip == nil {
++			break
++		}
++		remoteIP = ip
++		if !s.isTrustedProxy(ip) {
++			break
+ 		}
+ 	}
+ 
+diff --git a/pkg/webircgateway/transport_websocket.go b/pkg/webircgateway/transport_websocket.go
+index 960718b..529e7df 100644
+--- a/pkg/webircgateway/transport_websocket.go
++++ b/pkg/webircgateway/transport_websocket.go
+@@ -69,7 +69,15 @@ func (t *TransportWebsocket) websocketHandler(ws *websocket.Conn) {
+ 	client.Tags["remote-port"] = remoteAddrPort
+ 
+ 	client.Log(2, "New websocket client on %s from %s %s", ws.Request().Host, client.RemoteAddr, client.RemoteHostname)
+-	client.Ready()
++	// boson: per-IP connection caps, before anything reaches a network.
++	if msg := bosonAdmit(client); msg != "" {
++		client.SendIrcError(msg)
++		client.SendClientSignal("state", "closed", "err_limit")
++		client.StartShutdown("limit")
++	} else {
++		client.Ready()
++	}
++	ws.MaxPayloadBytes = bosonMaxFrame
+ 
+ 	// We wait until the client send queue has been drained
+ 	var sendDrained sync.WaitGroup
+@@ -77,25 +85,18 @@ func (t *TransportWebsocket) websocketHandler(ws *websocket.Conn) {
+ 
+ 	// Read from websocket
+ 	go func() {
++		// boson: read whole messages (upstream read 1024-byte chunks, which
++		// split long lines) and pass each line on its own; never drop one
++		// (wait for the queue, and give up on a client that stops draining).
+ 		for {
+-			r := make([]byte, 1024)
+-			len, err := ws.Read(r)
+-			if err == nil && len > 0 {
+-				message := string(r[:len])
+-				client.Log(1, "client->: %s", message)
+-				select {
+-				case client.Recv <- message:
+-				default:
+-					client.Log(3, "Recv queue full. Dropping data")
+-					// TODO: Should this really just drop the data or close the connection?
+-				}
+-
+-			} else if err != nil {
++			var message string
++			err := websocket.Message.Receive(ws, &message)
++			if err != nil {
+ 				client.Log(1, "Websocket connection closed (%s)", err.Error())
+ 				break
+-
+-			} else if len == 0 {
+-				client.Log(1, "Got 0 bytes from websocket")
++			}
++			if !bosonQueueLines(client, message) {
++				break
+ 			}
+ 		}
+ 
