@@ -481,3 +481,29 @@ func TestLoginAccount(t *testing.T) {
 		}
 	}
 }
+
+func TestConnectNick(t *testing.T) {
+	for text, want := range map[string]string{
+		"\x0314-\x0fCONNECT\x0314-\x03 Client connected [Guest1] [u:~u] [h:203.0.113.5] [ip:203.0.113.5] [r:Boson guest]": "Guest1",
+		"-CONNECT- Client connected [alice] [u:~a] [h:h] [ip:::1] [r:x]":                                                  "alice",
+	} {
+		if got, ok := ConnectNick(text); !ok || got != want {
+			t.Errorf("ConnectNick(%q) = %q, %v", text, got, ok)
+		}
+	}
+	for _, text := range []string{"-ACCOUNT- Client [bob!b@h] logged into account [bob]", "-CONNECT- Client connected [x]", "-DISCONNECT- Client [x] disconnected"} {
+		if _, ok := ConnectNick(text); ok {
+			t.Errorf("ConnectNick(%q) matched", text)
+		}
+	}
+}
+
+func TestBotSnomasks(t *testing.T) {
+	noop := func(context.Context, string) {}
+	if got := (&Bot{OnLogin: noop, OnConnect: noop}).snomasks(); got != "uc" {
+		t.Errorf("both: %q", got)
+	}
+	if got := (&Bot{OnLogin: noop}).snomasks(); got != "u" {
+		t.Errorf("login only: %q", got)
+	}
+}

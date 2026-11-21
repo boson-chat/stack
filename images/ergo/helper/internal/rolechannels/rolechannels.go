@@ -41,6 +41,10 @@ type Auth interface {
 type Ergo interface {
 	SetChannelAccess(ctx context.Context, req ergoapi.ChannelAccess) (ergoapi.ChannelAccessResult, error)
 	Sajoin(ctx context.Context, account string, channels []string) (ergoapi.SajoinResult, error)
+	SajoinNick(ctx context.Context, nick string, channels []string) (ergoapi.SajoinResult, error)
+	EnsureChannel(ctx context.Context, req ergoapi.ChannelEnsure) (ergoapi.ChannelEnsureResult, error)
+	DropChannel(ctx context.Context, channel, founder string) (bool, error)
+	AccountOf(ctx context.Context, nick string) (account string, online bool, err error)
 }
 
 // How RoleServ locks a private channel.
@@ -65,14 +69,21 @@ type Syncer struct {
 	// emptied and was created again lost its modes).
 	Poll, Resync time.Duration
 	Logf         func(string, ...any)
+	// GuestDelay: how long after a guest connects it's auto-joined (lets
+	// its registration burst finish first).
+	GuestDelay time.Duration
+	// Now is the clock (tests); nil = time.Now.
+	Now func() time.Time
 
 	mu        sync.Mutex
 	etag      string
 	feed      roles.ChannelAccessFeed
 	have      bool
-	managed   map[string]string   // channel → mode
-	missing   map[string]bool     // private channels that don't exist (logged once)
-	online    map[string][]string // folded account → auto-join channels when last checked
+	managed   map[string]string       // channel → mode
+	missing   map[string]bool         // private channels that don't exist (logged once)
+	online    map[string][]string     // folded account → auto-join channels when last checked
+	network   map[string]networkState // network channels RoleServ has ensured
+	guests    map[string]time.Time    // folded nick → when it was auto-joined as a guest
 	unsupport bool
 	loaded    bool
 	sem       chan struct{}
@@ -89,7 +100,18 @@ func (s *Syncer) logf(format string, args ...any) {
 }
 
 type stateFile struct {
-	Managed map[string]string `json:"managed"`
+	Managed map[string]string       `json:"managed"`
+	Network map[string]networkState `json:"network,omitempty"`
+}
+
+// networkState is what RoleServ did to a network channel.
+type networkState struct {
+	// Topic is the topic RoleServ last set (it's set again only when the
+	// configured topic changes, so a /topic by the channel's ops stays).
+	Topic string `json:"topic,omitempty"`
+	// Founder is the account RoleServ registered it to; "" if it was
+	// registered already (then it's never dropped).
+	Founder string `json:"founder,omitempty"`
 }
 
 func (s *Syncer) load() {
@@ -98,6 +120,7 @@ func (s *Syncer) load() {
 	}
 	s.loaded = true
 	s.managed, s.missing, s.online = map[string]string{}, map[string]bool{}, map[string][]string{}
+	s.network, s.guests = map[string]networkState{}, map[string]time.Time{}
 	if s.StateFile == "" {
 		return
 	}
@@ -116,13 +139,16 @@ func (s *Syncer) load() {
 	for ch, m := range st.Managed {
 		s.managed[ch] = m
 	}
+	for ch, n := range st.Network {
+		s.network[ch] = n
+	}
 }
 
 func (s *Syncer) save() {
 	if s.StateFile == "" {
 		return
 	}
-	b, _ := json.Marshal(stateFile{Managed: s.managed})
+	b, _ := json.Marshal(stateFile{Managed: s.managed, Network: s.network})
 	tmp := s.StateFile + ".tmp"
 	if err := os.MkdirAll(filepath.Dir(s.StateFile), 0o700); err == nil {
 		if err = os.WriteFile(tmp, append(b, '\n'), 0o600); err == nil {
@@ -190,7 +216,8 @@ func (s *Syncer) Tick(ctx context.Context, full bool) bool {
 	s.unsupport = false
 	changed := !s.have || feed.Version != s.feed.Version
 	s.feed, s.have = feed, true
-	if s.syncChannels(ctx) {
+	netOK := s.syncNetwork(ctx)
+	if s.syncChannels(ctx) && netOK {
 		s.etag = newETag
 	} else {
 		s.etag = "" // retry the failed pushes next poll
@@ -322,14 +349,15 @@ func (s *Syncer) Login(ctx context.Context, account string) {
 		}
 		return
 	}
-	clients := 1
+	var targets []string
 	if aj.Enabled {
-		targets := aj.Channels
+		targets = aj.Channels
 		if aj.Rejoin == rejoinOnce {
 			targets = aj.Pending
 		}
-		clients = s.join(actx, account, aj, targets)
 	}
+	targets = union(targets, s.ensuredOnly(aj.NetworkPending))
+	clients := s.join(actx, account, aj, targets)
 	key := strings.ToLower(account)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -367,8 +395,16 @@ func (s *Syncer) join(ctx context.Context, account string, aj roles.Autojoin, ch
 	if len(res.Joined) > 0 {
 		s.logf("auto-joined %s to %s", account, strings.Join(res.Joined, ","))
 	}
-	if aj.Rejoin == rejoinOnce && len(res.Joined) > 0 {
-		if _, err := s.Auth.RecordAutojoin(ctx, account, res.Joined); err != nil {
+	// Network channels are joined once per account; role channels too
+	// with rejoin: once.
+	var record []string
+	for _, ch := range res.Joined {
+		if (aj.Enabled && aj.Rejoin == rejoinOnce) || slices.Contains(aj.Network, ch) {
+			record = append(record, ch)
+		}
+	}
+	if len(record) > 0 {
+		if _, err := s.Auth.RecordAutojoin(ctx, account, record); err != nil {
 			s.logf("auto-join %s: recording: %v", account, err)
 		}
 	}
@@ -379,9 +415,10 @@ func (s *Syncer) join(ctx context.Context, account string, aj roles.Autojoin, ch
 // account RoleServ auto-joined this session gets the channels it gained.
 // Called with s.mu held; releases it while talking to auth and Ergo.
 func (s *Syncer) recheckOnline(ctx context.Context) {
-	if !s.feed.Autojoin || len(s.online) == 0 {
+	if (!s.feed.Autojoin && len(s.feed.Network.AutojoinChannels()) == 0) || len(s.online) == 0 {
 		return
 	}
+	ensured := s.ensuredSet()
 	accounts := make([]string, 0, len(s.online))
 	for a := range s.online {
 		accounts = append(accounts, a)
@@ -393,21 +430,28 @@ func (s *Syncer) recheckOnline(ctx context.Context) {
 	for _, account := range accounts {
 		actx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		aj, err := s.Auth.Autojoin(actx, account)
-		if err != nil || !aj.Enabled {
+		if err != nil {
 			cancel()
-			if err != nil && !errors.Is(err, roles.ErrNotFound) {
+			if !errors.Is(err, roles.ErrNotFound) {
 				next[account] = prev[account]
 			}
 			continue
 		}
 		var gained []string
-		if aj.Rejoin == rejoinOnce {
+		switch {
+		case !aj.Enabled:
+		case aj.Rejoin == rejoinOnce:
 			gained = aj.Pending
-		} else {
+		default:
 			for _, ch := range aj.Channels {
 				if !slices.Contains(prev[account], ch) {
 					gained = append(gained, ch)
 				}
+			}
+		}
+		for _, ch := range aj.NetworkPending {
+			if ensured[ch] {
+				gained = union(gained, []string{ch})
 			}
 		}
 		clients := 1
@@ -441,6 +485,239 @@ func (s *Syncer) Managed() map[string]string {
 	s.load()
 	out := map[string]string{}
 	for k, v := range s.managed {
+		out[k] = v
+	}
+	return out
+}
+
+// founder is the account network channels are registered to.
+func (s *Syncer) founder() string {
+	if f := strings.TrimSpace(s.feed.Network.Founder); f != "" {
+		return f
+	}
+	return s.SetBy
+}
+
+// syncNetwork makes sure every network channel exists and is registered
+// (before anyone is auto-joined to it: a SAJOIN would otherwise create it
+// unregistered, with the joiner as its op), sets topics that changed in the
+// config, and drops the channels RoleServ registered that are no longer
+// network channels. Called with s.mu held. It reports whether every call
+// succeeded.
+func (s *Syncer) syncNetwork(ctx context.Context) bool {
+	ok, dirty := true, false
+	founder := s.founder()
+	want := map[string]bool{}
+	for _, c := range s.feed.Network.Channels {
+		ch := strings.ToLower(firstNonEmpty(c.Channel, c.Name))
+		name := firstNonEmpty(c.Name, ch)
+		if ch == "" {
+			continue
+		}
+		want[ch] = true
+		st, known := s.network[ch]
+		// network channels never expire (channel_expiry_days)
+		req := ergoapi.ChannelEnsure{Channel: name, Founder: founder, TopicSetBy: s.SetBy, NoExpire: true}
+		if c.Topic != st.Topic {
+			req.SetTopic, req.Topic = true, c.Topic
+		}
+		pctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		res, err := s.Ergo.EnsureChannel(pctx, req)
+		cancel()
+		if err != nil {
+			s.logf("network channels: %s: %v", name, err)
+			ok = false
+			continue
+		}
+		next := st
+		next.Topic = c.Topic
+		switch {
+		case res.Registered:
+			next.Founder = founder
+			s.logf("network channels: registered %s to %s (created: %v)", name, founder, res.Created)
+		case !known && !strings.EqualFold(res.Founder, founder):
+			s.logf("network channels: %s is registered to %s (not %s); left as it is", name, res.Founder, founder)
+		}
+		if res.TopicChanged {
+			s.logf("network channels: %s topic set", name)
+		}
+		if !known || next != st {
+			s.network[ch], dirty = next, true
+		}
+	}
+	for ch, st := range s.network {
+		if want[ch] {
+			continue
+		}
+		if st.Founder != "" {
+			pctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			dropped, err := s.Ergo.DropChannel(pctx, ch, st.Founder)
+			cancel()
+			if err != nil {
+				s.logf("network channels: dropping %s: %v", ch, err)
+				ok = false
+				continue
+			}
+			if dropped {
+				s.logf("network channels: %s is no longer a network channel; unregistered it", ch)
+			}
+		}
+		delete(s.network, ch)
+		dirty = true
+	}
+	if dirty {
+		s.save()
+	}
+	return ok
+}
+
+// ensuredSet: the network channels syncNetwork has made sure of. Called
+// with s.mu held.
+func (s *Syncer) ensuredSet() map[string]bool {
+	out := map[string]bool{}
+	for _, c := range s.feed.Network.Channels {
+		ch := strings.ToLower(firstNonEmpty(c.Channel, c.Name))
+		if _, ok := s.network[ch]; ok {
+			out[ch] = true
+		}
+	}
+	return out
+}
+
+// ensuredOnly filters channels down to the ensured network channels.
+func (s *Syncer) ensuredOnly(channels []string) []string {
+	if len(channels) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	ensured := s.ensuredSet()
+	s.mu.Unlock()
+	var out []string
+	for _, ch := range channels {
+		if ensured[strings.ToLower(ch)] {
+			out = append(out, ch)
+		}
+	}
+	return out
+}
+
+// GuestRejoinAfter: a guest nick is auto-joined at most once in this long.
+const GuestRejoinAfter = 24 * time.Hour
+
+// maxGuests bounds the guest nicks remembered.
+const maxGuests = 50000
+
+// Connect handles a client connecting (Ergo's CONNECT snomask): a client
+// that isn't logged in (a guest, or a plain IRC client without SASL) is
+// joined to the auto-join network channels, once per nick per
+// GuestRejoinAfter. Logged-in clients are handled by Login.
+func (s *Syncer) Connect(ctx context.Context, nick string) {
+	s.mu.Lock()
+	s.load()
+	if s.sem == nil {
+		s.sem = make(chan struct{}, maxConcurrentLogins)
+	}
+	sem := s.sem
+	var channels []string
+	if s.have && s.feed.Network.AutojoinGuests {
+		ensured := s.ensuredSet()
+		for _, ch := range s.feed.Network.AutojoinChannels() {
+			if ensured[strings.ToLower(ch)] {
+				channels = append(channels, ch)
+			}
+		}
+	}
+	key := strings.ToLower(nick)
+	now := s.clock()
+	last, seen := s.guests[key]
+	s.mu.Unlock()
+	if len(channels) == 0 || nick == "" || strings.EqualFold(nick, s.SetBy) || (seen && now.Sub(last) < GuestRejoinAfter) {
+		return
+	}
+	select {
+	case sem <- struct{}{}:
+		defer func() { <-sem }()
+	case <-ctx.Done():
+		return
+	}
+	if s.GuestDelay > 0 {
+		// let the client finish its registration burst first
+		select {
+		case <-time.After(s.GuestDelay):
+		case <-ctx.Done():
+			return
+		}
+	}
+	actx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	account, online, err := s.Ergo.AccountOf(actx, nick)
+	if err != nil {
+		s.logf("auto-join guest %s: %v", nick, err)
+		return
+	}
+	if !online || account != "" {
+		return
+	}
+	res, err := s.Ergo.SajoinNick(actx, nick, channels)
+	if err != nil {
+		s.logf("auto-join guest %s: %v", nick, err)
+		return
+	}
+	for ch, why := range res.Failed {
+		s.logf("auto-join guest %s to %s: %s", nick, ch, why)
+	}
+	if res.Clients == 0 {
+		return
+	}
+	s.mu.Lock()
+	if len(s.guests) >= maxGuests {
+		for k, t := range s.guests {
+			if now.Sub(t) >= GuestRejoinAfter {
+				delete(s.guests, k)
+			}
+		}
+		if len(s.guests) >= maxGuests {
+			s.guests = map[string]time.Time{}
+		}
+	}
+	s.guests[key] = now
+	s.mu.Unlock()
+	if len(res.Joined) > 0 {
+		s.logf("auto-joined guest %s to %s", nick, strings.Join(res.Joined, ","))
+	}
+}
+
+func (s *Syncer) clock() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
+}
+
+func union(a, b []string) []string {
+	out := append([]string(nil), a...)
+	for _, x := range b {
+		if !slices.Contains(out, x) {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+// Network returns RoleServ's network channel state (tests).
+func (s *Syncer) Network() map[string]networkState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	out := map[string]networkState{}
+	for k, v := range s.network {
 		out[k] = v
 	}
 	return out

@@ -43,17 +43,21 @@ func runRoleServ(ctx context.Context, get func(string) string, logf func(string,
 		Poll:      secondsEnv("ROLES_POLL_SECONDS", 10),
 		Resync:    secondsEnv("ROLE_CHANNELS_RESYNC_SECONDS", 300),
 		Logf:      logf,
+		// a guest is joined to the network channels a moment after it
+		// connects (its registration burst comes first)
+		GuestDelay: time.Second,
 	}
 	go channels.Run(ctx)
 	bot := &roleserv.Bot{
-		Addr:    strEnv(get, "ROLESERV_IRC_ADDR", "ergo:6680"),
-		Nick:    nick,
-		Class:   serviceClass,
-		Session: ergo,
-		Service: svc,
-		Secret:  randomSecret,
-		Logf:    logf,
-		OnLogin: channels.Login,
+		Addr:      strEnv(get, "ROLESERV_IRC_ADDR", "ergo:6680"),
+		Nick:      nick,
+		Class:     serviceClass,
+		Session:   ergo,
+		Service:   svc,
+		Secret:    randomSecret,
+		Logf:      logf,
+		OnLogin:   channels.Login,
+		OnConnect: channels.Connect,
 	}
 	bot.Run(ctx)
 	return nil

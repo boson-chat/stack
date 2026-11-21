@@ -1,0 +1,497 @@
+From 75337e3d49a702ca7c93bef211b43ad93ea3227f Mon Sep 17 00:00:00 2001
+From: James Trotter <james@jamesat.dev>
+Date: Sat, 21 Nov 2026 15:54:49 -0500
+Subject: [PATCH] api: network channels (channel_ensure, channel_drop) and
+ sajoin by nick
+
+POST /v1/channel_ensure creates a channel with no members if needed and
+registers it to a founder account unless it is already registered (never
+taking one over), optionally setting its topic. POST /v1/channel_drop
+unregisters such a channel. POST /v1/sajoin also takes a nick, to join
+one client (e.g. a guest) instead of an account's clients. Lets an
+external system keep fixed, owner-founded channels and auto-join new
+users without parsing IRC.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ docs/API.md                |  29 ++++-
+ irc/api.go                 |   4 +
+ irc/apichannels.go         |  27 +++--
+ irc/apinetchannels.go      | 226 +++++++++++++++++++++++++++++++++++++
+ irc/apinetchannels_test.go | 119 +++++++++++++++++++
+ 5 files changed, 395 insertions(+), 10 deletions(-)
+ create mode 100644 irc/apinetchannels.go
+ create mode 100644 irc/apinetchannels_test.go
+
+diff --git a/docs/API.md b/docs/API.md
+index 82a9c1d..882674b 100644
+--- a/docs/API.md
++++ b/docs/API.md
+@@ -210,16 +210,43 @@ Changes are announced to the channel's members as `MODE` lines from the server a
+ This endpoint joins every connected client of an account to channels, with the same semantics as `SAJOIN` (channel modes and bans don't apply; a channel that doesn't exist is created). An always-on client with no attached session is not joined. The request is a JSON object with fields:
+ 
+ * `accountName`: string, name of the account
++* `nick`: string, optional, instead of `accountName`: join only the client with this nick (logged in or not)
+ * `channels`: list of strings, the channels to join
+ 
+ The response is a JSON object with fields:
+ 
+-* `success`: boolean, whether the request succeeded (`true` with `clients` 0 if nobody is logged into the account)
++* `success`: boolean, whether the request succeeded (`true` with `clients` 0 if nobody is logged into the account, or no client has the nick)
+ * `clients`: number, how many connected clients of the account were joined
+ * `joined`: list of strings, the channels every client is now in
+ * `failed`: object, maps each channel that couldn't be joined to the reason
+ * `errorCode`: string, optional: `ACCOUNT_DOES_NOT_EXIST` for an invalid account name
+ 
++`/v1/channel_ensure`
++--------------------
++
++This endpoint makes sure a channel exists and is registered, for channels an external system keeps for the whole network. A channel that doesn't exist is created with no members (it stays, being registered); a channel that isn't registered is registered to `founder`; a channel registered to someone else is left alone. The request is a JSON object with fields:
++
++* `channel`: string, the channel
++* `founder`: string, the account to register it to (it need not exist yet)
++* `setTopic`: boolean, optional: also set the topic to `topic`
++* `topic`: string, optional, the topic (empty clears it)
++* `topicSetBy`: string, optional, shown as the topic's setter (default `API`)
++* `noExpire`: boolean, optional: exempt the channel from `channels.registration.expire-after` (like `CS SET #channel EXPIRY OFF`)
++
++The response is a JSON object with fields:
++
++* `success`: boolean
++* `created`: boolean, whether the channel was created
++* `registered`: boolean, whether the channel was registered to `founder` by this call
++* `founder`: string, the channel's founder now
++* `topicChanged`: boolean, whether the topic was changed
++* `errorCode`: string, optional: `INVALID_FOUNDER`, `INVALID_CHANNEL`, `CHANNEL_PURGED`, `CONFUSABLE_NAME` or `DEFCON`
++
++`/v1/channel_drop`
++------------------
++
++This endpoint unregisters a channel if it is registered to `founder` (nobody is kicked; the channel goes away when it empties). The request is a JSON object with fields `channel` and `founder`. The response has `success`, `dropped` (boolean) and `founder` (the founder now, when it wasn't dropped).
++
+ `/v1/ns/saregister`
+ -------------------
+ 
+diff --git a/irc/api.go b/irc/api.go
+index 54b343f..88bf9c9 100644
+--- a/irc/api.go
++++ b/irc/api.go
+@@ -52,6 +52,10 @@ func newAPIHandler(server *Server) http.Handler {
+ 	api.mux.HandleFunc("POST /v1/channel_access", api.handleChannelAccess)
+ 	api.mux.HandleFunc("POST /v1/sajoin", api.handleSajoin)
+ 
++	// network channels: always exist, registered to the network's founder:
++	api.mux.HandleFunc("POST /v1/channel_ensure", api.handleChannelEnsure)
++	api.mux.HandleFunc("POST /v1/channel_drop", api.handleChannelDrop)
++
+ 	return api
+ }
+ 
+diff --git a/irc/apichannels.go b/irc/apichannels.go
+index 45f129a..a8024cc 100644
+--- a/irc/apichannels.go
++++ b/irc/apichannels.go
+@@ -160,8 +160,11 @@ func (channel *Channel) announceServerModes(applied modes.ModeChanges) {
+ }
+ 
+ type apiSajoinRequest struct {
+-	AccountName string   `json:"accountName"`
+-	Channels    []string `json:"channels"`
++	AccountName string `json:"accountName"`
++	// Nick, instead of AccountName, joins that one client (logged in or
++	// not; e.g. a guest).
++	Nick     string   `json:"nick"`
++	Channels []string `json:"channels"`
+ }
+ 
+ type apiSajoinResponse struct {
+@@ -183,16 +186,22 @@ func (a *ergoAPI) handleSajoin(w http.ResponseWriter, r *http.Request) {
+ 		return
+ 	}
+ 	response := apiSajoinResponse{Joined: []string{}, Failed: map[string]string{}}
+-	if _, err := CasefoldName(request.AccountName); err != nil {
+-		response.ErrorCode = "ACCOUNT_DOES_NOT_EXIST"
+-		a.writeJSONResponse(response, w, r)
+-		return
+-	}
+ 	var targets []*Client
+-	for _, client := range a.server.accounts.AccountToClients(request.AccountName) {
+-		if len(client.Sessions()) > 0 {
++	if request.Nick != "" {
++		if client := a.server.clients.Get(request.Nick); client != nil && len(client.Sessions()) > 0 {
+ 			targets = append(targets, client)
+ 		}
++	} else {
++		if _, err := CasefoldName(request.AccountName); err != nil {
++			response.ErrorCode = "ACCOUNT_DOES_NOT_EXIST"
++			a.writeJSONResponse(response, w, r)
++			return
++		}
++		for _, client := range a.server.accounts.AccountToClients(request.AccountName) {
++			if len(client.Sessions()) > 0 {
++				targets = append(targets, client)
++			}
++		}
+ 	}
+ 	response.Success = true
+ 	response.Clients = len(targets)
+diff --git a/irc/apinetchannels.go b/irc/apinetchannels.go
+new file mode 100644
+index 0000000..8437ac4
+--- /dev/null
++++ b/irc/apinetchannels.go
+@@ -0,0 +1,226 @@
++// Copyright (c) 2026 James Trotter
++// released under the MIT license
++
++package irc
++
++import (
++	"net/http"
++	"time"
++
++	"github.com/ergochat/irc-go/ircmsg"
++)
++
++// Network channels driven by an external system (the boson stack's
++// RoleServ): channels that always exist, registered to the network's
++// founder account, so nobody can create them first and take them over.
++
++type apiChannelEnsureRequest struct {
++	Channel string `json:"channel"`
++	// Founder is the account the channel is registered to when it isn't
++	// registered yet. The account doesn't have to exist yet (an account
++	// created later with this name is the founder).
++	Founder string `json:"founder"`
++	// Topic is set when SetTopic is true (an empty Topic clears it).
++	Topic    string `json:"topic"`
++	SetTopic bool   `json:"setTopic"`
++	// TopicSetBy is shown as the topic's setter. Default "API".
++	TopicSetBy string `json:"topicSetBy"`
++	// NoExpire exempts the channel from channels.registration.expire-after
++	// (like /CS SET #channel EXPIRY OFF).
++	NoExpire bool `json:"noExpire"`
++}
++
++type apiChannelEnsureResponse struct {
++	apiGenericResponse
++	// Created: the channel didn't exist and was created (with no members).
++	Created bool `json:"created"`
++	// Registered: the channel was registered to Founder by this call.
++	Registered bool `json:"registered"`
++	// Founder is the channel's founder now (someone else's when it was
++	// already registered: it's never taken over).
++	Founder string `json:"founder"`
++	// TopicChanged: the topic was set by this call.
++	TopicChanged bool `json:"topicChanged"`
++}
++
++// handleChannelEnsure makes sure a channel exists and is registered.
++func (a *ergoAPI) handleChannelEnsure(w http.ResponseWriter, r *http.Request) {
++	var request apiChannelEnsureRequest
++	if err := a.decodeJSONRequest(&request, w, r); err != nil {
++		return
++	}
++	var response apiChannelEnsureResponse
++	founder, err := CasefoldName(request.Founder)
++	if err != nil {
++		response.ErrorCode = "INVALID_FOUNDER"
++		a.writeJSONResponse(response, w, r)
++		return
++	}
++	channel, created, registered, err := a.server.channels.ensureRegistered(request.Channel, founder)
++	if err != nil {
++		switch err {
++		case errChannelPurged:
++			response.ErrorCode = "CHANNEL_PURGED"
++		case errConfusableIdentifier:
++			response.ErrorCode = "CONFUSABLE_NAME"
++		case errFeatureDisabled:
++			response.ErrorCode = "DEFCON"
++		default:
++			response.ErrorCode = "INVALID_CHANNEL"
++		}
++		response.Error = err.Error()
++		a.writeJSONResponse(response, w, r)
++		return
++	}
++	response.Success = true
++	response.Created, response.Registered = created, registered
++	response.Founder = channel.Founder()
++	if request.NoExpire && response.Founder != "" {
++		if settings := channel.Settings(); !settings.NoExpire {
++			settings.NoExpire = true
++			channel.SetSettings(settings)
++		}
++	}
++	if request.SetTopic {
++		setBy := request.TopicSetBy
++		if setBy == "" {
++			setBy = "API"
++		}
++		response.TopicChanged = channel.setServerTopic(request.Topic, setBy)
++	}
++	a.writeJSONResponse(response, w, r)
++}
++
++type apiChannelDropRequest struct {
++	Channel string `json:"channel"`
++	// Founder: the channel is only unregistered if this account founds it.
++	Founder string `json:"founder"`
++}
++
++type apiChannelDropResponse struct {
++	apiGenericResponse
++	// Dropped: the channel was registered to Founder and now isn't.
++	Dropped bool `json:"dropped"`
++	// Founder is the channel's founder now ("" when unregistered or gone).
++	Founder string `json:"founder"`
++}
++
++// handleChannelDrop unregisters a network channel. Nobody is kicked: an
++// unregistered channel goes away when it empties.
++func (a *ergoAPI) handleChannelDrop(w http.ResponseWriter, r *http.Request) {
++	var request apiChannelDropRequest
++	if err := a.decodeJSONRequest(&request, w, r); err != nil {
++		return
++	}
++	var response apiChannelDropResponse
++	founder, err := CasefoldName(request.Founder)
++	if err != nil {
++		response.ErrorCode = "INVALID_FOUNDER"
++		a.writeJSONResponse(response, w, r)
++		return
++	}
++	response.Success = true
++	channel := a.server.channels.Get(request.Channel)
++	if channel == nil {
++		a.writeJSONResponse(response, w, r)
++		return
++	}
++	if current := channel.Founder(); current != founder {
++		response.Founder = current
++		a.writeJSONResponse(response, w, r)
++		return
++	}
++	if err := a.server.channels.SetUnregistered(request.Channel, founder); err != nil {
++		response.Success = false
++		response.ErrorCode = "DROP_FAILED"
++		response.Error = err.Error()
++		response.Founder = channel.Founder()
++	} else {
++		response.Dropped = true
++	}
++	a.writeJSONResponse(response, w, r)
++}
++
++// ensureRegistered returns the channel called name, creating it (with no
++// members) if needed and registering it to founder (casefolded) if it
++// isn't registered.
++func (cm *ChannelManager) ensureRegistered(name, founder string) (channel *Channel, created, registered bool, err error) {
++	server := cm.server
++	if server.Defcon() <= 4 {
++		return nil, false, false, errFeatureDisabled
++	}
++	cfname, err := CasefoldChannel(name)
++	if err != nil || len(cfname) > server.Config().Limits.ChannelLen {
++		return nil, false, false, errInvalidChannelName
++	}
++	skeleton, err := Skeleton(name)
++	if err != nil {
++		return nil, false, false, errInvalidChannelName
++	}
++
++	cm.Lock()
++	if _, ok := cm.purgedChannels[cfname]; ok {
++		cm.Unlock()
++		return nil, false, false, errChannelPurged
++	}
++	entry := cm.chans[cfname]
++	if entry == nil {
++		if cm.chansSkeletons.Has(skeleton) {
++			cm.Unlock()
++			return nil, false, false, errConfusableIdentifier
++		}
++		entry = &channelManagerEntry{
++			channel:  NewChannel(server, name, cfname, false, RegisteredChannel{}),
++			skeleton: skeleton,
++		}
++		cm.chansSkeletons.Add(skeleton)
++		cm.chans[cfname] = entry
++		created = true
++	}
++	channel = entry.channel
++	if channel.Founder() == "" {
++		if err = channel.SetRegistered(founder); err == nil {
++			registered = true
++		}
++	}
++	if err != nil && created {
++		cm.maybeCleanupInternal(cfname, entry, false)
++	}
++	cm.Unlock()
++	if err != nil {
++		return nil, false, false, err
++	}
++	if registered {
++		// outside cm's lock: Store may call cm.Cleanup
++		if err := channel.Store(IncludeAllAttrs); err != nil {
++			server.logger.Error("api", "couldn't store channel registration", cfname, err.Error())
++		}
++		server.logger.Info("api", "registered channel", channel.Name(), "to", founder)
++	}
++	return channel, created, registered, nil
++}
++
++// setServerTopic sets the topic on behalf of setBy (not a client) and
++// tells the members. It reports whether the topic changed.
++func (channel *Channel) setServerTopic(topic, setBy string) bool {
++	server := channel.server
++	topic = ircmsg.TruncateUTF8Safe(topic, server.Config().Limits.TopicLen)
++	channel.stateMutex.Lock()
++	if channel.topic == topic {
++		channel.stateMutex.Unlock()
++		return false
++	}
++	chname := channel.name
++	channel.topic = topic
++	channel.topicSetBy = setBy
++	channel.topicSetTime = time.Now().UTC()
++	channel.stateMutex.Unlock()
++
++	for _, member := range channel.Members() {
++		for _, session := range member.Sessions() {
++			session.Send(nil, server.name, "TOPIC", chname, topic)
++		}
++	}
++	channel.MarkDirty(IncludeTopic)
++	return true
++}
+diff --git a/irc/apinetchannels_test.go b/irc/apinetchannels_test.go
+new file mode 100644
+index 0000000..e10f520
+--- /dev/null
++++ b/irc/apinetchannels_test.go
+@@ -0,0 +1,119 @@
++// Copyright (c) 2026 James Trotter
++// released under the MIT license
++
++package irc
++
++import (
++	"testing"
++)
++
++func netChannelsTestServer(t *testing.T) *Server {
++	server := channelExpiryTestServer(t, 0)
++	config := server.Config()
++	config.Limits.ChannelLen = 64
++	config.Limits.TopicLen = 300
++	return server
++}
++
++func TestAPIChannelEnsure(t *testing.T) {
++	server := netChannelsTestServer(t)
++
++	var resp apiChannelEnsureResponse
++	apiCall(t, server, "/v1/channel_ensure", apiChannelEnsureRequest{Channel: "#Lobby", Founder: "Owner", Topic: "Welcome", SetTopic: true, TopicSetBy: "RoleServ", NoExpire: true}, &resp)
++	if !resp.Success || !resp.Created || !resp.Registered || resp.Founder != "owner" || !resp.TopicChanged {
++		t.Fatalf("first ensure: %+v", resp)
++	}
++	channel := server.channels.Get("#lobby")
++	if channel == nil {
++		t.Fatal("channel not kept after ensure (no members)")
++	}
++	if !channel.Settings().NoExpire {
++		t.Fatal("NoExpire not set")
++	}
++	if channel.Name() != "#Lobby" || channel.topic != "Welcome" || channel.topicSetBy != "RoleServ" {
++		t.Fatalf("channel: name %q topic %q by %q", channel.Name(), channel.topic, channel.topicSetBy)
++	}
++	eventually(t, "registration stored", func() bool {
++		reg, ok := storedChannel(t, server, "#Lobby")
++		return ok && reg.Founder == "owner"
++	})
++
++	// Again: nothing changes; the same topic isn't set again.
++	resp = apiChannelEnsureResponse{}
++	apiCall(t, server, "/v1/channel_ensure", apiChannelEnsureRequest{Channel: "#lobby", Founder: "owner", Topic: "Welcome", SetTopic: true}, &resp)
++	if !resp.Success || resp.Created || resp.Registered || resp.Founder != "owner" || resp.TopicChanged {
++		t.Fatalf("second ensure: %+v", resp)
++	}
++
++	// A channel someone else founded is never taken over.
++	other := emptyTestChannel(server, "#mine")
++	if err := other.SetRegistered("alice"); err != nil {
++		t.Fatal(err)
++	}
++	resp = apiChannelEnsureResponse{}
++	apiCall(t, server, "/v1/channel_ensure", apiChannelEnsureRequest{Channel: "#mine", Founder: "owner"}, &resp)
++	if !resp.Success || resp.Created || resp.Registered || resp.Founder != "alice" {
++		t.Fatalf("someone else's channel: %+v", resp)
++	}
++
++	// An existing unregistered channel is registered.
++	emptyTestChannel(server, "#open")
++	resp = apiChannelEnsureResponse{}
++	apiCall(t, server, "/v1/channel_ensure", apiChannelEnsureRequest{Channel: "#open", Founder: "owner"}, &resp)
++	if !resp.Success || resp.Created || !resp.Registered || resp.Founder != "owner" {
++		t.Fatalf("unregistered channel: %+v", resp)
++	}
++
++	for _, bad := range []apiChannelEnsureRequest{
++		{Channel: "lobby", Founder: "owner"},
++		{Channel: "#a b", Founder: "owner"},
++		{Channel: "#ok", Founder: "bad founder"},
++	} {
++		resp = apiChannelEnsureResponse{}
++		apiCall(t, server, "/v1/channel_ensure", bad, &resp)
++		if resp.Success || resp.ErrorCode == "" {
++			t.Fatalf("%+v: %+v", bad, resp)
++		}
++	}
++	if server.channels.Get("#ok") != nil {
++		t.Fatal("bad founder created the channel")
++	}
++}
++
++func TestAPIChannelDrop(t *testing.T) {
++	server := netChannelsTestServer(t)
++	var ensured apiChannelEnsureResponse
++	apiCall(t, server, "/v1/channel_ensure", apiChannelEnsureRequest{Channel: "#lobby", Founder: "owner"}, &ensured)
++	if !ensured.Registered {
++		t.Fatalf("ensure: %+v", ensured)
++	}
++
++	// Only the given founder's channel is dropped.
++	var resp apiChannelDropResponse
++	apiCall(t, server, "/v1/channel_drop", apiChannelDropRequest{Channel: "#lobby", Founder: "someone"}, &resp)
++	if !resp.Success || resp.Dropped || resp.Founder != "owner" {
++		t.Fatalf("wrong founder: %+v", resp)
++	}
++	resp = apiChannelDropResponse{}
++	apiCall(t, server, "/v1/channel_drop", apiChannelDropRequest{Channel: "#lobby", Founder: "owner"}, &resp)
++	if !resp.Success || !resp.Dropped {
++		t.Fatalf("drop: %+v", resp)
++	}
++	if server.channels.Get("#lobby") != nil {
++		t.Fatal("empty dropped channel kept")
++	}
++	resp = apiChannelDropResponse{}
++	apiCall(t, server, "/v1/channel_drop", apiChannelDropRequest{Channel: "#lobby", Founder: "owner"}, &resp)
++	if !resp.Success || resp.Dropped {
++		t.Fatalf("drop missing: %+v", resp)
++	}
++}
++
++func TestAPISajoinNickOffline(t *testing.T) {
++	server := netChannelsTestServer(t)
++	var resp apiSajoinResponse
++	apiCall(t, server, "/v1/sajoin", apiSajoinRequest{Nick: "Guest42", Channels: []string{"#lobby"}}, &resp)
++	if !resp.Success || resp.Clients != 0 || len(resp.Joined) != 0 {
++		t.Fatalf("unknown nick: %+v", resp)
++	}
++}
+-- 
+2.56.1
+

@@ -11,8 +11,11 @@ plus what the stack asks auth to add (docs/roles.md "Requested from auth"):
   GET  /internal/v1/irc/accounts/removed     (auth 1.7: users deleted/disabled after ?since=)
   /internal/v1/acting/...                    (the admin API as X-Acting-Account,
                                               X-Internal-Token = INTERNAL_ACTING_TOKEN; GET /me)
+  GET  /internal/v1/irc/channel-access      (ETag; no private/role channels here, only the
+                                              network channels: "network": {founder, autojoin_guests, channels})
+  GET/POST /internal/v1/irc/autojoin         (network / network_pending: auto-join network channels, once per account)
 and a test control endpoint, POST /test/state {users: {name: [role]}, roles: {role: patch}, disable: [name], delete: [name],
-settings: {field: value}} (settings: merged into GET /internal/v1/settings).
+settings: {field: value}, network: {...}} (settings: merged into GET /internal/v1/settings; network: the feed's network).
 """
 import hashlib, json, os, re, sys, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -45,6 +48,8 @@ USERS = {  # username -> password, assigned role ids (Member is implicit)
     "frank": ("pw-frank", []), "gina": ("pw-gina", []), "hank": ("pw-hank", []),
 }
 DISABLED = set()
+NETWORK = {"founder": "", "autojoin_guests": True, "channels": []}
+AUTOJOINED = {}  # username -> channels RoleServ recorded
 REMOVED = []  # (seq, username, reason, at), the removed-accounts feed
 def removed(name, reason):
     import datetime
@@ -142,6 +147,21 @@ class H(BaseHTTPRequestHandler):
                 body = grants(); tag = etag(body)
                 if self.headers.get("If-None-Match") == tag: return self.reply(304, None, {"ETag": tag})
                 return self.reply(200, body, {"ETag": tag})
+            if method == "GET" and p == "/internal/v1/irc/channel-access":
+                body = {"autojoin": False, "rejoin": "login", "channels": [], "network": NETWORK}
+                tag = etag(body); body["version"] = tag.strip('"')
+                if self.headers.get("If-None-Match") == tag: return self.reply(304, None, {"ETag": tag})
+                return self.reply(200, body, {"ETag": tag})
+            if p == "/internal/v1/irc/autojoin" and method in ("GET", "POST"):
+                b = (self.body() or {}) if method == "POST" else {}
+                name = (b.get("account") or (parse_qs(u.query).get("account") or [""])[0]).lower()
+                if name not in USERS or name in DISABLED: return self.err(404, "not_found", "no such account")
+                net = sorted(c["channel"] for c in NETWORK["channels"] if c.get("autojoin"))
+                if method == "POST":
+                    AUTOJOINED[name] = sorted(set(AUTOJOINED.get(name, [])) | {c.lower() for c in b.get("channels") or []} & set(net))
+                done = AUTOJOINED.get(name, [])
+                return self.reply(200, {"account": name, "enabled": False, "rejoin": "login", "channels": [], "pending": [],
+                                        "network": net, "network_pending": [c for c in net if c not in done]})
             m = re.fullmatch(r"/internal/v1/roles/([^/]+)/members", p)
             if method == "GET" and m:
                 r = role(unquote(m[1]))
@@ -161,6 +181,7 @@ class H(BaseHTTPRequestHandler):
                 for name in b.get("delete") or []:
                     USERS.pop(name, None); DISABLED.discard(name); removed(name, "deleted")
                 SETTINGS.update(b.get("settings") or {})
+                if "network" in b: NETWORK.update(b["network"])
                 for rid, patch in (b.get("roles") or {}).items():
                     rid = role(rid)["id"]
                     r = role(rid)

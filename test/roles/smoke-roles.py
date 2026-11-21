@@ -479,6 +479,75 @@ r = compose("exec", "-T", "ergo", "grep", "-c", "database-path", "/ircd/ircd.yam
 check("persistent_history change: ircd.yaml keeps the running value", r.returncode == 0, r.stdout + r.stderr)
 write_config("version: 1\nnetwork: {name: Boson}\nirc:\n  plaintext: true\n")
 
+# ---- network channels (fake auth: the feed's "network") ----------------------
+# RoleServ registers them to the founder (patched Ergo /v1/channel_ensure),
+# joins guests on connect (CONNECT snomask, /v1/sajoin by nick; once per nick
+# per 24 h) and accounts on their first login (recorded in auth).
+def lobby_joined(c, ch="#lobby", timeout=8):
+    end = time.time() + timeout
+    while time.time() < end:
+        if any(" JOIN " in l and l.rstrip().lower().endswith(ch) for l in c.log): return True
+        c.drain(0.5)
+    return False
+if MODE == "fake":
+    http("POST", AUTH_TEST + "/test/state", {"network": {"founder": "alice", "autojoin_guests": True, "channels": [
+        {"channel": "#lobby", "name": "#Lobby", "topic": "Welcome to the smoke", "autojoin": True},
+        {"channel": "#rules", "name": "#rules", "topic": "", "autojoin": False}]}})
+    time.sleep(5)  # ROLES_POLL_SECONDS 2: RoleServ ensures them
+    g = Client("netguest1", guest=True)
+    check("network channels: a new guest is joined to #lobby on connect", lobby_joined(g), g.log[-5:])
+    check("network channels: the guest sees #lobby's configured topic (332)",
+          any(" 332 " in l and "Welcome to the smoke" in l for l in g.log), [l for l in g.log if "#Lobby" in l or "#lobby" in l][:5])
+    check("network channels: not joined to #rules (no auto-join)", not any(" JOIN " in l and "#rules" in l.lower() for l in g.log))
+    info = cs(g, "INFO #lobby")
+    check("network channels: #lobby is registered to the founder (alice)", "alice" in info.lower(), info)
+    info = cs(g, "INFO #rules")
+    check("network channels: #rules is registered too", "alice" in info.lower() and "not registered" not in info, info)
+    g.send("QUIT"); time.sleep(1)
+    g = Client("netguest1", guest=True)
+    g.drain(4)
+    check("network channels: the same guest nick reconnecting within 24 h isn't joined again",
+          not any(" JOIN " in l for l in g.log), [l for l in g.log if " JOIN " in l])
+    g.send("QUIT")
+
+    # an account: joined on its first login only (a /part sticks)
+    http("POST", AUTH_TEST + "/test/state", {"users": {"ivy": []}})  # a new account (password pw-ivy)
+    h = Client("ivy", "pw-ivy")
+    check("network channels: an account is joined to #lobby on its first login", lobby_joined(h), h.log[-5:])
+    h.send("PART #Lobby"); h.drain(1); h.send("QUIT"); time.sleep(1)
+    h = Client("ivy", "pw-ivy"); h.drain(5)
+    check("network channels: after /part, the next login doesn't join #lobby again",
+          not any(" JOIN " in l and "#lobby" in l.lower() for l in h.log), [l for l in h.log if " JOIN " in l])
+
+    # creation policy "Only admins" (auth channel_creation: admins): members
+    # can join network channels, but can't create channels; admins can.
+    http("POST", AUTH_TEST + "/test/state", {"settings": {"channel_creation": "admins"}})
+    # frank (no roles) and alice (Admin: irc.chanreg) are still connected
+    n = [0]
+    def try_create(c, prefix):
+        n[0] += 1; ch = f"#{prefix}-{n[0]}"
+        c.drain(0.2); c.send("JOIN " + ch)
+        return c.collect(lambda l: ch in l and (" 403 " in l or " JOIN " in l), 8)
+    got = eventually(lambda: (lambda g: g if any(" 403 " in l for l in g) else None)(try_create(frank, "frank-new")), 20, 1) or []
+    check("channel_creation=admins: a member can't create a channel (403)",
+          any(" 403 " in l and "Only server operators can create new channels" in l for l in got), got[-3:])
+    frank.drain(0.2); frank.send("JOIN #rules")
+    got = frank.collect(lambda l: "#rules" in l and (" JOIN " in l or " 403 " in l or " 47" in l), 8)
+    check("channel_creation=admins: a member joins a network channel (#rules)", any(" JOIN " in l for l in got), got[-3:])
+    got = try_create(alice, "alice-new")
+    check("channel_creation=admins: an admin (irc.chanreg) creates a channel", any(" JOIN " in l for l in got), got[-3:])
+    http("POST", AUTH_TEST + "/test/state", {"settings": {"channel_creation": "registered"}})
+
+    # removing #rules from the list: RoleServ registered it, so it's dropped
+    http("POST", AUTH_TEST + "/test/state", {"network": {"channels": [
+        {"channel": "#lobby", "name": "#Lobby", "topic": "Welcome to the smoke", "autojoin": True}]}})
+    got = eventually(lambda: "not registered" in cs(frank, "INFO #rules"), 15, 2)
+    check("network channels: a channel removed from the list is unregistered", got)
+    check("network channels: its members weren't kicked", not any(" KICK " in l and "#rules" in l for l in frank.log))
+    info = cs(frank, "INFO #lobby")
+    check("network channels: #lobby stays registered", "alice" in info.lower(), info)
+    h.send("QUIT")
+
 # RoleServ's account can't be taken over through auth
 rs = Client("RoleServ", "anything", nick="RoleServ", register=False)
 check("SASL as RoleServ with someone else's password fails", not rs.ok(), rs.sasl)
