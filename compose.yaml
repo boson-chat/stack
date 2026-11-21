@@ -810,7 +810,7 @@ services:
   directory:
     <<: *restart
     profiles: [directory]
-    image: ${DIRECTORY_IMAGE:-harbor.floret.dev/boson/directory:1.7.0}
+    image: ${DIRECTORY_IMAGE:-harbor.floret.dev/boson/directory:1.9.0}
     environment:
       ENV: ${DIRECTORY_ENV:-production}
       LOG_LEVEL: ${DIRECTORY_LOG_LEVEL:-info}
