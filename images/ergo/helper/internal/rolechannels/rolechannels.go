@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -84,6 +85,7 @@ type Syncer struct {
 	online    map[string][]string     // folded account → auto-join channels when last checked
 	network   map[string]networkState // network channels RoleServ has ensured
 	guests    map[string]time.Time    // folded nick → when it was auto-joined as a guest
+	netLogged string                  // the network channel summary last logged
 	unsupport bool
 	loaded    bool
 	sem       chan struct{}
@@ -568,7 +570,33 @@ func (s *Syncer) syncNetwork(ctx context.Context) bool {
 	if dirty {
 		s.save()
 	}
+	if summary := s.networkSummary(founder); ok && summary != s.netLogged {
+		// once per change: channels that were already registered to the
+		// founder log nothing else
+		s.logf("%s", summary)
+		s.netLogged = summary
+	}
 	return ok
+}
+
+// networkSummary describes the network channels RoleServ keeps.
+func (s *Syncer) networkSummary(founder string) string {
+	if len(s.feed.Network.Channels) == 0 {
+		return "network channels: none"
+	}
+	var names []string
+	for _, c := range s.feed.Network.Channels {
+		n := firstNonEmpty(c.Name, c.Channel)
+		if c.Autojoin {
+			n += " (auto-join)"
+		}
+		names = append(names, n)
+	}
+	guests := "off"
+	if s.feed.Network.AutojoinGuests {
+		guests = "on"
+	}
+	return fmt.Sprintf("network channels: %s exist, founder %s; guest auto-join %s", strings.Join(names, ", "), founder, guests)
 }
 
 // ensuredSet: the network channels syncNetwork has made sure of. Called
