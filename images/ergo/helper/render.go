@@ -61,6 +61,11 @@ type renderData struct {
 	ServiceClass string
 	// Plaintext listener for in-stack services (RoleServ); "" = none.
 	ServicesListener string
+	// WEBIRC from the web gateway (webircgateway, the web profile): a bcrypt
+	// hash of WEBIRC_PASSWORD and the addresses it may come from
+	// (WEBIRC_HOSTS, default STACK_SUBNET). Empty hash = no WEBIRC.
+	WebIRCPasswordHash string
+	WebIRCHosts        []string
 }
 
 var bcryptRe = regexp.MustCompile(`^\$2[aby]\$\d\d\$[./A-Za-z0-9]{53}$`)
@@ -151,6 +156,19 @@ func buildData(get func(string) string) (renderData, error) {
 			d.RequireSASLExempt = append(d.RequireSASLExempt, n)
 		}
 	}
+	d.WebIRCHosts = []string{d.StackSubnet}
+	if v := get("WEBIRC_HOSTS"); v != "" {
+		d.WebIRCHosts = nil
+		for _, n := range strings.Split(v, ",") {
+			if n = strings.TrimSpace(n); n == "" {
+				continue
+			}
+			if !validNet(n) {
+				return d, fmt.Errorf("WEBIRC_HOSTS: %q is not an IP, CIDR or localhost", n)
+			}
+			d.WebIRCHosts = append(d.WebIRCHosts, n)
+		}
+	}
 	if v := get("IRC_WEBSOCKET_ORIGINS"); v != "" {
 		for _, o := range strings.Split(v, ",") {
 			if o = strings.TrimSpace(o); o != "" {
@@ -188,6 +206,9 @@ func q(v any) string {
 func render(get func(string) string, tmplPath, dir string, st netSettings, classes []roles.OperClass) (changed bool, err error) {
 	d, err := buildData(get)
 	if err != nil {
+		return false, err
+	}
+	if d.WebIRCPasswordHash, err = webircHash(get("WEBIRC_PASSWORD"), dir); err != nil {
 		return false, err
 	}
 	d.RoleClasses = classes

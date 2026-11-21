@@ -71,6 +71,20 @@ server:
     secure-nets:
         - {{ q .StackSubnet }}
 
+{{- if .WebIRCPasswordHash }}
+    # The web gateway (webircgateway, profile web) passes each web user's
+    # real IP with WEBIRC; only from these addresses, with this password
+    # (WEBIRC_PASSWORD, hashed).
+    webirc:
+        -
+            password: {{ q .WebIRCPasswordHash }}
+            hosts:
+{{- range .WebIRCHosts }}
+                - {{ q . }}
+{{- end }}
+            accept-hostname: false
+{{- end }}
+
     max-sendq: 96k
 
     compatibility:
@@ -88,6 +102,13 @@ server:
         cidr-len-ipv6: 64
         exempted:
             - "localhost"
+{{- if .WebIRCPasswordHash }}
+            # The gateway's own address: after WEBIRC the limits apply to
+            # each user's real IP instead.
+{{- range .WebIRCHosts }}
+            - {{ q . }}
+{{- end }}
+{{- end }}
 
     # Users see a hash like abcd1234.{{ .CloakNetname }} instead of their IP.
     # The cloak secret is generated on first start and kept in the datastore.

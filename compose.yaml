@@ -4,7 +4,7 @@
 #   docker compose up -d --build
 # Which parts run is chosen by COMPOSE_PROFILES in .env
 # (irc, voice, video, auth, api, directory, files, minio, metrics, admin,
-# webroot, wellknown). traefik and
+# webroot, wellknown, web). traefik and
 # certsync always run.
 # Install-specific additions: traefik/dynamic/*.yml and compose.override.yaml.
 name: boson
@@ -184,6 +184,11 @@ services:
       # roles), RoleServ and the role sync. Compose network only: not
       # published, not routed. Empty = off.
       ERGO_API_TOKEN: ${ERGO_API_TOKEN:-}
+      # The web gateway (profile web) passes web users' real IPs with WEBIRC
+      # from the stack network (WEBIRC_HOSTS, default STACK_SUBNET). Empty =
+      # no WEBIRC (docs/web.md).
+      WEBIRC_PASSWORD: ${WEBIRC_PASSWORD:-}
+      WEBIRC_HOSTS: ${WEBIRC_HOSTS:-}
       # Network roles (docs/roles.md): oper classes from auth's roles, polled
       # every ROLES_POLL_SECONDS; members' oper class / WHOIS line / vhost
       # are applied at login and pushed to connected users on a change.
@@ -1057,6 +1062,43 @@ services:
       interval: 30s
       timeout: 3s
       retries: 3
+
+  # ---- web ------------------------------------------------------------------
+  # webircgateway (docs/web.md): the browser client's IRC connections,
+  # WebSocket in (wss://WEB_HOST/webirc/websocket/), TCP/TLS out to any IRC
+  # network, with WEBIRC to the networks that trust it. IRC ports only, no
+  # internal addresses (except the aliases below), per-IP caps.
+  webircgateway:
+    <<: *restart
+    profiles: [web]
+    build: images/webircgateway
+    image: harbor.floret.dev/boson/stack-webircgateway:1.1.0-boson.1
+    environment:
+      WEBIRC_ORIGINS: ${WEBIRC_ORIGINS:-https://${WEB_HOST:-web.invalid}}
+      WEBIRC_TRUSTED_PROXIES: ${STACK_SUBNET:-10.203.53.0/24}
+      # This network's own Ergo: on the compose network, plaintext services
+      # listener, with WEBIRC.
+      WEBIRC_ALIASES: ${WEBIRC_ALIASES:-${IRC_HOST:-irc.invalid}:6697=ergo:6680,${IRC_HOST:-irc.invalid}:6667=ergo:6680}
+      WEBIRC_PASSWORDS: ${WEBIRC_PASSWORDS:-ergo=${WEBIRC_PASSWORD:-}}
+      WEBIRC_EXTRA_PORTS: ${WEBIRC_EXTRA_PORTS:-}
+      WEBIRC_UPSTREAM_ALLOW: ${WEBIRC_UPSTREAM_ALLOW:-}
+      WEBIRC_UPSTREAM_DENY: ${WEBIRC_UPSTREAM_DENY:-}
+      WEBIRC_MAX_PER_IP: ${WEBIRC_MAX_PER_IP:-5}
+      WEBIRC_RATE_PER_MIN: ${WEBIRC_RATE_PER_MIN:-10}
+      WEBIRC_THROTTLE: ${WEBIRC_THROTTLE:-4}
+      WEBIRC_THROTTLE_BURST: ${WEBIRC_THROTTLE_BURST:-20}
+      WEBIRC_LOG_LEVEL: ${WEBIRC_LOG_LEVEL:-2}
+    read_only: true
+    tmpfs:
+      - /etc/webircgateway:uid=10001,gid=10001,mode=0700
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.webircgateway.rule=Host(`${WEB_HOST:-web.invalid}`) && PathPrefix(`/webirc/websocket/`)
+      - traefik.http.routers.webircgateway.entrypoints=websecure
+      - traefik.http.routers.webircgateway.tls=true
+      - traefik.http.services.webircgateway.loadbalancer.server.port=8080
 
 volumes:
   traefik_acme:
