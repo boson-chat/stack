@@ -180,6 +180,7 @@ services:
       IRC_REQUIRE_SASL: ${IRC_REQUIRE_SASL:-false}
       # Default; config/boson.yaml irc.require_sasl_exempt wins.
       IRC_REQUIRE_SASL_EXEMPT: ${IRC_REQUIRE_SASL_EXEMPT:-}
+      IRC_IP_LIMITS_EXEMPT: ${IRC_IP_LIMITS_EXEMPT:-}
       # Ergo's HTTP API on :8089 for quicvoiced (founder checks, channel
       # roles), RoleServ and the role sync. Compose network only: not
       # published, not routed. Empty = off.

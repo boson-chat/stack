@@ -55,6 +55,9 @@ type renderData struct {
 	// in auth, else IRC_REQUIRE_SASL), except from RequireSASLExempt.
 	RequireSASL       bool
 	RequireSASLExempt []string
+	// IPLimitsExempt: nets exempt from the per-IP connection limits and
+	// throttle (IRC_IP_LIMITS_EXEMPT; tests open many connections from one IP).
+	IPLimitsExempt []string
 	// Network roles with irc.oper, as oper classes (docs/roles.md).
 	RoleClasses []roles.OperClass
 	// Oper class RoleServ grants itself (nofakelag, via account_grants).
@@ -155,6 +158,15 @@ func buildData(get func(string) string) (renderData, error) {
 			}
 			d.RequireSASLExempt = append(d.RequireSASLExempt, n)
 		}
+	}
+	for _, n := range strings.Split(get("IRC_IP_LIMITS_EXEMPT"), ",") {
+		if n = strings.TrimSpace(n); n == "" {
+			continue
+		}
+		if !validNet(n) {
+			return d, fmt.Errorf("IRC_IP_LIMITS_EXEMPT: %q is not an IP, CIDR or localhost", n)
+		}
+		d.IPLimitsExempt = append(d.IPLimitsExempt, n)
 	}
 	d.WebIRCHosts = []string{d.StackSubnet}
 	if v := get("WEBIRC_HOSTS"); v != "" {

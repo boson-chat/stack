@@ -102,6 +102,10 @@ server:
         cidr-len-ipv6: 64
         exempted:
             - "localhost"
+{{- range .IPLimitsExempt }}
+            # IRC_IP_LIMITS_EXEMPT
+            - {{ q . }}
+{{- end }}
 {{- if .WebIRCPasswordHash }}
             # The gateway's own address: after WEBIRC the limits apply to
             # each user's real IP instead.
