@@ -310,8 +310,10 @@ services:
       # Extra browser origins allowed to call auth with credentials/tokens and
       # to be SSO return_to targets, e.g. the directory web UI
       # (https://directory.example.com). Comma-separated. Default;
-      # config/boson.yaml auth.cors_allowed_origins wins.
-      CORS_ALLOWED_ORIGINS: ${AUTH_CORS_ALLOWED_ORIGINS:-}
+      # config/boson.yaml auth.cors_allowed_origins wins. The web client
+      # (WEB_HOST, the web profile) is on the list by default: it calls
+      # auth from the browser and comes back to /sso/callback after SSO.
+      CORS_ALLOWED_ORIGINS: ${AUTH_CORS_ALLOWED_ORIGINS:-${WEB_HOST:+https://${WEB_HOST}}}
       DATABASE_URL: postgres://auth:${POSTGRES_PASSWORD}@postgres:5432/auth?sslmode=disable
       AUTH_KEY_ENCRYPTION_KEY: ${AUTH_KEY_ENCRYPTION_KEY:?run scripts/setup.sh}
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?run scripts/setup.sh}
@@ -375,7 +377,7 @@ services:
   quicvoiced:
     <<: *restart
     profiles: [voice]
-    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.14.0}
+    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.15.0}
     ports:
       - "7700:7700/udp"
     environment:
@@ -385,6 +387,11 @@ services:
       HTTP_ADDR: ":8080"
       # Public API (GET /v1/rooms, /healthz), routed at https://VOICE_HOST.
       PUBLIC_HTTP_ADDR: ":8090"
+      # Browsers (the web client at WEB_HOST) join over WebTransport on the
+      # QUIC port (https://VOICE_HOST:7700/wt, quicvoice 1.15+) and call the
+      # public API cross-origin. Pages allowed (comma-separated; empty = any;
+      # the voice token still decides). config/boson.yaml voice.web_origins wins.
+      WEBTRANSPORT_ORIGINS: ${VOICE_WEBTRANSPORT_ORIGINS:-${WEB_HOST:+https://${WEB_HOST}}}
       # config/boson.yaml (voice:) wins over the env defaults below.
       BOSON_CONFIG: /config/boson.yaml
       # Default; config/boson.yaml voice.rooms wins.
@@ -458,7 +465,7 @@ services:
   quicvideod:
     <<: *restart
     profiles: [video]
-    image: ${QUICVIDEO_IMAGE:-harbor.floret.dev/boson/quicvideo:1.12.0}
+    image: ${QUICVIDEO_IMAGE:-harbor.floret.dev/boson/quicvideo:1.14.1}
     ports:
       # QUIC for the apps and WebTransport (HTTP/3, /wt) for browsers.
       - "7710:7710/udp"
@@ -711,7 +718,7 @@ services:
     environment: &api-env
       PORT: "3000"
       ENV: production
-      ALLOWED_ORIGINS: ${API_ALLOWED_ORIGINS:-https://${DOMAIN:-localhost}}
+      ALLOWED_ORIGINS: ${API_ALLOWED_ORIGINS:-https://${DOMAIN:-localhost}${WEB_HOST:+,https://${WEB_HOST}}}
       AUTH_JWKS_URL: http://auth:8080/.well-known/jwks.json
       AUTH_ISSUER: https://${AUTH_HOST}
       AUTH_AUDIENCE: boson
@@ -815,6 +822,8 @@ services:
       # database, directory >= 1.4.0).
       DIRECTORY_NAME: ${DIRECTORY_NAME:-${NETWORK_NAME:-Boson} directory}
       DIRECTORY_PUBLIC_URL: https://${DIRECTORY_HOST:-directory.${DOMAIN:-localhost}}
+      # Owner calls (listing edits) from the web client; public GETs are * anyway.
+      CORS_ALLOWED_ORIGINS: ${DIRECTORY_CORS_ALLOWED_ORIGINS:-${WEB_HOST:+https://${WEB_HOST}}}
       DIRECTORY_OPERATOR: ${NETWORK_NAME:-Boson}
       DIRECTORY_CONTACT: ${DIRECTORY_CONTACT:-${ADMIN_EMAIL:-}}
       # Federation: other directories to seed once (comma-separated URLs) and
@@ -1064,6 +1073,36 @@ services:
       retries: 3
 
   # ---- web ------------------------------------------------------------------
+  # The web client (docs/web.md): Boson in the browser at https://WEB_HOST,
+  # the same app as the desktop one (harbor.floret.dev/boson/web, from
+  # boson-chat/boson infra/web). Static files behind Traefik; its IRC goes
+  # through webircgateway below (/webirc/websocket/ on the same host), its
+  # calls over WebTransport to quicvoiced/quicvideod. WEB_HOST goes in
+  # CERT_HOSTS.
+  web:
+    <<: *restart
+    profiles: [web]
+    image: ${WEB_IMAGE:-harbor.floret.dev/boson/web:0.88.0}
+    environment:
+      BOSON_AUTH_URL: https://${AUTH_HOST:-auth.invalid}
+      BOSON_API_URL: ${WEB_API_URL:-https://${API_HOST:-api.${DOMAIN:-localhost}}}
+      # The network directory the app browses (default the main one).
+      BOSON_DIRECTORY_URL: ${WEB_DIRECTORY_URL:-https://directory.boson.chat}
+      # Empty: this host's /webirc/websocket/ (the gateway below).
+      BOSON_GATEWAY_URL: ${WEB_GATEWAY_URL:-}
+    read_only: true
+    tmpfs:
+      - /tmp:uid=101,gid=101
+      - /var/cache/nginx:uid=101,gid=101
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.web.rule=Host(`${WEB_HOST:-web.invalid}`)
+      - traefik.http.routers.web.entrypoints=websecure
+      - traefik.http.routers.web.tls=true
+      - traefik.http.services.web.loadbalancer.server.port=8080
+
   # webircgateway (docs/web.md): the browser client's IRC connections,
   # WebSocket in (wss://WEB_HOST/webirc/websocket/), TCP/TLS out to any IRC
   # network, with WEBIRC to the networks that trust it. IRC ports only, no

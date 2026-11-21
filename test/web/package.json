@@ -1,0 +1,7 @@
+{
+  "name": "stack-web-smoke",
+  "private": true,
+  "description": "CI smoke for the web profile: the Boson web client against a local stack (docs/web.md).",
+  "scripts": { "test": "playwright test" },
+  "devDependencies": { "@playwright/test": "1.65.1" }
+}

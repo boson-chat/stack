@@ -17,3 +17,7 @@
 !/config/branding/
 /config/branding/*
 !/config/branding/.gitkeep
+
+# The web smoke (test/web)
+node_modules/
+test-results/
