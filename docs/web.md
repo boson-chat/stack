@@ -1,4 +1,4 @@
-# Web profile: the browser client's IRC gateway
+# Web profile: Boson in the browser
 
 The Boson web client (served at `WEB_HOST`, e.g. chat.boson.chat) runs the
 whole app in a browser. A browser can't open TCP connections, so its IRC
@@ -15,8 +15,39 @@ Turn it on with the `web` profile and `WEB_HOST` (add it to `CERT_HOSTS`):
 ```
 COMPOSE_PROFILES=…,web
 WEB_HOST=chat.example.com
+CERT_HOSTS=…,chat.example.com
 WEBIRC_PASSWORD=…            # scripts/setup.sh makes one: openssl rand -hex 24
 ```
+
+## The web client
+
+The `web` service serves the client (`harbor.floret.dev/boson/web`, built
+from boson-chat/boson `infra/web`: the same renderer as the desktop app,
+the Go IRC engine compiled to WebAssembly) at `https://WEB_HOST`, with its
+Content-Security-Policy and caching headers. Its endpoints are set at start
+(`/boson-config.js`), so the image is the same for every stack:
+
+| Setting | Default | |
+|---|---|---|
+| `WEB_IMAGE` | `harbor.floret.dev/boson/web:<pinned>` | pin a release |
+| `WEB_API_URL` | `https://API_HOST` | the Boson API (`api` profile) |
+| `WEB_DIRECTORY_URL` | `https://directory.boson.chat` | the directory the app browses |
+| `WEB_GATEWAY_URL` | this host's `/webirc/websocket/` | another gateway |
+
+The app's sign-in goes to `https://AUTH_HOST`. With `WEB_HOST` set, these
+browser origins follow by default (each has its own override):
+
+| Service | Setting | Why |
+|---|---|---|
+| auth | `AUTH_CORS_ALLOWED_ORIGINS` (or `auth.cors_allowed_origins` in config/boson.yaml, which wins: add `https://WEB_HOST` there if you set it) | calls from the page, and SSO coming back to `https://WEB_HOST/sso/callback` |
+| api | `API_ALLOWED_ORIGINS` | calls from the page |
+| directory | `DIRECTORY_CORS_ALLOWED_ORIGINS` | owner edits from the page |
+| quicvoiced | `VOICE_WEBTRANSPORT_ORIGINS` (or `voice.web_origins`) | voice over WebTransport at `https://VOICE_HOST:7700/wt`, and its room API |
+| quicvideod | `VIDEO_WEBTRANSPORT_ORIGINS` (default any) | video over WebTransport at `https://VIDEO_HOST:7710/wt` |
+
+Calls need a browser with WebTransport and WebCodecs (Chrome, Edge, Firefox; Safari where it has WebTransport);
+elsewhere the app is chat-only and says why. The UDP ports
+(7700, 7710) are the same ones the desktop app uses.
 
 ## The gateway
 

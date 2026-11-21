@@ -249,6 +249,21 @@ jobs:
           set -o pipefail
           gw=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$(docker compose ps -q webircgateway)")
           python3 scripts/smoke-webirc.py --gateway-ip "$gw"
+      - name: Web client (https://chat.localhost; a guest on Ergo through the gateway; voice over WebTransport)
+        env:
+          COMPOSE_PROFILES: irc,voice,video,auth,metrics,wellknown,web
+        working-directory: test/web
+        run: |
+          set -o pipefail
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+          # QUIC (WebTransport) can't skip certificate checks: trust the local
+          # certificate by its key.
+          export SPKI=$(openssl x509 -in ../../local-certs/cert.pem -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64)
+          # A fresh voice token (another smoke user): the first one may have lapsed.
+          policy=registered
+          (cd ../.. && docker compose exec -T ergo grep -q 'operator-only-creation: true' /ircd/ircd.yaml) && policy=admins
+          VOICE_TOKEN=$(cd ../.. && python3 scripts/smoke-irc.py --print-voice-token --channel-creation "$policy" | awk '/^VOICE_TOKEN /{print $2}') npx playwright test
       - name: Logs on failure
         if: failure()
         env:

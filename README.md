@@ -21,6 +21,7 @@ voice, and automatic TLS, wired together for your own domain.
 | `files` | `files` | Optional: uploads ([boson-chat/files](https://github.com/boson-chat/files)) the boson app links in chat, with a rolling per-person quota, guest uploads and expiry; local volume or S3 storage ([docs/files.md](docs/files.md)) | via Traefik at `https://FILES_HOST` |
 | `minio`, `minio-init` | `minio` | Optional: an internal S3 bucket for `files` (MinIO), with a bucket-only user for it | internal |
 | `webroot` | `webroot` | Optional: serves a host directory at `http://WEBROOT_HOST/.well-known/acme-challenge/` for a certbot outside the stack | via Traefik |
+| `web` | `web` | Boson in the browser ([boson-chat/boson](https://github.com/boson-chat/boson) `infra/web`): the same app as the desktop one, its IRC through `webircgateway`, calls over WebTransport to quicvoiced/quicvideod ([docs/web.md](docs/web.md)) | via Traefik at `https://WEB_HOST` |
 | `webircgateway` | `web` | The browser client's IRC connections ([webircgateway](https://github.com/kiwiirc/webircgateway) with Boson's guards): WebSocket in, TCP/TLS out to any IRC network on IRC ports, never to internal addresses, per-IP caps, WEBIRC to this network's Ergo ([docs/web.md](docs/web.md)) | via Traefik at `wss://WEB_HOST/webirc/websocket/` |
 | `wellknown` | `wellknown` | Optional: serves `https://DOMAIN/.well-known/boson.json` (client discovery: IRC, auth and voice endpoints, and the network's branding), generated from `.env`. Only when `DOMAIN` points at this server | via Traefik |
 
@@ -148,7 +149,7 @@ IRC, RoleServ, and what the auth service provides for them:
 ## Profiles
 
 `COMPOSE_PROFILES` in `.env` picks what runs: `irc`, `voice`, `auth`,
-`api`, `directory`, `files`, `minio`, `metrics`, `admin`, `webroot`, `wellknown` (traefik and
+`api`, `directory`, `files`, `minio`, `metrics`, `admin`, `webroot`, `wellknown`, `web` (traefik and
 certsync always run).
 `scripts/setup.sh` defaults to `irc,voice,auth`. Examples:
 
