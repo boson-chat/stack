@@ -2,6 +2,7 @@ package rolechannels
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -212,5 +213,22 @@ func TestNetworkEnsureFailureRetried(t *testing.T) {
 	s.Tick(ctx, false) // etag was dropped, so this retries
 	if ergo.founders["#lobby"] != "thelion" {
 		t.Fatalf("not retried: %v", ergo.founders)
+	}
+}
+
+func TestNetworkSummaryLoggedOncePerChange(t *testing.T) {
+	s, auth, ergo := setup(t)
+	ctx := context.Background()
+	var logs []string
+	s.Logf = func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }
+	// already registered to the founder: no per-channel lines, one summary
+	ergo.exists["#lobby"], ergo.founders["#lobby"] = true, "thelion"
+	auth.feed = networkFeed("1", roles.NetworkChannel{Channel: "#lobby", Name: "#lobby", Autojoin: true}, roles.NetworkChannel{Channel: "#opers", Name: "#opers"})
+	ergo.exists["#opers"], ergo.founders["#opers"] = true, "thelion"
+	s.Tick(ctx, false)
+	s.Tick(ctx, true)
+	want := "network channels: #lobby (auto-join), #opers exist, founder thelion; guest auto-join on"
+	if !slices.Equal(logs, []string{want}) {
+		t.Fatalf("logs %q", logs)
 	}
 }

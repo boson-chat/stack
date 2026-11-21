@@ -72,6 +72,10 @@ connect (so a `/part` never sticks, and accounts get it at every login), as
 a normal JOIN (a missing channel would be created with the joiner as op).
 
 Status: `docker compose logs roleserv | grep -E "network channels|auto-join"`.
+RoleServ logs one summary line when it starts and whenever the list changes
+(`network channels: #lobby (auto-join), #help exist, founder thelion; guest
+auto-join on`), plus a line per channel it registers, drops or sets the
+topic of. Channels already registered to the founder log nothing else.
 
 ## Channel registration: automatic, and expiry of unused channels
 
