@@ -141,7 +141,19 @@ webircgateway:
     WEBIRC_PASSWORDS: "ergo=…"     # if that Ergo trusts it
 ```
 
-Health: `GET /webirc/info` (200 with `{"name":"webircgateway",…}`).
+Health: `GET /webirc/info` (200 with `{"name":"webircgateway",…}`). Traefik
+routes `https://WEB_HOST/webirc/info` to the gateway too (nothing else of its
+HTTP side but the WebSocket path).
+
+### On the admin panel
+
+The admin Stack page lists `web` (Boson in the browser) and `webircgateway`
+(IRC gateway) once their containers exist: internal health from
+`web:8080/healthz` and `webircgateway:8080/webirc/info`, web's version from
+`/boson-config.js` (the gateway's from its image tag), and "from you" timings
+to `https://WEB_HOST/healthz` and `https://WEB_HOST/webirc/info` (the admin
+service gets `WEB_HOST`). Restart, stop and logs are on its Services page like
+every other container.
 
 The CI smoke (`scripts/smoke-webirc.py`, through Traefik) checks the alias
 registration with WEBIRC, the refusals, origins and both per-IP caps.
