@@ -580,7 +580,7 @@ services:
   admin:
     <<: *restart
     profiles: [admin]
-    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.23.0}
+    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.24.0}
     environment:
       ENV: production
       # The stack config file: the panel edits it (Settings pages, Config
@@ -606,8 +606,9 @@ services:
       # The Stack page shows the compose services that have a container
       # (through docker-proxy below), so a profile that's off isn't shown as
       # down. It has built-in health, version and public ("from you") probes
-      # for auth, quicvoiced, IRC, api, directory, files, victoriametrics and
-      # minio; the public ones use these hostnames (empty = no probe).
+      # for auth, quicvoiced, quicvideod, IRC, api, directory, files, web,
+      # webircgateway, victoriametrics and minio; the public ones use these
+      # hostnames (empty = no probe).
       AUTH_HOST: ${AUTH_HOST:-}
       VOICE_HOST: ${VOICE_HOST:-}
       IRC_HOST: ${IRC_HOST:-}
@@ -615,6 +616,7 @@ services:
       DIRECTORY_HOST: ${DIRECTORY_HOST:-}
       FILES_HOST: ${FILES_HOST:-}
       VIDEO_HOST: ${VIDEO_HOST:-}
+      WEB_HOST: ${WEB_HOST:-}
       # name=url,... added to the built-in probes, or replacing them for that
       # name; with ADMIN_DOCKER_PROXY_URL= (empty) they are the whole list.
       HEALTH_TARGETS: ${ADMIN_HEALTH_TARGETS:-}
@@ -1134,7 +1136,9 @@ services:
     security_opt: [no-new-privileges:true]
     labels:
       - traefik.enable=true
-      - traefik.http.routers.webircgateway.rule=Host(`${WEB_HOST:-web.invalid}`) && PathPrefix(`/webirc/websocket/`)
+      # /webirc/info (name and version) is public too: the admin Stack
+      # page's "from you" probe. Nothing else of the gateway's is routed.
+      - traefik.http.routers.webircgateway.rule=Host(`${WEB_HOST:-web.invalid}`) && (PathPrefix(`/webirc/websocket/`) || Path(`/webirc/info`))
       - traefik.http.routers.webircgateway.entrypoints=websecure
       - traefik.http.routers.webircgateway.tls=true
       - traefik.http.services.webircgateway.loadbalancer.server.port=8080

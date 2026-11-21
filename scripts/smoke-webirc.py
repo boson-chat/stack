@@ -16,6 +16,8 @@ address, Traefik's view of the host):
 4. A page from another origin can't open the socket.
 5. Per-IP caps: a 4th concurrent connection is refused (limit); past 8 new
    connections a minute, the next is refused (rate).
+6. https://WEB_HOST/webirc/info (the admin Stack page's "from you" probe)
+   is the gateway's, and /webirc/_status isn't routed to it.
 
   scripts/smoke-webirc.py [--web-host chat.localhost] [--irc-host irc.localhost]
 """
@@ -143,6 +145,31 @@ def refusal(host_line):
     ws.close()
     return hit or ("no ERROR; got " + " | ".join(seen[-3:]))
 
+
+def https_get(path):
+    """GET https://WEB_HOST<path> through Traefik: (status, body)."""
+    raw = socket.create_connection((args.addr, 443), timeout=15)
+    s = ctx.wrap_socket(raw, server_hostname=args.web_host)
+    s.sendall(f"GET {path} HTTP/1.1\r\nHost: {args.web_host}\r\nConnection: close\r\n\r\n".encode())
+    data = b""
+    while True:
+        b = s.recv(65536)
+        if not b:
+            break
+        data += b
+    s.close()
+    head, _, body = data.partition(b"\r\n\r\n")
+    status = int(head.split(b" ", 2)[1]) if head.startswith(b"HTTP/") else 0
+    return status, body.decode(errors="replace")
+
+
+# 6 first (it opens no IRC connection, so it doesn't count toward the caps).
+st, body = https_get("/webirc/info")
+check("/webirc/info is the gateway's", st == 200 and '"webircgateway"' in body, f"HTTP {st} {body[:80]}")
+st, body = https_get("/webirc/_status")
+# Traefik's 404, or the web app's index.html when web runs; the gateway
+# would answer 200 (its client list, maybe empty) or 403.
+check("/webirc/_status isn't routed to the gateway", st == 404 or "<!doctype html" in body.lower(), f"HTTP {st}")
 
 # 1 + 2: our own network through the alias, with WEBIRC.
 main = WS()
