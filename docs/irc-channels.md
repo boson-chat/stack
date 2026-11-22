@@ -55,6 +55,7 @@ irc:
   channels:
     - { name: "#lobby", topic: "Welcome!", autojoin: true }
     - { name: "#help" }
+    - { name: "#opers", autojoin: true, roles: [Admin, Owner] }   # only these roles
   channel_founder: thelion   # default: the earliest Owner, else RoleServ
   autojoin_guests: true      # default true
 ```
@@ -65,7 +66,50 @@ irc:
 | **Topic** | Set when RoleServ first sees a non-empty topic, and again whenever it changes in the file. A `/topic` by the channel's ops stays until the file's topic changes. |
 | **Auto-join: accounts** | On an account's **first login** (Ergo's ACCOUNT snomask), RoleServ SAJOINs it to the `autojoin: true` channels and records that in auth (`irc_autojoined`), so a `/part` sticks. A channel added to the list later is joined once at each account's next login (and right away for accounts RoleServ saw log in). Existing accounts count as new for a channel they've never been auto-joined to. Independent of `roles.channels.autojoin`. |
 | **Auto-join: guests** | With `autojoin_guests`, a client that connects without an account (a Boson guest, or a plain IRC client without SASL: HexChat, irssi) is SAJOINed by nick (`POST /v1/sajoin {"nick"}`) about a second after it connects (Ergo's CONNECT snomask, `+s c`). Once per nick per 24 h (kept in RoleServ's memory), so a reconnecting guest that left isn't pulled back. A client that logs in later is handled as an account (joining again is a no-op). |
+| **Who can join** (`roles`, auth 1.21+) | Absent or `[]`: everyone, guests included. Otherwise only accounts holding one of the listed roles (admin panel names, matched case-insensitively to a role's name or slug; `Member` = any signed-in account). Guests never get into a restricted channel (there's no "guests" role). The founder of the network channels and IRC operators with the `sajoin` capability (Owner and Admin by default) always get in, by plain `/join`. A name no role has lets nobody in. See below. |
 | **Removing one** | A channel RoleServ registered is unregistered when it's removed from the list (`POST /v1/channel_drop`); nobody is kicked, and it goes away when it empties. A channel that was registered to someone else before is just no longer managed. |
+
+### Channels restricted to roles
+
+RoleServ keeps a restricted channel the way it keeps a private role channel
+([roles.md](roles.md#role-channels-private-channels-and-auto-join)): `+i`
+with an account invite exception `+I a:<account>` per member of the roles
+(or `+R` when `Member` is listed), plus a *guard* on the channel (patched
+Ergo, `POST /v1/channel_access` `joinError` / `operJoin` / `kick`, patch
+0006):
+
+- **Refused joins say why**: `473 #opers :You need the Admin or Owner role
+  to join #opers` (Boson shows "Cannot join #opers: You need …"); with
+  `Member`, a guest gets `477 … :Sign in with an account to join #x`. A list
+  where no name matches a role: `#x is closed: only network operators can
+  join it`.
+- **Losing access removes you**: when a role is taken away, a role is
+  removed from `roles`, or a channel becomes restricted, RoleServ's next
+  push (within `ROLES_POLL_SECONDS`, 10 s) kicks every member who couldn't
+  join now, as ChanServ, with `You need the Admin or Owner role to be in
+  #opers`, and they can't rejoin. The founder, accounts with a ChanServ
+  `AMODE` entry (they always get in, as on any `+i` channel), anyone
+  matching an `+I` entry and opers with `sajoin` stay. Someone an oper
+  `SAJOIN`s without the role is removed at the next push (every
+  `ROLE_CHANNELS_RESYNC_SECONDS` at the latest).
+- **Opers with `sajoin`** may `/join` directly (they could always `SAJOIN`).
+- **Auto-join** skips restricted channels the account may not join (auth
+  filters `network_pending`), and guests only get the open ones. Gaining a
+  role joins the account to its restricted auto-join channels once (at login,
+  or right away if RoleServ saw it log in); losing it forgets that, so
+  getting it back joins it once more.
+- **Role changes apply live**: memberships, renames and the file all change
+  auth's feed version, which RoleServ polls. Renaming a role means updating
+  the `roles` lists that name it (the admin panel shows a name that matches
+  no role).
+- **Opening it again** (`roles` emptied or removed): RoleServ clears `+i`/
+  `+R`, its `+I` entries and the guard. Nobody is pulled back in.
+- The directory listing (admin) and `GET /v1/config` don't advertise which
+  roles a channel admits; the directory leaves restricted channels out.
+
+The guard (message, oper bypass) lives in Ergo's memory: RoleServ pushes it
+again on start and at every resync, so after an Ergo restart refused joins
+show Ergo's own `Cannot join channel (+i)` for at most a few seconds.
 
 Why not Ergo's own `channels.auto-join`: it joins every client at every
 connect (so a `/part` never sticks, and accounts get it at every login), as
@@ -73,8 +117,9 @@ a normal JOIN (a missing channel would be created with the joiner as op).
 
 Status: `docker compose logs roleserv | grep -E "network channels|auto-join"`.
 RoleServ logs one summary line when it starts and whenever the list changes
-(`network channels: #lobby (auto-join), #help exist, founder thelion; guest
-auto-join on`), plus a line per channel it registers, drops or sets the
+(`network channels: #lobby (auto-join), #help, #opers (auto-join,
+Admin/Owner only) exist, founder thelion; guest auto-join on`), a line
+whenever it removes people from a restricted channel,, plus a line per channel it registers, drops or sets the
 topic of. Channels already registered to the founder log nothing else.
 
 ## Channel registration: automatic, and expiry of unused channels
@@ -294,6 +339,15 @@ v2.19.1 (see [ergo-account-opers.md](ergo-account-opers.md) for 0001):
   freeing it.
 - **0003 `api: add /v1/ns/unregister`**: `NS UNREGISTER`/`NS ERASE` over the
   HTTP API, for deleted users.
+- **0004** and **0005**: account extbans, `channel_access`/`sajoin` and the
+  network channel API ([roles.md](roles.md), above).
+- **0006 `api: channel guard`**: `POST /v1/channel_access` takes
+  `joinError` (the `473`/`477` text for clients `+i`/`+R` keeps out),
+  `operJoin` (opers with `sajoin` may `JOIN`) and `kick`/`kickReason`
+  (remove, as ChanServ, members who couldn't join now), for
+  [channels restricted to roles](#channels-restricted-to-roles)
+  (`irc/apichannelguard.go`, hooks in `channel.go` `Join` and
+  `handlers.go` `sendJoinError`; tests in `irc/apichannelguard_test.go`).
 
 Both are written against upstream and kept as commits on the
 `channel-lifecycle` branch of a local Ergo checkout (based on v2.19.1);

@@ -1,0 +1,481 @@
+From 0f2676a37379352b20bb9724c0dc63d9b6d65ddb Mon Sep 17 00:00:00 2001
+From: James Trotter <james@jamesat.dev>
+Date: Sat, 21 Nov 2026 22:10:26 -0500
+Subject: [PATCH] api: channel guard: join error text, oper JOIN and removing
+ members (channel_access)
+
+POST /v1/channel_access takes joinError (the 473/477 text for clients
++i or +R keeps out), operJoin (opers with the sajoin capability may JOIN
+despite +i/+R) and kick/kickReason (remove, as ChanServ, every member
+who couldn't join now; the founder, AMODE entries, +I matches and guard
+opers stay). Lets an external role system restrict channels to roles
+with a clear refusal and take access away from people already inside.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ docs/API.md                 |   7 ++
+ irc/apichannelguard.go      | 144 +++++++++++++++++++++++++++++++++
+ irc/apichannelguard_test.go | 153 ++++++++++++++++++++++++++++++++++++
+ irc/apichannels.go          |  27 ++++++-
+ irc/channel.go              |   9 ++-
+ irc/handlers.go             |   9 +++
+ 6 files changed, 347 insertions(+), 2 deletions(-)
+ create mode 100644 irc/apichannelguard.go
+ create mode 100644 irc/apichannelguard_test.go
+
+diff --git a/docs/API.md b/docs/API.md
+index 882674b0..7adc3029 100644
+--- a/docs/API.md
++++ b/docs/API.md
+@@ -195,6 +195,12 @@ This endpoint syncs a channel's invite-only mode and its account invite exceptio
+ * `registeredOnly`: boolean, optional: the same for `+R`
+ * `accounts`: list of strings, the accounts that must have an `a:<account>` entry on the `+I` list
+ * `setBy`: string, optional (default `API`), recorded as the creator of the entries it adds. Existing `a:` entries with this creator whose account is not in `accounts` are removed; entries anyone else added are never touched.
++* `joinError`: string, optional: what a client that `+i` or `+R` keeps out is told, instead of `Cannot join channel (+i)` (`473`) or `You must be registered to join that channel` (`477`); `""` restores those. One line, at most 300 bytes. Omit it to leave the message alone.
++* `operJoin`: boolean, optional: whether operators with the `sajoin` capability may `JOIN` despite `+i`/`+R` (they can always `SAJOIN`). Omit it to leave it alone.
++* `kick`: boolean, optional: after this call's changes, remove (`KICK` from ChanServ) every member who couldn't join now as far as `+i` and `+R` go. The founder, accounts with an `AMODE`, clients matching the `+I` list and, with `operJoin`, operators with `sajoin` stay.
++* `kickReason`: string, optional: the `KICK` message
++
++`joinError` and `operJoin` (the channel's *guard*) live in memory only: after a restart they're gone until set again.
+ 
+ Changes are announced to the channel's members as `MODE` lines from the server and saved with the channel's registration (an unregistered channel loses them when it empties). The response is a JSON object with fields:
+ 
+@@ -203,6 +209,7 @@ Changes are announced to the channel's members as `MODE` lines from the server a
+ * `registered`: boolean, whether the channel is registered
+ * `added`, `removed`: lists of strings, the casefolded accounts whose entries were added and removed
+ * `inviteOnly`, `registeredOnly`: booleans, whether the channel is now `+i` / `+R`
++* `kicked`: list of strings, the nicks `kick` removed
+ 
+ `/v1/sajoin`
+ ------------
+diff --git a/irc/apichannelguard.go b/irc/apichannelguard.go
+new file mode 100644
+index 00000000..4ae7ebc2
+--- /dev/null
++++ b/irc/apichannelguard.go
+@@ -0,0 +1,144 @@
++// Copyright (c) 2026 James Trotter
++// released under the MIT license
++
++package irc
++
++import (
++	"strings"
++
++	"github.com/ergochat/irc-go/ircmsg"
++
++	"github.com/ergochat/ergo/irc/history"
++	"github.com/ergochat/ergo/irc/modes"
++	"github.com/ergochat/ergo/irc/utils"
++)
++
++// A channel guard, set through POST /v1/channel_access by an external role
++// system (the boson stack's RoleServ) on top of +i/+R and the account
++// invite exceptions: what a client that +i or +R keeps out is told, whether
++// operators with the sajoin capability may JOIN anyway (they could SAJOIN
++// in any case), and removing the members who may no longer be there. It
++// lives in memory only: the role system pushes it again after a restart.
++
++// channelGuard is a channel's guard; the zero value is no guard.
++type channelGuard struct {
++	// joinError replaces "Cannot join channel (+i)" and "You must be
++	// registered to join that channel" when not empty.
++	joinError string
++	// opers: clients with the sajoin oper capability may JOIN.
++	opers bool
++}
++
++// guardRefusal is a join refused by +i or +R, with the guard's message.
++type guardRefusal struct {
++	err  error // errInviteOnly or errRegisteredOnly
++	text string
++}
++
++func (r *guardRefusal) Error() string { return r.text }
++
++// refusal wraps a +i or +R refusal with the guard's message.
++func (g channelGuard) refusal(err error) error {
++	if g.joinError != "" && (err == errInviteOnly || err == errRegisteredOnly) {
++		return &guardRefusal{err: err, text: g.joinError}
++	}
++	return err
++}
++
++// operBypass: the guard lets this client JOIN as an operator.
++func (g channelGuard) operBypass(client *Client) bool {
++	return g.opers && client.HasRoleCapabs("sajoin")
++}
++
++func (channel *Channel) Guard() channelGuard {
++	channel.stateMutex.RLock()
++	defer channel.stateMutex.RUnlock()
++	return channel.guard
++}
++
++func (channel *Channel) setGuard(g channelGuard) {
++	channel.stateMutex.Lock()
++	channel.guard = g
++	channel.stateMutex.Unlock()
++}
++
++// admits reports whether member could JOIN the channel now as far as +i,
++// +R and the guard go (keys, limits and bans aside): the same exemptions
++// as Join (founder, ChanServ AMODE entries, the invite exception list,
++// guard operators).
++func (channel *Channel) admits(member *Client) bool {
++	details := member.Details()
++	channel.stateMutex.RLock()
++	founder := channel.registeredFounder
++	persistentMode := channel.accountToUMode[details.account]
++	guard := channel.guard
++	channel.stateMutex.RUnlock()
++
++	if details.account != "" && founder == details.account {
++		return true
++	}
++	if persistentMode != 0 || guard.operBypass(member) {
++		return true
++	}
++	invited := channel.lists[modes.InviteMask].MatchClient(details.nickMaskCasefolded, details.account)
++	if channel.flags.HasMode(modes.InviteOnly) && !invited {
++		return false
++	}
++	if channel.flags.HasMode(modes.RegisteredOnly) && details.account == "" && !invited {
++		return false
++	}
++	return true
++}
++
++// kickDisallowed removes every member admits refuses, as ChanServ, with
++// reason. It returns their nicks.
++func (channel *Channel) kickDisallowed(reason string) (kicked []string) {
++	kicked = []string{}
++	for _, member := range channel.Members() {
++		if !channel.admits(member) {
++			kicked = append(kicked, member.Nick())
++			channel.kickByService(member, reason)
++		}
++	}
++	return kicked
++}
++
++// kickByService removes target from the channel, the KICK coming from
++// ChanServ (there's no client to send it from).
++func (channel *Channel) kickByService(target *Client, comment string) {
++	server := channel.server
++	if comment == "" {
++		comment = "You may no longer be in this channel"
++	}
++	comment = ircmsg.TruncateUTF8Safe(comment, server.Config().Limits.KickLen)
++	message := utils.MakeMessage(comment)
++	targetNick := target.Nick()
++	chname := channel.Name()
++	source := chanservService.prefix
++	for _, member := range channel.Members() {
++		for _, session := range member.Sessions() {
++			session.sendFromClientInternal(false, message.Time, message.Msgid, source, "*", false, nil, "KICK", chname, targetNick, comment)
++		}
++	}
++	histItem := history.Item{
++		Type:    history.Kick,
++		Nick:    source,
++		Message: message,
++	}
++	histItem.Params[0] = targetNick
++	channel.AddHistoryItem(histItem, "")
++	channel.Quit(target)
++	server.logger.Info("api", "removed", targetNick, "from", chname, "(channel access)")
++}
++
++// cleanGuardText makes an API-provided message one line of at most 300
++// bytes (it goes out as a numeric's or a KICK's last parameter).
++func cleanGuardText(s string) string {
++	s = strings.Map(func(r rune) rune {
++		if r < ' ' || r == 0x7f {
++			return ' '
++		}
++		return r
++	}, s)
++	return strings.TrimSpace(ircmsg.TruncateUTF8Safe(s, 300))
++}
+diff --git a/irc/apichannelguard_test.go b/irc/apichannelguard_test.go
+new file mode 100644
+index 00000000..66b98ca1
+--- /dev/null
++++ b/irc/apichannelguard_test.go
+@@ -0,0 +1,153 @@
++// Copyright (c) 2026 James Trotter
++// released under the MIT license
++
++package irc
++
++import (
++	"slices"
++	"strings"
++	"testing"
++
++	"github.com/ergochat/ergo/irc/modes"
++	"github.com/ergochat/ergo/irc/utils"
++)
++
++// guardTestClient is a client with no sessions (nothing is sent to it).
++func guardTestClient(server *Server, nick, account string) *Client {
++	client := &Client{server: server, nick: nick, nickCasefolded: nick, account: account, accountName: account,
++		nickMaskCasefolded: nick + "!u@h"}
++	server.clients.byNick[nick] = client
++	return client
++}
++
++func guardTestOper(client *Client, capabs ...string) {
++	client.oper = &Oper{Name: "o", Class: &OperClass{Capabilities: utils.HashSet[string]{}}}
++	for _, c := range capabs {
++		client.oper.Class.Capabilities.Add(c)
++	}
++}
++
++func joinErrorText(client *Client, err error) (code, text string) {
++	rb := NewResponseBuffer(&Session{client: client})
++	sendJoinError(client, "#opers", rb, err)
++	msg := rb.messages[0]
++	return msg.Command, msg.Params[len(msg.Params)-1]
++}
++
++func TestChannelGuardJoinError(t *testing.T) {
++	server := channelExpiryTestServer(t, 0)
++	server.clients.Initialize()
++	yes := true
++	channel := emptyTestChannel(server, "#opers")
++	bob := guardTestClient(server, "bob", "bob")
++	rb := NewResponseBuffer(&Session{client: bob})
++
++	// plain +i: Ergo's own text
++	var resp apiChannelAccessResponse
++	apiCall(t, server, "/v1/channel_access", apiChannelAccessRequest{Channel: "#opers", InviteOnly: &yes, SetBy: "RoleServ"}, &resp)
++	err, _ := channel.Join(bob, "", false, rb)
++	if err != errInviteOnly {
++		t.Fatalf("got %v, want errInviteOnly", err)
++	}
++	if code, text := joinErrorText(bob, err); code != ERR_INVITEONLYCHAN || text != "Cannot join channel (+i)" {
++		t.Fatalf("got %s %q", code, text)
++	}
++
++	// with a guard message (one line, whatever was sent)
++	msg := "Only Admin and Owner can join #opers\r\nPRIVMSG x :injected"
++	resp = apiChannelAccessResponse{}
++	apiCall(t, server, "/v1/channel_access", apiChannelAccessRequest{Channel: "#opers", InviteOnly: &yes, SetBy: "RoleServ", JoinError: &msg}, &resp)
++	err, _ = channel.Join(bob, "", false, rb)
++	code, text := joinErrorText(bob, err)
++	if code != ERR_INVITEONLYCHAN || strings.ContainsAny(text, "\r\n") || !strings.HasPrefix(text, "Only Admin and Owner can join #opers") {
++		t.Fatalf("got %s %q", code, text)
++	}
++
++	// +R refusals (a guest) get it too, as 477
++	no := false
++	apiCall(t, server, "/v1/channel_access", apiChannelAccessRequest{Channel: "#opers", InviteOnly: &no, RegisteredOnly: &yes, SetBy: "RoleServ"}, &resp)
++	guest := guardTestClient(server, "guest", "")
++	err, _ = channel.Join(guest, "", false, NewResponseBuffer(&Session{client: guest}))
++	if code, text := joinErrorText(guest, err); code != ERR_NEEDREGGEDNICK || !strings.HasPrefix(text, "Only Admin") {
++		t.Fatalf("+R: got %s %q", code, text)
++	}
++
++	// other refusals are left alone; "" restores Ergo's text
++	if channel.Guard().refusal(errBanned) != errBanned {
++		t.Fatalf("a ban must keep its own error")
++	}
++	empty := ""
++	apiCall(t, server, "/v1/channel_access", apiChannelAccessRequest{Channel: "#opers", SetBy: "RoleServ", JoinError: &empty}, &resp)
++	if err, _ := channel.Join(guest, "", false, NewResponseBuffer(&Session{client: guest})); err != errRegisteredOnly {
++		t.Fatalf("got %v, want errRegisteredOnly", err)
++	}
++}
++
++func TestChannelGuardOpersAndKick(t *testing.T) {
++	server := channelExpiryTestServer(t, 0)
++	server.clients.Initialize()
++	server.Config().Limits.KickLen = 390
++	chanservService.prefix = "ChanServ!ChanServ@localhost"
++	yes, no := true, false
++	channel := emptyTestChannel(server, "#opers")
++	channel.registeredFounder = "owner"
++	channel.accountToUMode["helper"] = modes.Voice
++
++	owner := guardTestClient(server, "owner", "owner")    // founder
++	alice := guardTestClient(server, "alice", "alice")    // allowed account
++	helper := guardTestClient(server, "helper", "helper") // AMODE +v
++	oper := guardTestClient(server, "oper", "oper")
++	guardTestOper(oper, "sajoin")
++	weak := guardTestClient(server, "weak", "weak") // an oper without sajoin
++	guardTestOper(weak, "samode")
++	bob := guardTestClient(server, "bob", "bob")
++	guest := guardTestClient(server, "guest", "")
++	for _, c := range []*Client{owner, alice, helper, oper, weak, bob, guest} {
++		channel.members.Add(c)
++	}
++	channel.regenerateMembersCache()
++
++	// opers with sajoin may JOIN once the guard says so
++	apiCall(t, server, "/v1/channel_access", apiChannelAccessRequest{Channel: "#opers", InviteOnly: &yes, Accounts: []string{"alice"}, SetBy: "RoleServ"}, &apiChannelAccessResponse{})
++	if channel.admits(oper) {
++		t.Fatalf("no guard: an oper is not exempt from +i")
++	}
++	var resp apiChannelAccessResponse
++	reason := "Only Admin and Owner can be in #opers"
++	apiCall(t, server, "/v1/channel_access", apiChannelAccessRequest{Channel: "#opers", InviteOnly: &yes, Accounts: []string{"alice"},
++		SetBy: "RoleServ", OperJoin: &yes, Kick: true, KickReason: reason}, &resp)
++	slices.Sort(resp.Kicked)
++	if !slices.Equal(resp.Kicked, []string{"bob", "guest", "weak"}) {
++		t.Fatalf("kicked %v", resp.Kicked)
++	}
++	var left []string
++	for _, m := range channel.Members() {
++		left = append(left, m.Nick())
++	}
++	slices.Sort(left)
++	if !slices.Equal(left, []string{"alice", "helper", "oper", "owner"}) {
++		t.Fatalf("left %v", left)
++	}
++	if !channel.Guard().operBypass(oper) || channel.Guard().operBypass(weak) {
++		t.Fatalf("operBypass wrong")
++	}
++
++	// tightening: alice loses access; idempotent otherwise
++	resp = apiChannelAccessResponse{}
++	apiCall(t, server, "/v1/channel_access", apiChannelAccessRequest{Channel: "#opers", InviteOnly: &yes, Accounts: []string{},
++		SetBy: "RoleServ", Kick: true, KickReason: reason}, &resp)
++	if !slices.Equal(resp.Kicked, []string{"alice"}) || !slices.Equal(resp.Removed, []string{"alice"}) {
++		t.Fatalf("tightened: %+v", resp)
++	}
++
++	// no +i/+R: nobody is kicked; operJoin false turns the bypass off
++	channel.stateMutex.Lock()
++	channel.members.Add(bob)
++	channel.stateMutex.Unlock()
++	channel.regenerateMembersCache()
++	resp = apiChannelAccessResponse{}
++	apiCall(t, server, "/v1/channel_access", apiChannelAccessRequest{Channel: "#opers", InviteOnly: &no, SetBy: "RoleServ", OperJoin: &no, Kick: true}, &resp)
++	if len(resp.Kicked) != 0 || channel.Guard().opers {
++		t.Fatalf("public channel: %+v %+v", resp, channel.Guard())
++	}
++}
+diff --git a/irc/apichannels.go b/irc/apichannels.go
+index a8024cc1..aec22595 100644
+--- a/irc/apichannels.go
++++ b/irc/apichannels.go
+@@ -29,6 +29,16 @@ type apiChannelAccessRequest struct {
+ 	// whose account isn't in Accounts are removed; entries anyone else made
+ 	// are left alone. Default "API".
+ 	SetBy string `json:"setBy"`
++	// JoinError, when set, replaces the channel's guard message: what a
++	// client +i or +R keeps out is told ("" restores Ergo's own text).
++	JoinError *string `json:"joinError"`
++	// OperJoin, when set, says whether operators with the sajoin
++	// capability may JOIN despite +i/+R (they can always SAJOIN).
++	OperJoin *bool `json:"operJoin"`
++	// Kick removes the members who couldn't join now (after this call's
++	// changes), as ChanServ, with KickReason.
++	Kick       bool   `json:"kick"`
++	KickReason string `json:"kickReason"`
+ }
+ 
+ type apiChannelAccessResponse struct {
+@@ -41,6 +51,8 @@ type apiChannelAccessResponse struct {
+ 	InviteOnly bool     `json:"inviteOnly"`
+ 	// RegisteredOnly is whether the channel is now +R.
+ 	RegisteredOnly bool `json:"registeredOnly"`
++	// Kicked are the nicks Kick removed.
++	Kicked []string `json:"kicked"`
+ }
+ 
+ // handleChannelAccess syncs a channel's +i and its account invite
+@@ -50,7 +62,7 @@ func (a *ergoAPI) handleChannelAccess(w http.ResponseWriter, r *http.Request) {
+ 	if err := a.decodeJSONRequest(&request, w, r); err != nil {
+ 		return
+ 	}
+-	response := apiChannelAccessResponse{Added: []string{}, Removed: []string{}}
++	response := apiChannelAccessResponse{Added: []string{}, Removed: []string{}, Kicked: []string{}}
+ 	setBy := request.SetBy
+ 	if setBy == "" {
+ 		setBy = "API"
+@@ -131,6 +143,19 @@ func (a *ergoAPI) handleChannelAccess(w http.ResponseWriter, r *http.Request) {
+ 		channel.MarkDirty(dirty)
+ 		channel.announceServerModes(applied)
+ 	}
++	if request.JoinError != nil || request.OperJoin != nil {
++		guard := channel.Guard()
++		if request.JoinError != nil {
++			guard.joinError = cleanGuardText(*request.JoinError)
++		}
++		if request.OperJoin != nil {
++			guard.opers = *request.OperJoin
++		}
++		channel.setGuard(guard)
++	}
++	if request.Kick {
++		response.Kicked = channel.kickDisallowed(cleanGuardText(request.KickReason))
++	}
+ 	a.writeJSONResponse(response, w, r)
+ }
+ 
+diff --git a/irc/channel.go b/irc/channel.go
+index d89d3b1c..ce711a8a 100644
+--- a/irc/channel.go
++++ b/irc/channel.go
+@@ -68,6 +68,9 @@ type Channel struct {
+ 	lastActivity atomic.Int64
+ 	// the lastActivity value the founder was last warned about
+ 	expiryWarned atomic.Int64
++	// set through the API (POST /v1/channel_access): who else may join and
++	// what refused clients are told; not persisted, see apichannelguard.go
++	guard channelGuard
+ }
+ 
+ // NewChannel creates a new channel from a `Server` and a `name`
+@@ -789,12 +792,15 @@ func (channel *Channel) Join(client *Client, key string, isSajoin bool, rb *Resp
+ 	_, alreadyJoined := channel.members[client]
+ 	persistentMode := channel.accountToUMode[details.account]
+ 	forward = channel.forward
++	guard := channel.guard
+ 	channel.stateMutex.RUnlock()
+ 
+ 	if alreadyJoined {
+ 		// no message needs to be sent
+ 		return nil, ""
+ 	}
++	// refusals by +i or +R carry the guard's message, if it has one
++	defer func() { joinErr = guard.refusal(joinErr) }()
+ 
+ 	// 0. SAJOIN always succeeds
+ 	// 1. the founder can always join (even if they disabled auto +q on join)
+@@ -802,7 +808,8 @@ func (channel *Channel) Join(client *Client, key string, isSajoin bool, rb *Resp
+ 	// 3. people invited with INVITE can join
+ 	hasPrivs := isSajoin || (founder != "" && founder == details.account) ||
+ 		(persistentMode != 0 && persistentMode != modes.Voice) ||
+-		client.CheckInvited(chcfname, createdAt)
++		client.CheckInvited(chcfname, createdAt) ||
++		guard.operBypass(client)
+ 	if !hasPrivs {
+ 		if limit != 0 && chcount >= limit {
+ 			return errLimitExceeded, forward
+diff --git a/irc/handlers.go b/irc/handlers.go
+index 284deeb1..18f127e4 100644
+--- a/irc/handlers.go
++++ b/irc/handlers.go
+@@ -1523,6 +1523,15 @@ func joinHandler(server *Server, client *Client, msg ircmsg.Message, rb *Respons
+ 
+ func sendJoinError(client *Client, name string, rb *ResponseBuffer, err error) {
+ 	var code, errMsg, forbiddingMode string
++	if refusal, ok := err.(*guardRefusal); ok {
++		// a channel guard's own message (POST /v1/channel_access joinError)
++		code = ERR_INVITEONLYCHAN
++		if refusal.err == errRegisteredOnly {
++			code = ERR_NEEDREGGEDNICK
++		}
++		rb.Add(nil, client.server.name, code, client.Nick(), utils.SafeErrorParam(name), refusal.text)
++		return
++	}
+ 	switch err {
+ 	case errInsufficientPrivs:
+ 		code, errMsg = ERR_NOSUCHCHANNEL, `Only server operators can create new channels`
+-- 
+2.56.1
+

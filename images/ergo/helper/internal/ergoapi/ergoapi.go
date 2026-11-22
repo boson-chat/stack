@@ -151,6 +151,13 @@ type ChannelAccess struct {
 	RegisteredOnly *bool    `json:"registeredOnly,omitempty"`
 	Accounts       []string `json:"accounts"`
 	SetBy          string   `json:"setBy"`
+	// The channel's guard (patches/0006): JoinError is what clients +i/+R
+	// keeps out are told ("" = Ergo's text; nil leaves it), OperJoin lets
+	// opers with sajoin JOIN, Kick removes members who couldn't join now.
+	JoinError  *string `json:"joinError,omitempty"`
+	OperJoin   *bool   `json:"operJoin,omitempty"`
+	Kick       bool    `json:"kick,omitempty"`
+	KickReason string  `json:"kickReason,omitempty"`
 }
 
 // ChannelAccessResult is its answer. Exists is false (and nothing changed)
@@ -162,6 +169,8 @@ type ChannelAccessResult struct {
 	Removed        []string `json:"removed"`
 	InviteOnly     bool     `json:"inviteOnly"`
 	RegisteredOnly bool     `json:"registeredOnly"`
+	// Kicked are the nicks Kick removed.
+	Kicked []string `json:"kicked"`
 }
 
 // SetChannelAccess calls POST /v1/channel_access. It never creates a channel.

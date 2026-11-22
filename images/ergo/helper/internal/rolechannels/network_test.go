@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -230,5 +231,93 @@ func TestNetworkSummaryLoggedOncePerChange(t *testing.T) {
 	want := "network channels: #lobby (auto-join), #opers exist, founder thelion; guest auto-join on"
 	if !slices.Equal(logs, []string{want}) {
 		t.Fatalf("logs %q", logs)
+	}
+}
+
+func TestRestrictedNetworkChannels(t *testing.T) {
+	s, auth, ergo := setup(t)
+	ctx := context.Background()
+	var logs []string
+	s.Logf = func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }
+	ergo.kicked = map[string][]string{"#opers": {"bob"}}
+	auth.feed = networkFeed("1",
+		roles.NetworkChannel{Channel: "#lobby", Name: "#Lobby", Autojoin: true},
+		roles.NetworkChannel{Channel: "#opers", Name: "#Opers", Autojoin: true, Restricted: true, Roles: []string{"Owner", "Admin"}},
+		roles.NetworkChannel{Channel: "#members", Name: "#members", Autojoin: true, Restricted: true, Roles: []string{"Member"}},
+		roles.NetworkChannel{Channel: "#void", Name: "#void", Restricted: true, Roles: []string{}},
+	)
+	// auth lists restricted channels as private ones; #staff is a plain
+	// private role channel
+	auth.feed.Channels = []roles.ChannelAccess{
+		{Channel: "#opers", Private: true, Accounts: []string{"alice"}},
+		{Channel: "#members", Private: true, Everyone: true},
+		{Channel: "#void", Private: true},
+		{Channel: "#staff", Private: true, Accounts: []string{"carol"}},
+	}
+	ergo.exists["#staff"] = true
+	s.Tick(ctx, false)
+
+	opers := ergo.last["#opers"]
+	if ergo.modes["#opers"] != "i" || !slices.Equal(ergo.invex["#opers"], []string{"alice"}) {
+		t.Fatalf("#opers modes %q invex %v", ergo.modes["#opers"], ergo.invex["#opers"])
+	}
+	if *opers.JoinError != "You need the Owner or Admin role to join #Opers" || !*opers.OperJoin || !opers.Kick ||
+		opers.KickReason != "You need the Owner or Admin role to be in #Opers" {
+		t.Fatalf("#opers guard %+v", opers)
+	}
+	members := ergo.last["#members"]
+	if ergo.modes["#members"] != "R" || *members.JoinError != "Sign in with an account to join #members" || !members.Kick {
+		t.Fatalf("#members %q %+v", ergo.modes["#members"], members)
+	}
+	if v := ergo.last["#void"]; *v.JoinError != "#void is closed: only network operators can join it" {
+		t.Fatalf("#void %+v", v)
+	}
+	// a role channel keeps the old behaviour: Ergo's message, nobody kicked
+	if st := ergo.last["#staff"]; *st.JoinError != "" || *st.OperJoin || st.Kick {
+		t.Fatalf("#staff %+v", st)
+	}
+	if !slices.ContainsFunc(logs, func(l string) bool {
+		return l == "network channels: removed bob from #opers (no role that may be there)"
+	}) {
+		t.Fatalf("kick not logged: %q", logs)
+	}
+	if !slices.ContainsFunc(logs, func(l string) bool {
+		return strings.HasPrefix(l, "network channels: #Lobby (auto-join), #Opers (auto-join, Owner/Admin only), #members (auto-join, Member only), #void (opers only) exist")
+	}) {
+		t.Fatalf("summary: %q", logs)
+	}
+
+	// guests only get the open auto-join channels
+	ergo.guests["Guest1"] = true
+	s.Connect(ctx, "Guest1")
+	if !slices.Equal(ergo.nickJoin["Guest1"], []string{"#lobby"}) {
+		t.Fatalf("guest joins %v", ergo.nickJoin)
+	}
+
+	// opened again: modes and the guard go
+	auth.feed = networkFeed("2",
+		roles.NetworkChannel{Channel: "#lobby", Name: "#Lobby", Autojoin: true},
+		roles.NetworkChannel{Channel: "#opers", Name: "#Opers", Autojoin: true},
+	)
+	s.Tick(ctx, false)
+	if o := ergo.last["#opers"]; ergo.modes["#opers"] != "" || *o.JoinError != "" || *o.OperJoin || o.Kick {
+		t.Fatalf("opened %q %+v", ergo.modes["#opers"], o)
+	}
+}
+
+func TestJoinRefusalWording(t *testing.T) {
+	for _, tc := range []struct {
+		roles    []string
+		everyone bool
+		want     string
+	}{
+		{[]string{"Admin"}, false, "You need the Admin role to join #x"},
+		{[]string{"Owner", "Admin", "DJ"}, false, "You need the Owner, Admin or DJ role to join #x"},
+		{[]string{"Admin", "Member"}, true, "Sign in with an account to join #x"},
+		{nil, false, "#x is closed: only network operators can join it"},
+	} {
+		if got := JoinRefusal("#x", tc.roles, tc.everyone); got != tc.want {
+			t.Errorf("%v: %q", tc.roles, got)
+		}
 	}
 }

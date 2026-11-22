@@ -16,6 +16,11 @@ clients over TLS:
 5. Network channels (irc.channels; auth with the feed's "network", else
    skipped): a fresh guest (no SASL) is joined to the auto-join channel on
    connect; a new account on its first login, and not again after /part.
+6. A network channel restricted to a role (irc.channels[].roles; auth with
+   "restricted" in the feed, else skipped): the guest and the new account
+   aren't auto-joined to it, and a /join gets 473 saying which role it
+   takes; a member of the role is auto-joined at login, and removed (KICK)
+   when the role is taken away.
 
 Puts config/boson.yaml back at the end. auth without the role channel API
 (404) is skipped: exit 0 with a SKIP line; --require makes that a failure.
@@ -264,11 +269,12 @@ def run():
     check("once: after /part, the next login doesn't rejoin", rejoined is None, rejoined or "")
     for c in (carol, bob, alice, again):
         c.close()
-    network_channels()
+    network_channels(owner, role, f"RC Staff {tag}", users["alice"], alice_pw)
 
-def network_channels():
-    lobby = f"#nc-lobby-{tag}"
-    entry = f"  channels:\n    - {{name: \"{lobby}\", topic: smoke, autojoin: true}}\n".encode()
+def network_channels(owner, role, role_name, alice_id, alice_pw):
+    lobby, opers = f"#nc-lobby-{tag}", f"#nc-opers-{tag}"
+    entry = (f"  channels:\n    - {{name: \"{lobby}\", topic: smoke, autojoin: true}}\n"
+             f"    - {{name: \"{opers}\", autojoin: true, roles: [\"{role_name}\"]}}\n").encode()
     if re.search(rb"^irc:[ \t]*(#.*)?$", original, re.M):  # an irc: block already: add the key to it
         put(CONF, re.sub(rb"^irc:[ \t]*(#.*)?\n", lambda m: m.group(0) + entry, original, count=1, flags=re.M))
     else:
@@ -285,21 +291,52 @@ def network_channels():
         return
     if not check("auth serves the network channel", any(c.get("channel") == lobby for c in f["network"].get("channels") or []), f.get("network")):
         return
+    restricted = next((c for c in f["network"]["channels"] if c.get("channel") == opers), {})
+    roles_on = "restricted" in restricted
+    if roles_on:
+        check("auth serves the restricted channel", restricted.get("restricted") is True and restricted.get("roles") == [role_name], restricted)
+    elif args.require:
+        check("auth serves restricted network channels", False, "no restricted in the feed with --require")
+    else:
+        print("SKIP restricted network channels: auth's feed has no \"restricted\" (older than the channel roles release)")
     time.sleep(args.poll + 3)  # RoleServ ensures it
     guest = Client(f"ncguest{tag}", None)
     got = guest.wait(joined(lobby), 15)
     check("network channels: a fresh guest is joined on connect", got is not None, guest.lines[-5:])
+    if roles_on:
+        check("restricted: the guest isn't joined to it", not any(re.search(joined(opers), l) for l in guest.lines), guest.lines[-5:])
     guest.close()
     pw, _ = create_user(f"ncuser{tag}")
     u = Client(f"ncuser{tag}", pw)
     got = u.wait(joined(lobby), 15)
     check("network channels: a new account is joined on its first login", got is not None, u.lines[-5:])
+    if roles_on:
+        time.sleep(2)
+        check("restricted: an account without the role isn't auto-joined", not any(re.search(joined(opers), l) for l in u.lines), u.lines[-5:])
+        u.send("JOIN " + opers)
+        denied = u.wait(r" 473 \S+ " + re.escape(opers) + r" :.*" + re.escape(role_name), 15)
+        check("restricted: /join without the role gets 473 naming the role", bool(denied), denied or u.lines[-3:])
     u.send("PART " + lobby); u.wait(r" PART " + re.escape(lobby), 10); u.close()
     time.sleep(2)
     u = Client(f"ncuser{tag}", pw)
     again = u.wait(joined(lobby), 12)
     check("network channels: not joined again after /part", again is None, again or "")
     u.close()
+    if not roles_on:
+        return
+    # alice has the role: auto-joined at login; losing the role removes her.
+    alice = Client(f"rcalice{tag}", alice_pw)
+    got = alice.wait(joined(opers), 20)
+    check("restricted: a member of the role is auto-joined at login", got is not None, alice.lines[-5:])
+    alice.drain()
+    st, _ = api("PUT", f"/v1/admin/users/{alice_id}/roles", {"role_ids": []}, owner)
+    check("alice loses the role", st == 200, st)
+    kicked = alice.wait(r" KICK " + re.escape(opers) + r" rcalice" + tag + r" :.*" + re.escape(role_name), args.timeout)
+    check("restricted: losing the role removes her (KICK naming the role)", bool(kicked), kicked or alice.lines[-5:])
+    alice.send("JOIN " + opers)
+    denied = alice.wait(r" 473 \S+ " + re.escape(opers), 15)
+    check("restricted: and she can't rejoin", bool(denied), denied or alice.lines[-3:])
+    alice.close()
 
 try:
     run()

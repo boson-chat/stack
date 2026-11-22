@@ -342,6 +342,12 @@ type NetworkChannel struct {
 	Name     string `json:"name"`    // as written
 	Topic    string `json:"topic"`
 	Autojoin bool   `json:"autojoin"`
+	// Restricted: only members of Roles may join (auth also lists the
+	// channel as private, with the accounts, in the feed's channels).
+	// Roles are the names of the roles, most senior first; empty when none
+	// of the configured roles exists (only opers and the founder get in).
+	Restricted bool     `json:"restricted"`
+	Roles      []string `json:"roles"`
 }
 
 // AutojoinChannels are the network channels guests and new accounts join.
@@ -349,6 +355,18 @@ func (n NetworkChannels) AutojoinChannels() []string {
 	var out []string
 	for _, c := range n.Channels {
 		if c.Autojoin {
+			out = append(out, c.Channel)
+		}
+	}
+	return out
+}
+
+// GuestAutojoinChannels are the auto-join network channels guests may join
+// (restricted ones never admit guests).
+func (n NetworkChannels) GuestAutojoinChannels() []string {
+	var out []string
+	for _, c := range n.Channels {
+		if c.Autojoin && !c.Restricted {
 			out = append(out, c.Channel)
 		}
 	}
