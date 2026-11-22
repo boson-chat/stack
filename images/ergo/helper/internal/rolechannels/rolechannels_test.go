@@ -82,9 +82,11 @@ type fakeErgo struct {
 	topics   map[string]string
 	ensures  int
 	dropped  []string
-	guests   map[string]bool     // connected nicks without an account
-	accounts map[string]string   // connected nick → account
-	nickJoin map[string][]string // nick → channels (SajoinNick)
+	guests   map[string]bool                  // connected nicks without an account
+	accounts map[string]string                // connected nick → account
+	nickJoin map[string][]string              // nick → channels (SajoinNick)
+	last     map[string]ergoapi.ChannelAccess // channel → last access push
+	kicked   map[string][]string              // channel → nicks Kick removed
 }
 
 func (e *fakeErgo) EnsureChannel(_ context.Context, req ergoapi.ChannelEnsure) (ergoapi.ChannelEnsureResult, error) {
@@ -158,6 +160,10 @@ func (e *fakeErgo) SetChannelAccess(_ context.Context, req ergoapi.ChannelAccess
 		e.failNext = false
 		return ergoapi.ChannelAccessResult{}, errors.New("boom")
 	}
+	if e.last == nil {
+		e.last = map[string]ergoapi.ChannelAccess{}
+	}
+	e.last[req.Channel] = req
 	if !e.exists[req.Channel] {
 		return ergoapi.ChannelAccessResult{}, nil
 	}
@@ -186,7 +192,12 @@ func (e *fakeErgo) SetChannelAccess(_ context.Context, req ergoapi.ChannelAccess
 		}
 	}
 	e.invex[req.Channel] = slices.Clone(req.Accounts)
-	return ergoapi.ChannelAccessResult{Exists: true, Registered: true, Added: added, Removed: removed}, nil
+	res := ergoapi.ChannelAccessResult{Exists: true, Registered: true, Added: added, Removed: removed}
+	if req.Kick {
+		res.Kicked = e.kicked[req.Channel]
+		delete(e.kicked, req.Channel)
+	}
+	return res, nil
 }
 
 func (e *fakeErgo) Sajoin(_ context.Context, account string, channels []string) (ergoapi.SajoinResult, error) {

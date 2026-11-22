@@ -4,8 +4,9 @@
 # see docs/roles.md; channel auto-registration and expiry, and account
 # removal over the API, see docs/irc-channels.md; account extbans and the
 # channel access / sajoin API for role channels, see docs/roles.md; network
-# channels: channel_ensure/channel_drop and sajoin by nick, see
-# docs/irc-channels.md), plus boson-ergo: renders ircd.yaml from the environment,
+# channels: channel_ensure/channel_drop and sajoin by nick; the channel
+# guard for channels restricted to roles, see docs/irc-channels.md), plus
+# boson-ergo: renders ircd.yaml from the environment,
 # checks SASL logins against the boson auth service, syncs roles and runs
 # RoleServ.
 ARG ERGO_VERSION=v2.19.1

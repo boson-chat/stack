@@ -6,6 +6,10 @@
 //     them, through Ergo's API (POST /v1/channel_access). Exceptions are
 //     removed when access is revoked; nobody is kicked. A private channel
 //     listed on everyone is +R instead (any logged-in account).
+//   - network channels restricted to roles (irc.channels[].roles) are
+//     private channels too, with a guard (patches/0006): refused clients are
+//     told which roles may join, opers with sajoin may JOIN, and members who
+//     lose access are removed (KICK from ChanServ).
 //   - with roles.channels.autojoin on, members are joined (POST /v1/sajoin)
 //     to their roles' auto-join channels when they log in (RoleServ sees
 //     logins through Ergo's ACCOUNT snomask) and when they gain a role.
@@ -230,7 +234,42 @@ func (s *Syncer) Tick(ctx context.Context, full bool) bool {
 	return true
 }
 
-func ptr(b bool) *bool { return &b }
+func ptr(b bool) *bool      { return &b }
+func ptrs(s string) *string { return &s }
+
+// JoinRefusal is what a client that may not join a restricted network
+// channel is told (473, or 477 for a guest when any account may join).
+func JoinRefusal(channel string, roleNames []string, everyone bool) string {
+	switch {
+	case everyone:
+		return "Sign in with an account to join " + channel
+	case len(roleNames) == 0:
+		return channel + " is closed: only network operators can join it"
+	}
+	return "You need the " + orList(roleNames) + " role to join " + channel
+}
+
+// KickReason is what a member who lost access is removed with.
+func KickReason(channel string, roleNames []string, everyone bool) string {
+	switch {
+	case everyone:
+		return channel + " is for signed-in accounts only"
+	case len(roleNames) == 0:
+		return channel + " is closed: only network operators can be in it"
+	}
+	return "You need the " + orList(roleNames) + " role to be in " + channel
+}
+
+// orList: "A", "A or B", "A, B or C".
+func orList(names []string) string {
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
+		return names[0]
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " or " + names[len(names)-1]
+}
 
 // syncChannels pushes every private channel and unlocks the ones that are
 // no longer private. It reports whether every push succeeded.
@@ -242,13 +281,24 @@ func (s *Syncer) syncChannels(ctx context.Context) bool {
 			want[strings.ToLower(c.Channel)] = c
 		}
 	}
+	restricted := map[string]roles.NetworkChannel{}
+	for _, c := range s.feed.Network.Channels {
+		if c.Restricted {
+			restricted[strings.ToLower(firstNonEmpty(c.Channel, c.Name))] = c
+		}
+	}
 	dirty := false
 	for ch, c := range want {
 		mode := modeInvite
 		if c.Everyone {
 			mode = modeRegistered
 		}
-		req := ergoapi.ChannelAccess{Channel: ch, SetBy: s.SetBy}
+		req := ergoapi.ChannelAccess{Channel: ch, SetBy: s.SetBy, JoinError: ptrs(""), OperJoin: ptr(false)}
+		if nc, ok := restricted[ch]; ok {
+			name := firstNonEmpty(nc.Name, ch)
+			req.JoinError, req.OperJoin = ptrs(JoinRefusal(name, nc.Roles, c.Everyone)), ptr(true)
+			req.Kick, req.KickReason = true, KickReason(name, nc.Roles, c.Everyone)
+		}
 		switch mode {
 		case modeInvite:
 			req.InviteOnly, req.Accounts = ptr(true), c.Accounts
@@ -281,6 +331,9 @@ func (s *Syncer) syncChannels(ctx context.Context) bool {
 		if len(res.Added)+len(res.Removed) > 0 {
 			s.logf("role channels: %s: +I %v -I %v", ch, res.Added, res.Removed)
 		}
+		if len(res.Kicked) > 0 {
+			s.logf("network channels: removed %s from %s (no role that may be there)", strings.Join(res.Kicked, ", "), ch)
+		}
 		if s.managed[ch] != mode {
 			s.managed[ch], dirty = mode, true
 		}
@@ -289,7 +342,7 @@ func (s *Syncer) syncChannels(ctx context.Context) bool {
 		if _, ok := want[ch]; ok {
 			continue
 		}
-		req := ergoapi.ChannelAccess{Channel: ch, SetBy: s.SetBy, Accounts: []string{}}
+		req := ergoapi.ChannelAccess{Channel: ch, SetBy: s.SetBy, Accounts: []string{}, JoinError: ptrs(""), OperJoin: ptr(false)}
 		if mode == modeRegistered {
 			req.RegisteredOnly = ptr(false)
 		} else {
@@ -587,8 +640,19 @@ func (s *Syncer) networkSummary(founder string) string {
 	var names []string
 	for _, c := range s.feed.Network.Channels {
 		n := firstNonEmpty(c.Name, c.Channel)
+		var tags []string
 		if c.Autojoin {
-			n += " (auto-join)"
+			tags = append(tags, "auto-join")
+		}
+		if c.Restricted {
+			if len(c.Roles) == 0 {
+				tags = append(tags, "opers only")
+			} else {
+				tags = append(tags, strings.Join(c.Roles, "/")+" only")
+			}
+		}
+		if len(tags) > 0 {
+			n += " (" + strings.Join(tags, ", ") + ")"
 		}
 		names = append(names, n)
 	}
@@ -649,7 +713,8 @@ func (s *Syncer) Connect(ctx context.Context, nick string) {
 	var channels []string
 	if s.have && s.feed.Network.AutojoinGuests {
 		ensured := s.ensuredSet()
-		for _, ch := range s.feed.Network.AutojoinChannels() {
+		// guests only get the open ones: a restricted channel never admits them
+		for _, ch := range s.feed.Network.GuestAutojoinChannels() {
 			if ensured[strings.ToLower(ch)] {
 				channels = append(channels, ch)
 			}

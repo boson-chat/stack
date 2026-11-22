@@ -208,6 +208,15 @@ version: 1
 #       # connect (once per nick per 24 h). Default: false.
 #       autojoin: true
 #     - name: "#help"
+#     - name: "#opers"
+#       # Who may join: only accounts holding one of these roles (names as in
+#       # the admin panel; Member = any signed-in account). Absent or [] =
+#       # everyone, guests too; guests never get into a restricted channel.
+#       # Everyone else gets 473 "You need the Admin or Owner role to join
+#       # #opers" and is removed if already inside; the founder and opers
+#       # with sajoin always get in. Auto-join only joins those who may.
+#       roles: [Admin, Owner]
+#       autojoin: true
 #   # The account network channels are registered to. A channel already
 #   # registered to someone else is left with them. Default: the earliest
 #   # Owner (auth), else RoleServ.
