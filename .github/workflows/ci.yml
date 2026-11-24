@@ -456,7 +456,7 @@ jobs:
         if: steps.creds.outputs.ok == 'true'
         run: |
           # <dir>:<tag>; every image also gets :sha-<commit>.
-          for img in certsync:latest ergo:2.19.1 webircgateway:1.1.0-boson.1; do
+          for img in certsync:latest ergo:2.19.1 webircgateway:1.1.0-boson.2; do
             name=${img%%:*}; tag=${img#*:}
             docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --push \
               --label org.opencontainers.image.source=https://github.com/${{ github.repository }} \

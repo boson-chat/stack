@@ -1122,7 +1122,7 @@ services:
     <<: *restart
     profiles: [web]
     build: images/webircgateway
-    image: harbor.floret.dev/boson/stack-webircgateway:1.1.0-boson.1
+    image: harbor.floret.dev/boson/stack-webircgateway:1.1.0-boson.2
     environment:
       WEBIRC_ORIGINS: ${WEBIRC_ORIGINS:-https://${WEB_HOST:-web.invalid}}
       WEBIRC_TRUSTED_PROXIES: ${STACK_SUBNET:-10.203.53.0/24}
