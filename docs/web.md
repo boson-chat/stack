@@ -40,6 +40,7 @@ browser origins follow by default (each has its own override):
 | Service | Setting | Why |
 |---|---|---|
 | auth | `AUTH_CORS_ALLOWED_ORIGINS` (or `auth.cors_allowed_origins` in config/boson.yaml, which wins: add `https://WEB_HOST` there if you set it) | calls from the page, and SSO coming back to `https://WEB_HOST/sso/callback` |
+| auth | `AUTH_WEB_CLIENT_URL` (default `https://WEB_HOST/`) | where users land after verifying their email (auth with boson-chat/auth#26; older auth ignores it) |
 | api | `API_ALLOWED_ORIGINS` | calls from the page |
 | directory | `DIRECTORY_CORS_ALLOWED_ORIGINS` | owner edits from the page |
 | quicvoiced | `VOICE_WEBTRANSPORT_ORIGINS` (or `voice.web_origins`) | voice over WebTransport at `https://VOICE_HOST:7700/wt`, and its room API |

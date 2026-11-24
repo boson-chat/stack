@@ -308,6 +308,10 @@ services:
       PUBLIC_URL: https://${AUTH_HOST}
       ISSUER: https://${AUTH_HOST}
       APP_URL: ${AUTH_APP_URL:-https://${AUTH_HOST}}
+      # Where users go back to after verifying their email (auth >= the
+      # release with boson-chat/auth#26; older auth ignores it). Default: the
+      # web client (https://WEB_HOST/, the web profile), else auth's own page.
+      WEB_CLIENT_URL: ${AUTH_WEB_CLIENT_URL:-${WEB_HOST:+https://${WEB_HOST}/}}
       # Extra browser origins allowed to call auth with credentials/tokens and
       # to be SSO return_to targets, e.g. the directory web UI
       # (https://directory.example.com). Comma-separated. Default;
