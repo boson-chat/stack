@@ -129,6 +129,14 @@ configured` (webircgateway's own wording). If the network closes the
 connection, the socket closes without an `ERROR` from the gateway (the
 network's own `ERROR` line, if any, comes through).
 
+When the socket closes (a closed or reloaded tab, a dropped connection: close
+frame or not), the gateway leaves the network at once: it sends `QUIT`, the
+client's own if it sent one, else `QUIT :Web client closed`, and closes the
+connection, dropping lines still queued behind the throttle. The nick is free
+for the reloaded page straight away (`scripts/smoke-webirc.py` checks within
+a second). A connection that goes silent without closing (a sleeping laptop)
+is still only noticed by the network's ping timeout.
+
 ### Running it elsewhere (e2e, dev)
 
 The image needs nothing but its environment. In another compose file, with
@@ -136,7 +144,7 @@ private destinations allowed (only on a machine nobody else can reach):
 
 ```yaml
 webircgateway:
-  image: harbor.floret.dev/boson/stack-webircgateway:1.1.0-boson.1
+  image: harbor.floret.dev/boson/stack-webircgateway:1.1.0-boson.2
   ports: ["127.0.0.1:18089:8080"]
   environment:
     WEBIRC_ALLOW_PRIVATE: "true"   # any address, e.g. ergo:6667 or 127.0.0.1

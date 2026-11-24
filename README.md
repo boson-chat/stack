@@ -292,7 +292,7 @@ keys in the database).
 - **Images:** `certsync`, `ergo` and `webircgateway` are built from
   `images/` and published to `harbor.floret.dev/boson/stack-*` by CI on
   every push to `main` (`stack-certsync:latest`, `stack-ergo:2.19.1`,
-  `stack-webircgateway:1.1.0-boson.1`, plus `:sha-<commit>`).
+  `stack-webircgateway:1.1.0-boson.2`, plus `:sha-<commit>`).
 - **Compose project name** is `boson`; Traefik only looks at containers of
   that project.
 - Deploying the production host (boson.chat): [docs/deploy-boson-chat.md](docs/deploy-boson-chat.md).

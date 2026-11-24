@@ -18,6 +18,8 @@ address, Traefik's view of the host):
    connections a minute, the next is refused (rate).
 6. https://WEB_HOST/webirc/info (the admin Stack page's "from you" probe)
    is the gateway's, and /webirc/_status isn't routed to it.
+7. A WebSocket that drops leaves Ergo within a second: QUIT with the
+   gateway's message ("Web client closed"), and the nick is free.
 
   scripts/smoke-webirc.py [--web-host chat.localhost] [--irc-host irc.localhost]
 """
@@ -225,9 +227,25 @@ for w in extra:
 time.sleep(1)
 got = refusal(f"HOST {args.irc_host}:+6697")
 check("4th concurrent connection refused (limit)", got.startswith("ERROR :Gateway refused (limit)"), got)
+# 7: a closed tab leaves the network at once: the gateway sends QUIT and
+# closes its Ergo connection as soon as the WebSocket goes, so the nick is
+# free for the reloaded page (not held until a ping timeout, or until lines
+# queued behind the throttle drain).
+watcher = extra[0]
+watcher.lines_until(lambda l: " 001 " in l, timeout=20)
+watcher.send(f"JOIN {chans[0]}")
+watcher.lines_until(lambda l: " 366 " in l, timeout=10)
+t0 = time.time()
+main.close()  # the socket drops, no close frame (a killed tab)
+_, quit_line = watcher.lines_until(lambda l: l.startswith(f":{nick}!") and " QUIT " in l, timeout=10)
+dt = time.time() - t0
+check("closed WebSocket: QUIT reaches the channel within 1 s", bool(quit_line) and dt < 1, f"{dt:.2f}s: {quit_line}")
+check("closed WebSocket: the gateway's quit message", bool(quit_line) and "Web client closed" in quit_line, quit_line or "no QUIT")
+watcher.send(f"ISON {nick}")
+_, ison = watcher.lines_until(lambda l: " 303 " in l, timeout=10)
+check("closed WebSocket: the nick is free", bool(ison) and nick not in ison.split(" ", 3)[-1], ison or "no ISON reply")
 for w in extra:
     w.close()
-main.close()
 time.sleep(2)  # the gateway notices the closes
 # New connections refill at 8 a minute (one per 7.5 s) up to a burst of 8:
 # opening them back to back, one is refused before a dozen get through.

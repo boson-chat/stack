@@ -4,9 +4,11 @@
 # a pinned commit with:
 #   patches/  — verify upstream TLS certificates, refuse internal addresses at
 #               dial time, take the client IP from the right of
-#               X-Forwarded-For, read whole WebSocket messages, a throttle burst
+#               X-Forwarded-For, read whole WebSocket messages, a throttle burst,
+#               QUIT and close the network connection as soon as the client goes
 #   src/      — zz_boson_policy.go: IRC ports only, aliases, allow/deny lists,
-#               per-IP caps, WEBIRC passwords (all from the environment)
+#               per-IP caps, WEBIRC passwords (all from the environment);
+#               zz_boson_close.go: leaving the network when the client closes
 # entrypoint.sh renders the config file from the environment.
 ARG WEBIRCGATEWAY_COMMIT=be9fd5be5d995184d61fac64fc1742ceca25e05f
 

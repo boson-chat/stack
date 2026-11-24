@@ -365,6 +365,7 @@ func bosonQueueLines(c *Client, message string) bool {
 		if line == "" {
 			continue
 		}
+		bosonNoteLine(c, line)
 		select {
 		case c.Recv <- line:
 		case <-time.After(10 * time.Second):
