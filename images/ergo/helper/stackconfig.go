@@ -64,6 +64,7 @@ var fileKeys = []fileKey{
 	{Path: "irc.websocket_origins", Env: "IRC_WEBSOCKET_ORIGINS", Kind: kindOrigins},
 	{Path: "irc.oauthbearer", Env: "IRC_OAUTHBEARER", Kind: kindBool},
 	{Path: "irc.history_expire", Env: "IRC_HISTORY_EXPIRE", Kind: kindErgoDuration},
+	{Path: "irc.channel_creator_grace", Env: "IRC_CHANNEL_CREATOR_GRACE", Kind: kindErgoDuration},
 	{Path: "irc.log_level", Env: "IRC_LOG_LEVEL", Kind: kindLogLevel},
 	// Ergo opens the history database only at startup.
 	{Path: "irc.persistent_history", Env: "IRC_PERSISTENT_HISTORY", Kind: kindBool, Restart: true, Default: true},

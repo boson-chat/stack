@@ -160,6 +160,10 @@ services:
       IRC_WEBSOCKET_ORIGINS: ${IRC_WEBSOCKET_ORIGINS:-}
       IRC_OAUTHBEARER: ${IRC_OAUTHBEARER:-true}
       IRC_PERSISTENT_HISTORY: ${IRC_PERSISTENT_HISTORY:-true}
+      # An emptied unregistered channel's creator keeps ops this long (0 =
+      # off; docs/irc-channels.md "Creator grace"). Default;
+      # config/boson.yaml irc.channel_creator_grace wins.
+      IRC_CHANNEL_CREATOR_GRACE: ${IRC_CHANNEL_CREATOR_GRACE:-10m}
       STACK_SUBNET: ${STACK_SUBNET:-10.203.53.0/24}
       # auth-script → auth service (internal listener, never published)
       AUTH_VERIFY_URL: http://auth:8081/internal/v1/verify-password

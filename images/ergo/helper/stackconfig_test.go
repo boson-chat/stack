@@ -29,6 +29,7 @@ irc:
   websocket_origins: ["https://example.com", "https://*.example.com"]
   oauthbearer: false
   history_expire: 30d
+  channel_creator_grace: 15m
   log_level: DEBUG
   persistent_history: false
   something_new: 1
@@ -46,7 +47,7 @@ voice: {rooms: []}
 		"NETWORK_NAME": "Test Net", "IRC_PLAINTEXT": "true", "IRC_PLAINTEXT_LISTEN_PORT": "6668",
 		"IRC_REQUIRE_SASL_EXEMPT": "127.0.0.1/32,::1,localhost", "ROLES_POLL_SECONDS": "5", "SETTINGS_POLL_SECONDS": "20",
 		"IRC_WEBSOCKET": "false", "IRC_WEBSOCKET_ORIGINS": "https://example.com,https://*.example.com",
-		"IRC_OAUTHBEARER": "false", "IRC_HISTORY_EXPIRE": "30d", "IRC_LOG_LEVEL": "debug", "IRC_PERSISTENT_HISTORY": "false",
+		"IRC_OAUTHBEARER": "false", "IRC_HISTORY_EXPIRE": "30d", "IRC_CHANNEL_CREATOR_GRACE": "15m", "IRC_LOG_LEVEL": "debug", "IRC_PERSISTENT_HISTORY": "false",
 	}
 	if !maps.Equal(got, want) {
 		t.Fatalf("got %v\nwant %v", got, want)
@@ -70,6 +71,7 @@ func TestParseStackConfigErrors(t *testing.T) {
 		{"irc:\n  require_sasl_exempt: 10.0.0.0/8\n", 2, 24, "want a list"},
 		{"irc:\n  roles_poll_seconds: 0\n", 2, 23, "must be 1..86400"},
 		{"irc:\n  history_expire: forever\n", 2, 19, "not a duration"},
+		{"irc:\n  channel_creator_grace: 10 minutes\n", 2, 26, "not a duration"},
 		{"irc:\n  log_level: loud\n", 2, 14, "want one of"},
 		{"network:\n  name: \"\"\n", 2, 9, "network.name: must be 1-64"},
 		{"irc: [plaintext]\n", 1, 6, "irc: must be a mapping"},

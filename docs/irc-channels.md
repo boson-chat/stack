@@ -135,6 +135,41 @@ reach Ergo the same way as `channel_creation` (re-render + rehash, within
 | `channel_auto_register` | `true` | `channels.registration.auto-register` | A logged-in user who creates a channel by joining it becomes its founder at once, as if they had sent `/msg ChanServ REGISTER #chan`: the usual ChanServ notice and `+q`. Same limits as REGISTER: under `channel_creation: admins` only opers with `chanreg` get one, and at most 15 per account (`max-channels-per-account`; past that, ChanServ says the channel "was not registered automatically"). Guests (not logged in) never do. `SAJOIN`ed channels aren't registered |
 | `channel_expiry_days` | `0` (never) | `channels.registration.expire-after: <n>d` | A registered channel with no **JOIN, PRIVMSG or NOTICE** for that many days is unregistered: it becomes an ordinary channel again (topic, modes, bans, persistent roles and ChanServ settings are dropped; anyone in it stays) and the name can be registered by someone else |
 
+### Creator grace: ops in unregistered channels
+
+On plain IRC, operator status in an unregistered channel goes to whoever
+joins it first after it empties. Auto-registration covers most channels
+signed-in users create. Some channels stay unregistered: a guest's, ones
+created past the account's 15-channel limit, ones created while
+auto-registration was off or before it existed, and ones whose registration
+expired. With the patched Ergo (patch 0007), when such a channel empties,
+the **account** that created it is remembered for
+`irc.channel_creator_grace` (config/boson.yaml, or
+`IRC_CHANNEL_CREATOR_GRACE`; default **`10m`**, `0` = off, Ergo durations
+such as `30m` or `1h`; live, by rehash). During that window:
+
+- someone else who re-creates the channel by joining it first gets **no
+  `+o`**, and so no auto-registration either, which needs `+o`;
+- the creator's account gets `+o` back whenever it joins, even if others
+  are in the channel by then. Reloading the page or reconnecting keeps
+  their ops;
+- after the window the usual rule applies again. The first to join an
+  *empty* channel gets `+o`, and becomes the creator remembered next time.
+  A channel someone joined during the window stays without ops until it
+  empties.
+
+Guests aren't remembered: a nick or IP address is not an identity. A
+guest's channel behaves as before. The window is renewed only if the
+creator was back in the channel since it began, so someone re-creating the
+channel and leaving again can't extend it. The records live in Ergo's memory
+and are lost on a restart (not on a rehash). Registered channels are
+unaffected, because their founder's status comes from the registration.
+
+Why 10 minutes: it covers a reload, a reconnect after a dropped connection
+and a short sleep, which are the cases where a creator briefly empties their
+own channel. It is short enough that an abandoned channel can be claimed
+again soon after.
+
 What expiry looks like on IRC:
 
 - **Warning**: during the last 7 days the founder gets a ChanServ notice,
@@ -254,6 +289,7 @@ irc:
   websocket_origins: [https://example.com, "https://*.example.com"]  # IRC_WEBSOCKET_ORIGINS
   oauthbearer: true                # IRC_OAUTHBEARER (SASL OAUTHBEARER)
   history_expire: 1w               # IRC_HISTORY_EXPIRE (Ergo duration: 12h, 30d, 1w)
+  channel_creator_grace: 10m       # IRC_CHANNEL_CREATOR_GRACE: ops kept for an emptied unregistered channel's creator (0 = off)
   log_level: info                  # IRC_LOG_LEVEL: debug | info | warn | error
   persistent_history: true         # IRC_PERSISTENT_HISTORY  (restart required)
 ```
@@ -348,6 +384,13 @@ v2.19.1 (see [ergo-account-opers.md](ergo-account-opers.md) for 0001):
   [channels restricted to roles](#channels-restricted-to-roles)
   (`irc/apichannelguard.go`, hooks in `channel.go` `Join` and
   `handlers.go` `sendJoinError`; tests in `irc/apichannelguard_test.go`).
+- **0007 `channels: creator grace (channels.creator-grace)`**: the
+  [creator grace](#creator-grace-ops-in-unregistered-channels) above
+  (`irc/channelcreatorgrace.go`, hooks in `channel.go` `Join` and
+  `channelmanager.go` (channel creation, cleanup), `config.go`; documented
+  in `default.yaml`/`traditional.yaml`, default `0` there; tests in
+  `irc/channelcreatorgrace_test.go`). Kept as the `channel-creator-grace`
+  branch of the local Ergo checkout, on top of 0001–0006.
 
 Both are written against upstream and kept as commits on the
 `channel-lifecycle` branch of a local Ergo checkout (based on v2.19.1);

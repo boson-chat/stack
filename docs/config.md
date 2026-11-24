@@ -81,6 +81,7 @@ admin needs to change it in the panel.
 | `irc.oauthbearer` | bool | `IRC_OAUTHBEARER` | live (rehash) | ergo | `services.manage` |
 | `irc.persistent_history` | bool | `IRC_PERSISTENT_HISTORY` | **restart** | ergo | `services.manage` |
 | `irc.history_expire` | Ergo duration (`7d`) | built-in | live (rehash) | ergo | `services.manage` |
+| `irc.channel_creator_grace` | Ergo duration (`10m`; `0` = off) | `IRC_CHANNEL_CREATOR_GRACE` (`10m`) | live (rehash) | ergo | hand edit ([irc-channels.md](irc-channels.md#creator-grace-ops-in-unregistered-channels)) |
 | `irc.log_level` | `debug`/`info`/`warn`/`error` | built-in | live (rehash) | ergo | `services.manage` |
 | `voice.rooms` | list of `{id, name, max_kbps}` (`max_kbps` optional, quicvoiced ≥ 1.13) | `VOICE_ROOMS` | live | quicvoiced | `settings.manage` |
 | `voice.rooms_strict` | bool | `VOICE_ROOMS_STRICT` | live | quicvoiced | `settings.manage` |

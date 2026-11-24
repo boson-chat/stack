@@ -1,0 +1,572 @@
+From 5e6f97361b9e6f4a9a2c96f16785a1917bec98cb Mon Sep 17 00:00:00 2001
+From: James Trotter <james@jamesat.dev>
+Date: Tue, 24 Nov 2026 01:47:44 -0500
+Subject: [PATCH] channels: creator grace (channels.creator-grace)
+
+When an unregistered channel empties, remember the account that created it
+for channels.creator-grace (default 0: off). Until then only that account
+gets operator status in the channel: whoever else re-creates it by joining
+first doesn't (so auto-register doesn't register it to them either), and the
+creator gets +o back whenever it rejoins. Guests aren't remembered. A window
+is renewed only if the creator was back in the channel since it began, so
+someone else re-creating and leaving can't stretch it. In memory only.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ default.yaml                    |   8 +
+ irc/channel.go                  |  11 +-
+ irc/channelcreatorgrace.go      | 129 +++++++++++++++
+ irc/channelcreatorgrace_test.go | 278 ++++++++++++++++++++++++++++++++
+ irc/channelmanager.go           |   8 +-
+ irc/config.go                   |   6 +
+ traditional.yaml                |   8 +
+ 7 files changed, 445 insertions(+), 3 deletions(-)
+ create mode 100644 irc/channelcreatorgrace.go
+ create mode 100644 irc/channelcreatorgrace_test.go
+
+diff --git a/default.yaml b/default.yaml
+index 21bdb9e0..876fc59a 100644
+--- a/default.yaml
++++ b/default.yaml
+@@ -682,6 +682,14 @@ channels:
+     # `chanreg` operator capability
+     operator-only-creation: false
+ 
++    # when an unregistered channel empties, remember the account that created
++    # it for this long: until then, only that account gets operator status in
++    # the channel (whoever else re-creates it by joining first doesn't), and
++    # it gets operator status back whenever it rejoins. guests (no account)
++    # aren't remembered. 0 disables (the first to join an empty channel gets
++    # operator status, as usual)
++    creator-grace: 0
++
+     # channel registration - requires an account
+     registration:
+         # can users register new channels?
+diff --git a/irc/channel.go b/irc/channel.go
+index ce711a8a..5c05e856 100644
+--- a/irc/channel.go
++++ b/irc/channel.go
+@@ -71,6 +71,12 @@ type Channel struct {
+ 	// set through the API (POST /v1/channel_access): who else may join and
+ 	// what refused clients are told; not persisted, see apichannelguard.go
+ 	guard channelGuard
++	// the account that created this unregistered channel ("" for a guest),
++	// and until when it keeps operator status after the channel last
++	// emptied; see channelcreatorgrace.go
++	creator           string
++	creatorGraceUntil time.Time
++	creatorPresent    bool // the creator joined since the window began
+ }
+ 
+ // NewChannel creates a new channel from a `Server` and a `name`
+@@ -856,8 +862,9 @@ func (channel *Channel) Join(client *Client, key string, isSajoin bool, rb *Resp
+ 
+ 			channel.members.Add(client)
+ 			firstJoin := len(channel.members) == 1
+-			newChannel := firstJoin && channel.registeredFounder == ""
+-			if newChannel {
++			// the first member of an unregistered channel gets +o, except
++			// during its creator's grace window (channelcreatorgrace.go)
++			if channel.creatorJoinOp(firstJoin, details.account, time.Now()) {
+ 				givenMode = modes.ChannelOperator
+ 			} else {
+ 				givenMode = persistentMode
+diff --git a/irc/channelcreatorgrace.go b/irc/channelcreatorgrace.go
+new file mode 100644
+index 00000000..47f6b5ca
+--- /dev/null
++++ b/irc/channelcreatorgrace.go
+@@ -0,0 +1,129 @@
++// Copyright (c) 2026 James Trotter
++// released under the MIT license
++
++package irc
++
++import (
++	"time"
++)
++
++// Creator grace (channels.creator-grace): when an unregistered channel
++// empties, the account that created it is remembered for a while. Until
++// then, whoever re-creates the channel by joining it first is not given
++// operator status unless it is that account, and that account gets
++// operator status back whenever it joins (even if someone else is in the
++// channel by then). Guests (no account) are not remembered. Afterwards (or
++// with creator-grace: 0, the default) the usual rule applies: the first
++// to join an empty unregistered channel gets +o.
++//
++// Registered channels are unaffected (they are never cleaned up, and their
++// founder's status comes from the registration). The records are kept in
++// memory only.
++
++// creatorGraceRecord: the creator of an emptied channel and until when it
++// keeps the channel's operator status.
++type creatorGraceRecord struct {
++	account string
++	until   time.Time
++	// the creator has been in the channel since the window began (always
++	// true for the channel it created)
++	present bool
++}
++
++// active reports whether the grace window covers now.
++func (r creatorGraceRecord) active(now time.Time) bool {
++	return r.account != "" && now.Before(r.until)
++}
++
++// noteCreatorGrace records the creator of a channel being cleaned up. cm
++// must be locked. A creator that was in the channel since its last window
++// began gets a new window; otherwise (the channel emptied, someone else
++// re-created it, and it emptied again) the running window is kept, not
++// extended, and a window that ran out is not renewed.
++func (cm *ChannelManager) noteCreatorGrace(cfname string, channel *Channel, now time.Time) {
++	grace := time.Duration(cm.server.Config().Channels.CreatorGrace)
++	// drop expired records while here (the map holds channels emptied within
++	// the last `grace`)
++	for name, rec := range cm.creatorGrace {
++		if !rec.active(now) {
++			delete(cm.creatorGrace, name)
++		}
++	}
++	if grace <= 0 {
++		return
++	}
++	rec := channel.creatorGraceRecord()
++	if rec.account == "" {
++		return
++	}
++	if rec.present {
++		rec.until = now.Add(grace)
++	} else if !rec.active(now) {
++		return
++	}
++	rec.present = false
++	if cm.creatorGrace == nil {
++		cm.creatorGrace = make(map[string]creatorGraceRecord)
++	}
++	cm.creatorGrace[cfname] = rec
++}
++
++// takeCreatorGrace removes and returns the record for a channel being
++// re-created, if its window is still running. cm must be locked.
++func (cm *ChannelManager) takeCreatorGrace(cfname string, now time.Time) (rec creatorGraceRecord, ok bool) {
++	rec, ok = cm.creatorGrace[cfname]
++	if ok {
++		delete(cm.creatorGrace, cfname)
++	}
++	if !ok || !rec.active(now) {
++		return creatorGraceRecord{}, false
++	}
++	// a rehash may have shortened or disabled the window since
++	grace := time.Duration(cm.server.Config().Channels.CreatorGrace)
++	if grace <= 0 {
++		return creatorGraceRecord{}, false
++	}
++	return rec, true
++}
++
++func (channel *Channel) creatorGraceRecord() creatorGraceRecord {
++	channel.stateMutex.RLock()
++	defer channel.stateMutex.RUnlock()
++	return creatorGraceRecord{account: channel.creator, until: channel.creatorGraceUntil, present: channel.creatorPresent}
++}
++
++// setCreatorGrace: a channel re-created within its creator's window.
++func (channel *Channel) setCreatorGrace(rec creatorGraceRecord) {
++	channel.stateMutex.Lock()
++	defer channel.stateMutex.Unlock()
++	channel.creator = rec.account
++	channel.creatorGraceUntil = rec.until
++	channel.creatorPresent = false
++}
++
++// creatorJoinOp decides whether a joining client is given +o in an
++// unregistered channel; channel.stateMutex must be held for writing.
++// firstJoin: the client is the only member. Records the creator of a new
++// channel.
++func (channel *Channel) creatorJoinOp(firstJoin bool, account string, now time.Time) bool {
++	if channel.registeredFounder != "" {
++		return false
++	}
++	grace := creatorGraceRecord{account: channel.creator, until: channel.creatorGraceUntil}
++	if grace.active(now) {
++		// the creator's window: only the creator gets +o, whenever it joins
++		if account == grace.account {
++			channel.creatorPresent = true
++			return true
++		}
++		return false
++	}
++	if firstJoin {
++		// the usual rule: whoever creates the channel gets +o
++		channel.creator = account
++		channel.creatorGraceUntil = time.Time{}
++		channel.creatorPresent = true
++		return true
++	}
++	return false
++}
+diff --git a/irc/channelcreatorgrace_test.go b/irc/channelcreatorgrace_test.go
+new file mode 100644
+index 00000000..fdec80ec
+--- /dev/null
++++ b/irc/channelcreatorgrace_test.go
+@@ -0,0 +1,278 @@
++// Copyright (c) 2026 James Trotter
++// released under the MIT license
++
++package irc
++
++import (
++	"io"
++	"testing"
++	"time"
++
++	"github.com/ergochat/ergo/irc/custime"
++	"github.com/ergochat/ergo/irc/modes"
++	"github.com/ergochat/ergo/irc/utils"
++)
++
++func creatorGraceTestServer(t *testing.T, grace time.Duration) *Server {
++	t.Helper()
++	server := channelExpiryTestServer(t, 0)
++	server.clients.Initialize()
++	config := server.Config()
++	config.Channels.CreatorGrace = custime.Duration(grace)
++	config.Limits.ChannelLen = 64
++	config.Channels.MaxChannelsPerClient = 100
++	return server
++}
++
++// discardConn is an IRCConn that drops whatever is written to it.
++type discardConn struct{}
++
++func (discardConn) UnderlyingConn() *utils.WrappedConn { return nil }
++func (discardConn) WriteLine([]byte) error             { return nil }
++func (discardConn) WriteLines([][]byte) error          { return nil }
++func (discardConn) ReadLine() ([]byte, error)          { return nil, io.EOF }
++func (discardConn) Close() error                       { return nil }
++
++// graceClient is a client with one session (whose output is dropped) that
++// can be in channels.
++func graceClient(server *Server, nick, account string) *Client {
++	client := guardTestClient(server, nick, account)
++	client.channels = make(ChannelSet)
++	client.sessions = []*Session{{client: client, socket: NewSocket(discardConn{}, 1<<20)}}
++	return client
++}
++
++func graceRB(client *Client) *ResponseBuffer { return NewResponseBuffer(client.Sessions()[0]) }
++
++func graceJoin(t *testing.T, server *Server, client *Client, name string) {
++	t.Helper()
++	if err, _ := server.channels.Join(client, name, "", false, graceRB(client)); err != nil {
++		t.Fatalf("%s joining %s: %v", client.Nick(), name, err)
++	}
++}
++
++func gracePart(t *testing.T, server *Server, client *Client, name string) {
++	t.Helper()
++	if err := server.channels.Part(client, name, "", graceRB(client)); err != nil {
++		t.Fatalf("%s parting %s: %v", client.Nick(), name, err)
++	}
++}
++
++func isOp(server *Server, client *Client, name string) bool {
++	channel := server.channels.Get(name)
++	return channel != nil && channel.ClientIsAtLeast(client, modes.ChannelOperator)
++}
++
++// expireGrace moves a remembered creator's window into the past.
++func expireGrace(server *Server, cfname string) {
++	server.channels.Lock()
++	defer server.channels.Unlock()
++	rec := server.channels.creatorGrace[cfname]
++	rec.until = time.Now().Add(-time.Second)
++	server.channels.creatorGrace[cfname] = rec
++}
++
++func TestCreatorGraceOff(t *testing.T) {
++	// the default (0): upstream behaviour, whoever re-creates it gets +o
++	server := creatorGraceTestServer(t, 0)
++	alice := graceClient(server, "alice", "alice")
++	mallory := graceClient(server, "mallory", "mallory")
++	graceJoin(t, server, alice, "#c")
++	gracePart(t, server, alice, "#c")
++	if server.channels.Get("#c") != nil {
++		t.Fatal("empty unregistered channel not cleaned up")
++	}
++	graceJoin(t, server, mallory, "#c")
++	if !isOp(server, mallory, "#c") {
++		t.Fatal("with creator-grace off, the first to join should get +o")
++	}
++	if len(server.channels.creatorGrace) != 0 {
++		t.Fatalf("records kept with creator-grace off: %v", server.channels.creatorGrace)
++	}
++}
++
++func TestCreatorGrace(t *testing.T) {
++	server := creatorGraceTestServer(t, 10*time.Minute)
++	alice := graceClient(server, "alice", "alice")
++	mallory := graceClient(server, "mallory", "mallory")
++	bob := graceClient(server, "bob", "bob")
++
++	graceJoin(t, server, alice, "#c")
++	if !isOp(server, alice, "#c") {
++		t.Fatal("creator should get +o")
++	}
++	graceJoin(t, server, bob, "#c")
++	if isOp(server, bob, "#c") {
++		t.Fatal("second member got +o")
++	}
++	gracePart(t, server, bob, "#c")
++	gracePart(t, server, alice, "#c") // the channel empties: alice is remembered
++	rec, ok := server.channels.creatorGrace["#c"]
++	if !ok || rec.account != "alice" || time.Until(rec.until) < 9*time.Minute {
++		t.Fatalf("creator not remembered: %+v", rec)
++	}
++
++	// someone else re-creates it within the window: no +o
++	graceJoin(t, server, mallory, "#c")
++	if isOp(server, mallory, "#c") {
++		t.Fatal("non-creator re-creating the channel within the window got +o")
++	}
++	if _, ok := server.channels.creatorGrace["#c"]; ok {
++		t.Fatal("record should move to the re-created channel")
++	}
++	// the creator comes back while mallory is there: +o
++	graceJoin(t, server, alice, "#C")
++	if !isOp(server, alice, "#c") {
++		t.Fatal("creator rejoining within the window should get +o back")
++	}
++	// others joining now: nothing
++	graceJoin(t, server, bob, "#c")
++	if isOp(server, bob, "#c") {
++		t.Fatal("bob got +o")
++	}
++	// the creator reloads (parts and rejoins) while others stay: +o again
++	gracePart(t, server, alice, "#c")
++	graceJoin(t, server, alice, "#c")
++	if !isOp(server, alice, "#c") {
++		t.Fatal("creator rejoining (reload) within the window should get +o")
++	}
++
++	// everyone leaves: alice was there, so a fresh window starts
++	for _, c := range []*Client{alice, bob, mallory} {
++		gracePart(t, server, c, "#c")
++	}
++	if rec, ok := server.channels.creatorGrace["#c"]; !ok || rec.account != "alice" || time.Until(rec.until) < 9*time.Minute {
++		t.Fatalf("fresh window not started: %+v", rec)
++	}
++
++	// after the window: the usual rule, and the new creator is remembered
++	expireGrace(server, "#c")
++	graceJoin(t, server, mallory, "#c")
++	if !isOp(server, mallory, "#c") {
++		t.Fatal("after the window, the first to join should get +o")
++	}
++	graceJoin(t, server, alice, "#c")
++	if isOp(server, alice, "#c") {
++		t.Fatal("old creator got +o after the window")
++	}
++	gracePart(t, server, alice, "#c")
++	gracePart(t, server, mallory, "#c")
++	if rec := server.channels.creatorGrace["#c"]; rec.account != "mallory" {
++		t.Fatalf("new creator not remembered: %+v", rec)
++	}
++}
++
++func TestCreatorGraceNotExtendedWithoutCreator(t *testing.T) {
++	server := creatorGraceTestServer(t, 10*time.Minute)
++	alice := graceClient(server, "alice", "alice")
++	mallory := graceClient(server, "mallory", "mallory")
++	graceJoin(t, server, alice, "#c")
++	gracePart(t, server, alice, "#c")
++	first := server.channels.creatorGrace["#c"].until
++
++	// mallory re-creates and leaves again: alice's window runs on unchanged
++	graceJoin(t, server, mallory, "#c")
++	gracePart(t, server, mallory, "#c")
++	rec, ok := server.channels.creatorGrace["#c"]
++	if !ok || rec.account != "alice" || !rec.until.Equal(first) {
++		t.Fatalf("window changed: %+v (was until %v)", rec, first)
++	}
++
++	// it runs out while mallory holds the (opless) channel: not renewed
++	graceJoin(t, server, mallory, "#c")
++	channel := server.channels.Get("#c")
++	channel.stateMutex.Lock()
++	channel.creatorGraceUntil = time.Now().Add(-time.Second)
++	channel.stateMutex.Unlock()
++	gracePart(t, server, mallory, "#c")
++	if rec, ok := server.channels.creatorGrace["#c"]; ok {
++		t.Fatalf("lapsed window renewed: %+v", rec)
++	}
++	graceJoin(t, server, mallory, "#c")
++	if !isOp(server, mallory, "#c") {
++		t.Fatal("after a lapsed window the first to join should get +o")
++	}
++}
++
++func TestCreatorGraceGuests(t *testing.T) {
++	// a guest creator isn't remembered: the usual rule
++	server := creatorGraceTestServer(t, 10*time.Minute)
++	guest := graceClient(server, "guest", "")
++	mallory := graceClient(server, "mallory", "mallory")
++	graceJoin(t, server, guest, "#g")
++	if !isOp(server, guest, "#g") {
++		t.Fatal("guest creator should get +o")
++	}
++	gracePart(t, server, guest, "#g")
++	if len(server.channels.creatorGrace) != 0 {
++		t.Fatalf("guest remembered: %v", server.channels.creatorGrace)
++	}
++	graceJoin(t, server, mallory, "#g")
++	if !isOp(server, mallory, "#g") {
++		t.Fatal("re-creating a guest's channel should give +o")
++	}
++
++	// and a guest can't take a signed-in creator's channel
++	alice := graceClient(server, "alice", "alice")
++	graceJoin(t, server, alice, "#a")
++	gracePart(t, server, alice, "#a")
++	graceJoin(t, server, guest, "#a")
++	if isOp(server, guest, "#a") {
++		t.Fatal("guest re-creating within the window got +o")
++	}
++}
++
++func TestCreatorGraceRehash(t *testing.T) {
++	// turned off (rehash) while a record is kept: the usual rule
++	server := creatorGraceTestServer(t, 10*time.Minute)
++	alice := graceClient(server, "alice", "alice")
++	mallory := graceClient(server, "mallory", "mallory")
++	graceJoin(t, server, alice, "#c")
++	gracePart(t, server, alice, "#c")
++	server.Config().Channels.CreatorGrace = 0
++	graceJoin(t, server, mallory, "#c")
++	if !isOp(server, mallory, "#c") {
++		t.Fatal("with creator-grace turned off, the first to join should get +o")
++	}
++}
++
++func TestCreatorGraceAutoRegister(t *testing.T) {
++	// with auto-register, the re-creator within the window isn't op, so the
++	// channel isn't registered to them; the creator coming back registers it
++	server := creatorGraceTestServer(t, 10*time.Minute)
++	chanservService.prefix = "ChanServ!ChanServ@localhost"
++	alice := graceClient(server, "alice", "alice")
++	mallory := graceClient(server, "mallory", "mallory")
++	graceJoin(t, server, alice, "#c") // auto-register still off
++	gracePart(t, server, alice, "#c")
++	server.Config().Channels.Registration.AutoRegister = true
++	server.Config().Channels.Registration.MaxChannelsPerAccount = 15
++
++	graceJoin(t, server, mallory, "#c")
++	if f := server.channels.Get("#c").Founder(); f != "" {
++		t.Fatalf("registered to %q within alice's window", f)
++	}
++	gracePart(t, server, mallory, "#c")
++	graceJoin(t, server, alice, "#c")
++	if f := server.channels.Get("#c").Founder(); f != "alice" {
++		t.Fatalf("creator re-creating should auto-register it, founder %q", f)
++	}
++}
++
++func TestCreatorGraceSweep(t *testing.T) {
++	server := creatorGraceTestServer(t, 10*time.Minute)
++	alice := graceClient(server, "alice", "alice")
++	for _, name := range []string{"#a", "#b"} {
++		graceJoin(t, server, alice, name)
++		gracePart(t, server, alice, name)
++	}
++	expireGrace(server, "#a")
++	graceJoin(t, server, alice, "#d")
++	gracePart(t, server, alice, "#d")
++	if _, ok := server.channels.creatorGrace["#a"]; ok {
++		t.Fatal("expired record not swept")
++	}
++	if len(server.channels.creatorGrace) != 2 {
++		t.Fatalf("records: %v", server.channels.creatorGrace)
++	}
++}
+diff --git a/irc/channelmanager.go b/irc/channelmanager.go
+index c3dea00d..e8d7da93 100644
+--- a/irc/channelmanager.go
++++ b/irc/channelmanager.go
+@@ -31,7 +31,9 @@ type ChannelManager struct {
+ 	chans          map[string]*channelManagerEntry
+ 	chansSkeletons utils.HashSet[string]
+ 	purgedChannels map[string]ChannelPurgeRecord // casefolded name to purge record
+-	server         *Server
++	// casefolded name to the creator of an emptied channel, see channelcreatorgrace.go
++	creatorGrace map[string]creatorGraceRecord
++	server       *Server
+ }
+ 
+ // NewChannelManager returns a new ChannelManager.
+@@ -133,6 +135,9 @@ func (cm *ChannelManager) Join(client *Client, name string, key string, isSajoin
+ 				channel:      NewChannel(server, name, casefoldedName, false, RegisteredChannel{}),
+ 				pendingJoins: 0,
+ 			}
++			if rec, ok := cm.takeCreatorGrace(casefoldedName, time.Now()); ok {
++				entry.channel.setCreatorGrace(rec)
++			}
+ 			cm.chansSkeletons.Add(skeleton)
+ 			entry.skeleton = skeleton
+ 			cm.chans[casefoldedName] = entry
+@@ -176,6 +181,7 @@ func (cm *ChannelManager) maybeCleanupInternal(cfname string, entry *channelMana
+ 		entry.pendingJoins -= 1
+ 	}
+ 	if entry.pendingJoins == 0 && entry.channel.IsClean() {
++		cm.noteCreatorGrace(cfname, entry.channel, time.Now())
+ 		delete(cm.chans, cfname)
+ 		if entry.skeleton != "" {
+ 			delete(cm.chansSkeletons, entry.skeleton)
+diff --git a/irc/config.go b/irc/config.go
+index 97afe9e8..fbdb90f5 100644
+--- a/irc/config.go
++++ b/irc/config.go
+@@ -697,6 +697,9 @@ type Config struct {
+ 			// unregister channels that have had no activity for this long (0 to disable):
+ 			ExpireAfter custime.Duration `yaml:"expire-after"`
+ 		}
++		// after an unregistered channel empties, only its creator's account
++		// gets operator status in it for this long (0 to disable):
++		CreatorGrace     custime.Duration `yaml:"creator-grace"`
+ 		ListDelay        time.Duration    `yaml:"list-delay"`
+ 		InviteExpiration custime.Duration `yaml:"invite-expiration"`
+ 		AutoJoin         []string         `yaml:"auto-join"`
+@@ -1742,6 +1745,9 @@ func LoadConfig(filename string) (config *Config, err error) {
+ 	if config.Channels.Registration.ExpireAfter < 0 {
+ 		return nil, errors.New("channels.registration.expire-after must not be negative")
+ 	}
++	if config.Channels.CreatorGrace < 0 {
++		return nil, errors.New("channels.creator-grace must not be negative")
++	}
+ 
+ 	config.Server.Compatibility.forceTrailing = utils.BoolDefaultTrue(config.Server.Compatibility.ForceTrailing)
+ 	config.Server.Compatibility.allowTruncation = utils.BoolDefaultTrue(config.Server.Compatibility.AllowTruncation)
+diff --git a/traditional.yaml b/traditional.yaml
+index 8ec4ca4d..b8a024bd 100644
+--- a/traditional.yaml
++++ b/traditional.yaml
+@@ -653,6 +653,14 @@ channels:
+     # `chanreg` operator capability
+     operator-only-creation: false
+ 
++    # when an unregistered channel empties, remember the account that created
++    # it for this long: until then, only that account gets operator status in
++    # the channel (whoever else re-creates it by joining first doesn't), and
++    # it gets operator status back whenever it rejoins. guests (no account)
++    # aren't remembered. 0 disables (the first to join an empty channel gets
++    # operator status, as usual)
++    creator-grace: 0
++
+     # channel registration - requires an account
+     registration:
+         # can users register new channels?
+-- 
+2.56.1
+

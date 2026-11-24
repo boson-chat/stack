@@ -5,7 +5,9 @@
 # removal over the API, see docs/irc-channels.md; account extbans and the
 # channel access / sajoin API for role channels, see docs/roles.md; network
 # channels: channel_ensure/channel_drop and sajoin by nick; the channel
-# guard for channels restricted to roles, see docs/irc-channels.md), plus
+# guard for channels restricted to roles, see docs/irc-channels.md; creator
+# grace: an emptied unregistered channel's creator keeps operator status for
+# a while, see docs/irc-channels.md), plus
 # boson-ergo: renders ircd.yaml from the environment,
 # checks SASL logins against the boson auth service, syncs roles and runs
 # RoleServ.
