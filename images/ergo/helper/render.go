@@ -47,6 +47,10 @@ type renderData struct {
 	// channels.registration.auto-register / expire-after (patched Ergo).
 	ChannelAutoRegister bool
 	ChannelExpireAfter  string
+	// channels.creator-grace (patched Ergo): how long an emptied unregistered
+	// channel's creator keeps operator status (IRC_CHANNEL_CREATOR_GRACE /
+	// irc.channel_creator_grace, default 10m; 0 = off).
+	ChannelCreatorGrace string
 	// Ergo HTTP API (internal network only), for quicvoiced's founder/role
 	// lookups. Empty token = API off.
 	APIToken    string
@@ -229,6 +233,10 @@ func render(get func(string) string, tmplPath, dir string, st netSettings, class
 	d.RequireSASL = requireSASL(get, st)
 	if d.ChannelAutoRegister, d.ChannelExpireAfter, err = channelLifecycle(get, st); err != nil {
 		return false, err
+	}
+	d.ChannelCreatorGrace = strEnv(get, "IRC_CHANNEL_CREATOR_GRACE", "10m")
+	if !ergoDurRe.MatchString(d.ChannelCreatorGrace) {
+		return false, fmt.Errorf("IRC_CHANNEL_CREATOR_GRACE must be a duration like 10m, 1h or 0, got %q", d.ChannelCreatorGrace)
 	}
 	src := defaultTemplate
 	if tmplPath != "" {

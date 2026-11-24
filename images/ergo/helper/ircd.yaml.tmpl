@@ -237,6 +237,13 @@ channels:
         # channel_expiry_days (auth): registered channels without joins or
         # messages for this long are unregistered (0 = never)
         expire-after: {{ .ChannelExpireAfter }}
+    # irc.channel_creator_grace (IRC_CHANNEL_CREATOR_GRACE): when a channel
+    # that isn't registered (a guest's, one past the account's channel limit,
+    # one from before auto-registration) empties, the account that created
+    # it is remembered this long: only that account gets operator status in
+    # it meanwhile (not whoever re-creates it first), and gets it back when
+    # it rejoins. Guests aren't remembered. 0 = off.
+    creator-grace: {{ q .ChannelCreatorGrace }}
     list-delay: 0s
     invite-expiration: 24h
 

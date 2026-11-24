@@ -190,6 +190,12 @@ version: 1
 #   persistent_history: true
 #   # How long history is kept (Ergo durations: 7d, 1w2d; 0 = forever).
 #   history_expire: 7d
+#   # When a channel nobody registered empties, its creator's account keeps
+#   # operator status in it this long: whoever else re-creates it first gets
+#   # no +o, and the creator gets +o back on rejoining (docs/irc-channels.md
+#   # "Creator grace"). Guests aren't remembered. 0 = off.
+#   # Default: IRC_CHANNEL_CREATOR_GRACE (10m).
+#   channel_creator_grace: 10m
 #   # Ergo's log level: debug, info, warn, error.
 #   log_level: info
 #

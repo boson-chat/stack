@@ -206,6 +206,7 @@ func TestRenderChannelLifecycle(t *testing.T) {
 			netSettings{ChannelCreation: policyRegistered, ExpiryDays: &ninety}, []string{"expire-after: 20s\n"}, false},
 		{"bad IRC_CHANNEL_EXPIRE_AFTER", map[string]string{"IRC_CHANNEL_EXPIRE_AFTER": "soon"}, netSettings{ChannelCreation: policyRegistered}, nil, true},
 		{"bad IRC_CHANNEL_EXPIRY_DAYS", map[string]string{"IRC_CHANNEL_EXPIRY_DAYS": "-1"}, netSettings{ChannelCreation: policyRegistered}, nil, true},
+		{"bad IRC_CHANNEL_CREATOR_GRACE", map[string]string{"IRC_CHANNEL_CREATOR_GRACE": "-5m"}, netSettings{ChannelCreation: policyRegistered}, nil, true},
 	}
 	for _, c := range cases {
 		dir := t.TempDir()
@@ -224,6 +225,22 @@ func TestRenderChannelLifecycle(t *testing.T) {
 			if !strings.Contains(conf, "        "+w) {
 				t.Errorf("%s: ircd.yaml lacks %q", c.name, w)
 			}
+		}
+	}
+}
+
+func TestRenderCreatorGrace(t *testing.T) {
+	for env, want := range map[string]string{"": `"10m"`, "0": `"0"`, "1h": `"1h"`} {
+		dir := t.TempDir()
+		e := map[string]string{}
+		if env != "" {
+			e["IRC_CHANNEL_CREATOR_GRACE"] = env
+		}
+		if _, err := render(testEnv(e), "", dir, netSettings{ChannelCreation: policyRegistered}, nil); err != nil {
+			t.Fatalf("%q: %v", env, err)
+		}
+		if conf := readConf(t, dir); !strings.Contains(conf, "\n    creator-grace: "+want+"\n") {
+			t.Errorf("%q: ircd.yaml lacks creator-grace: %s", env, want)
 		}
 	}
 }
