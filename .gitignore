@@ -24,4 +24,5 @@ test-results/
 
 # The setup wizard e2e (test/setup)
 test/setup/shots/
+test/federation/shots/
 __pycache__/

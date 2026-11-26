@@ -536,13 +536,20 @@ jobs:
   # remote.test, separate compose projects, Pebble certificates, the
   # remote's own directory): test/federation/run.sh, docs/federation.md.
   federation-e2e:
-    name: federation e2e (two installs, home -> remote sign-in, IRC, uploads, voice, ban)
+    name: federation e2e (two installs, home -> remote sign-in, IRC, uploads, QUIC voice, admin panel)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - name: home.test + remote.test, alice signs in on the remote with her home account
+      - name: home.test + remote.test, alice signs in on the remote with her home account; the remote's admin panel bans, blocks, turns off
         run: test/federation/run.sh
+      - name: Screenshots of the admin panel steps
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: federation-screenshots
+          path: test/federation/shots/
+          if-no-files-found: ignore
 
   # The add-on path ("Add Boson to my existing IRC server") against each IRC
   # server fixture: test/setup/run-addon.sh. Pull requests run ngircd-anope
