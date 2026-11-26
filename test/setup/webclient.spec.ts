@@ -12,7 +12,8 @@ test('the web client loads', async ({ page }) => {
   const res = await page.goto(`https://chat.${DOMAIN}/`, { waitUntil: 'domcontentloaded' });
   expect(res?.status()).toBe(200);
   await page.waitForFunction(() => 'bosonShellReady' in window, null, { timeout: 60_000 });
-  const cfg = await (await page.request.get(`https://chat.${DOMAIN}/boson-config.js`)).text();
+  // From the page (the request API doesn't use the browser's host mapping).
+  const cfg = await page.evaluate(() => fetch('/boson-config.js').then((r) => r.text()));
   expect(cfg).toContain(`"https://auth.${DOMAIN}"`);
   await expect(page.getByRole('button', { name: 'Continue without an account' })).toBeVisible();
   expect(errors).toEqual([]);
