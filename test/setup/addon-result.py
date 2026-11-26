@@ -4,7 +4,7 @@
 1. The bridge (irc.DOMAIN:6697) and the web names have the ACME CA's
    certificates; the bridge is healthy (/api/managed/health).
 2. Boson users (the admin, or the NickServ account in NickServ mode, and a
-   new user who signs up) get bridge accounts (bridge-sync), sign in to the
+   new user who signs up) get bridge accounts (auth provisions them), sign in to the
    bridge with their access token (SASL OAUTHBEARER), join a channel.
 3. A message reaches the other Boson user with msgid and server-time; a
    reply (+draft/reply, text with the "nick: " fallback) and a reaction
@@ -15,7 +15,10 @@
    users' messages (with the "nick: " reply text) and their own address
    (WEBIRC), not the bridge's.
 5. NickServ mode (auth with ACCOUNT_BACKEND=nickserv): the existing NickServ
-   account bosonprobe signs in to Boson with its NickServ password.
+   account bosonprobe signs in to Boson with its NickServ password; auth
+   hands the bridge that login (method BRIDGE_NICKSERV_METHOD: nickserv on
+   a server without SASL, else sasl), and the classic client's WHOIS shows
+   the Boson users identified to NickServ.
 6. Nothing a Boson user receives (IRC lines, boson.json, auth's config, the
    web client's config) says "evrd".
 """
@@ -195,13 +198,21 @@ else:
     check("a second NickServ account signs in to Boson", st == 200, (st, rr))
     tok_b = rr.get("access_token") if isinstance(rr, dict) else None
 
+ns_method = ENV.get("BRIDGE_NICKSERV_METHOD") or "sasl"
+if nickserv_mode:
+    print(f"bridge NickServ login method: {ns_method} (BRIDGE_NICKSERV_METHOD={ENV.get('BRIDGE_NICKSERV_METHOD', '')!r})")
 for name in (first, second):
     acct = None
     for _ in range(30):
         acct = bridge_api(f"/api/managed/users/{name.lower()}")
-        if isinstance(acct, dict) and acct.get("subject"): break
+        login = (acct or {}).get("auth") or {} if isinstance(acct, dict) else {}
+        if isinstance(acct, dict) and acct.get("subject") and (not nickserv_mode or login.get("hasPassword")): break
         time.sleep(1)
-    check(f"{name} has a bridge account (bridge-sync)", isinstance(acct, dict) and acct.get("subject"), acct)
+    check(f"{name} has a bridge account (auth provisions it)", isinstance(acct, dict) and acct.get("subject"), acct)
+    if nickserv_mode and isinstance(acct, dict):
+        login = acct.get("auth") or {}
+        check(f"{name}: auth handed the bridge the NickServ login ({ns_method})",
+              login.get("method") == ns_method and login.get("hasPassword") is True and (login.get("account") or "").lower() == name.lower(), login)
 
 CAPS = "message-tags server-time draft/chathistory batch echo-message"
 chan = "#e2e-" + secrets.token_hex(3)
@@ -273,6 +284,19 @@ whois = []
 c.wait(lambda l: (whois.append(l) or False) or " 318 " in l, 15)
 ips = set(re.findall(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", " ".join(x for x in whois if " 311 " in x or " 378 " in x or " 338 " in x)))
 check(f"the classic client sees {second}'s own address via WEBIRC, not the bridge's ({src})", ips and src not in ips, whois)
+if nickserv_mode:
+    # The bridge identified their connections to NickServ: 330 (logged in
+    # as) or 307 (identified/registered nick), whichever the server sends.
+    for name in (first, second):
+        found = None
+        for _ in range(10):
+            c.send(f"WHOIS {name}")
+            w = []
+            c.wait(lambda l: (w.append(l) or False) or " 318 " in l, 15)
+            found = [x for x in w if re.search(r" (307|330) ", x)]
+            if found: break
+            time.sleep(2)
+        check(f"{name} is identified to NickServ on the IRC server (WHOIS 307/330)", bool(found), found or w)
 for x in (a, b2, c): x.close()
 
 # 5/6. nothing Boson users see says evrd

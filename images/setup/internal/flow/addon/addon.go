@@ -207,6 +207,7 @@ func (f *Flow) probe(w http.ResponseWriter, r *http.Request) {
 			ad.Services = "none"
 		}
 		ad.ServicesServer = rep.Services.Server
+		ad.NoSASL = !saslPlain(rep)
 		if !req.Recheck || ad.SourceIP == "" || changedServer {
 			ad.SourceIP = f.sourceIP(rep)
 		}
@@ -376,9 +377,13 @@ func recommend(rep *probe.Report) (string, string, string) {
 	if rpc := rep.Services.RPC; rpc != nil {
 		rpcOK, flavor, proto = rpc.Reachable && rpc.Authorized, rpc.Flavor, rpc.Protocol
 	}
+	return stack.RecommendAccounts(flavor, proto, rpcOK, saslPlain(rep), rep.Services.NickServ)
+}
+
+// saslPlain: the server offers SASL PLAIN (or SASL without a mechanism list).
+func saslPlain(rep *probe.Report) bool {
 	_, sasl := rep.Caps["sasl"]
-	plain := sasl && (len(rep.SASLMechanisms) == 0 || containsFold(rep.SASLMechanisms, "PLAIN"))
-	return stack.RecommendAccounts(flavor, proto, rpcOK, plain, rep.Services.NickServ)
+	return sasl && (len(rep.SASLMechanisms) == 0 || containsFold(rep.SASLMechanisms, "PLAIN"))
 }
 
 func containsFold(l []string, s string) bool {

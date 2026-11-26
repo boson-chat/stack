@@ -60,6 +60,10 @@ type AddonAnswers struct {
 	// server name (IDENTIFY checks NickServ is there).
 	Services       string `json:"services"`
 	ServicesServer string `json:"services_server"`
+	// NoSASL: the probe found no SASL PLAIN on the server, so the bridge
+	// identifies NickServ accounts with IDENTIFY once connected
+	// (BRIDGE_NICKSERV_METHOD=nickserv, auth docs/bridge.md).
+	NoSASL bool `json:"no_sasl"`
 	// RPCURL: the services' JSON-RPC / XML-RPC endpoint (optional); its
 	// token is a secret (Secrets.RPCToken).
 	RPCURL string `json:"rpc_url"`
@@ -163,7 +167,7 @@ var bridgeEnvKeys = []string{"WELLKNOWN_SECTIONS", "ADMIN_IRC_CHECK", "ADMIN_CON
 	"WEBIRC_ALIASES", "WEBIRC_PASSWORDS", "WEBIRC_EXTRA_PORTS", "BRIDGE_CERT_HOST", "BRIDGE_IRC_SERVER",
 	"ACCOUNT_BACKEND", "NICKSERV_STRATEGY", "NICKSERV_SERVICES", "NICKSERV_RPC_URL", "NICKSERV_RPC_TOKEN",
 	"NICKSERV_IRC_ADDR", "NICKSERV_IRC_TLS", "NICKSERV_TLS_PIN_SHA256", "NICKSERV_ALLOW_PLAINTEXT",
-	"NICKSERV_SERVICES_SERVER", "NICKSERV_REGISTRATION"}
+	"NICKSERV_SERVICES_SERVER", "NICKSERV_REGISTRATION", "BRIDGE_NICKSERV_METHOD"}
 
 // bridgeSecrets are generated for the add-on path only.
 var bridgeSecrets = []struct {
@@ -227,6 +231,7 @@ func addonEnv(p *Plan, a Answers, s Secrets, existing map[string]string, gen *Ge
 	// auth: the account backend (auth's docs/nickserv.md).
 	if ad.Accounts != AccountsNickServ {
 		set("ACCOUNT_BACKEND", "local")
+		set("BRIDGE_NICKSERV_METHOD", "")
 		for _, k := range []string{"NICKSERV_STRATEGY", "NICKSERV_SERVICES", "NICKSERV_RPC_URL", "NICKSERV_IRC_ADDR",
 			"NICKSERV_IRC_TLS", "NICKSERV_TLS_PIN_SHA256", "NICKSERV_ALLOW_PLAINTEXT", "NICKSERV_SERVICES_SERVER", "NICKSERV_REGISTRATION"} {
 			set(k, "")
@@ -236,6 +241,14 @@ func addonEnv(p *Plan, a Answers, s Secrets, existing map[string]string, gen *Ge
 	}
 	set("ACCOUNT_BACKEND", "nickserv")
 	set("NICKSERV_STRATEGY", ad.Strategy)
+	// How the bridge logs NickServ accounts in (auth hands it the login at
+	// each sign-in): SASL where the server has it (auth's default), else
+	// NickServ IDENTIFY once connected.
+	if ad.NoSASL {
+		set("BRIDGE_NICKSERV_METHOD", "nickserv")
+	} else {
+		set("BRIDGE_NICKSERV_METHOD", "")
+	}
 	svc := ad.Services
 	if strings.HasPrefix(ad.Strategy, "atheme") {
 		svc = "atheme"

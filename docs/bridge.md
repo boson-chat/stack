@@ -71,10 +71,10 @@ answer.
 |---|---|
 | `evrd-links` | evrd's connection holder (`evrd-links`): holds every Boson user's connection to your server and the bridge's listeners, publishes 6697. Pinned to `EVRD_LINKS_IMAGE` (default `ghcr.io/4evrd/evrd:0.59.0`) and **never restarted by updates**: restarting it drops every Boson user off IRC. The admin panel can't restart it (`DOCKER_PROTECTED_SERVICES`). |
 | `evrd` | evrd (`EVRD_IMAGE`, same image) in `evrd-links`' network namespace, config `bridge/evrd.conf` (written by setup), data in `bridge_data`, certificate from certsync (`BRIDGE_CERT_HOST`). Health: `GET /api/managed/health` with `BRIDGE_TOKEN`. Update it on its own (`up -d --no-deps evrd`): connections stay up. |
-| `bridge-sync` | `images/bridgesync`: gives every Boson account (auth's `users`, read-only) its bridge account through the managed API (`PUT/DELETE /api/managed/users/{username}`, subject = the token's `sub`), within `BRIDGE_SYNC_INTERVAL` (2s). Disabled accounts are switched off, deleted ones removed. |
+| `auth` | Also provisions the bridge (auth ≥ 1.25.0, auth `docs/bridge.md`): with `BRIDGE_API_URL` (compose sets `http://evrd-links:8098` while `BRIDGE_CERT_HOST` is set) and `BRIDGE_TOKEN`, it gives every Boson account its bridge account through evrd's managed API (`PUT/DELETE /api/managed/users/{username}`, subject = the token's `sub`). Database triggers queue every change (sign-up, rename, disable or federation ban, delete) and a full sync runs at start and every 10 minutes, so a bridge outage loses nothing. After each NickServ sign-in it also hands the bridge that NickServ login, encrypted there with evrd's secret key, so the user's connection to your server is identified to NickServ (`BRIDGE_NICKSERV_METHOD`: `sasl` by default; setup writes `nickserv`, IDENTIFY once connected, for a server without SASL such as ngIRCd). Status: `GET http://auth:8081/internal/v1/bridge/status` (`X-Internal-Token`). This replaces the stack's earlier `bridge-sync` service, whose accounts auth takes over on its first full sync; on an existing install `docker compose up -d --remove-orphans` removes its old container. |
 
 `.env`: `BRIDGE_TOKEN`, `BRIDGE_WEBIRC_PASSWORD`, `BRIDGE_SECRET_KEY`
-(generated), `BRIDGE_IRC_SERVER`, `BRIDGE_CERT_HOST`; auth's
+(generated), `BRIDGE_IRC_SERVER`, `BRIDGE_CERT_HOST`, `BRIDGE_NICKSERV_METHOD`; auth's
 `ACCOUNT_BACKEND` and `NICKSERV_*` (auth `docs/nickserv.md`, auth ≥ 1.23.0);
 `WEBIRC_ALIASES` (the web client's IRC goes to the bridge),
 `WEBIRC_PASSWORDS` (your server, for direct connections through the web
@@ -84,16 +84,6 @@ server), `ADMIN_IRC_CHECK`, `ADMIN_CONFIG_STATUS_TARGETS` (no Ergo),
 
 ## Not yet
 
-- **NickServ identification on the bridge.** With NickServ accounts, a
-  Boson user signs in with their NickServ password, but the bridge's
-  connection isn't identified to NickServ yet: auth must hand the bridge the
-  services login. auth's `nsaccount.Provisioner` hook (called after each
-  NickServ sign-in, with the password in hand) should `PUT
-  /api/managed/users/{username}` on the bridge with `{"subject", "email",
-  "nick", "auth": {"method": "sasl" or "nickserv", "account", "password"}}`
-  (`BRIDGE_API_URL=http://evrd-links:8098`, `BRIDGE_TOKEN`; evrd keeps the
-  password encrypted with its secret key). Then `bridge-sync` only creates
-  accounts and never touches `auth`.
 - **Guests** (evrd's managed mode has none yet).
 - **Web client users' addresses**: the web gateway connects to the bridge
   from the compose network and evrd takes no WEBIRC from it, so a web user

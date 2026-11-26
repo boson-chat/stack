@@ -491,21 +491,6 @@ jobs:
         if: always()
         run: test/ircds/run.sh down "$PAIRING"
 
-  bridgesync:
-    name: bridge-sync (Go)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: images/bridgesync
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: images/bridgesync/go.mod
-      - run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
-      - run: go vet ./...
-      - run: go test -race -count=1 ./...
-
   setup:
     name: setup wizard (Go)
     runs-on: ubuntu-latest
@@ -593,7 +578,7 @@ jobs:
 
   publish:
     name: publish images to Harbor
-    needs: [bridgesync, setup-addon-e2e, federation-e2e, helper, webircgateway, smoke, directory, files, minio, nick-claim, roles, acme, probe, ircds, setup, setup-e2e]
+    needs: [setup-addon-e2e, federation-e2e, helper, webircgateway, smoke, directory, files, minio, nick-claim, roles, acme, probe, ircds, setup, setup-e2e]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
@@ -625,7 +610,7 @@ jobs:
         if: steps.creds.outputs.ok == 'true'
         run: |
           # <dir>:<tag>; every image also gets :sha-<commit>.
-          for img in certsync:latest ergo:2.19.1 webircgateway:1.1.0-boson.2 bridgesync:0.1.0; do
+          for img in certsync:latest ergo:2.19.1 webircgateway:1.1.0-boson.2; do
             name=${img%%:*}; tag=${img#*:}
             docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --push \
               --label org.opencontainers.image.source=https://github.com/${{ github.repository }} \
