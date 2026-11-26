@@ -199,7 +199,7 @@ func serve() error {
 		}()
 	}
 
-	fr, err := fresh.New(fresh.Deps{
+	deps := fresh.Deps{
 		InstallDir: dir,
 		Runner:     runner,
 		DNS: &checks.DNS{
@@ -211,13 +211,18 @@ func serve() error {
 		DockerGID: dockerGID,
 		Redactor:  red,
 		Finish:    finish,
-	})
+	}
+	fr, err := fresh.New(deps)
+	if err != nil {
+		return err
+	}
+	ad, err := addon.New(deps)
 	if err != nil {
 		return err
 	}
 	reg := &flow.Registry{}
 	reg.Add(fr)
-	reg.Add(addon.Flow{})
+	reg.Add(ad)
 
 	srv.Handler = (&server.Server{Gate: g, Flows: reg, Static: web.FS, Instance: instance, Log: log}).Handler()
 

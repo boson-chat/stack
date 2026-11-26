@@ -34,8 +34,8 @@ services:
     volumes:
       - ./ngircd/services.conf:/etc/ngircd/conf.d/services.conf:ro
     ports:
-      - "127.0.0.1:${NGIRCD_ANOPE_TLS_PORT:-16697}:6697"
-      - "127.0.0.1:${NGIRCD_ANOPE_PORT:-16667}:6667"
+      - "${IRCDS_BIND:-127.0.0.1}:${NGIRCD_ANOPE_TLS_PORT:-16697}:6697"
+      - "${IRCDS_BIND:-127.0.0.1}:${NGIRCD_ANOPE_PORT:-16667}:6667"
     healthcheck: &irc-health
       # 6667 and 6697 in LISTEN, from /proc (connecting would put a
       # connection, or a TLS error, in the log every 2 s).
@@ -48,7 +48,7 @@ services:
     profiles: [ngircd-anope]
     command: ["bin/anope", "--nofork", "--nopid", "--config=ngircd.conf"]
     ports:
-      - "127.0.0.1:${NGIRCD_ANOPE_RPC_PORT:-18080}:8080"
+      - "${IRCDS_BIND:-127.0.0.1}:${NGIRCD_ANOPE_RPC_PORT:-18080}:8080"
     healthcheck:
       <<: *anope-health
       test: ["CMD-SHELL", "curl -sf -H 'Authorization: Bearer Zml4dHVyZS1ycGMtdG9rZW4=' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"anope.listServers\",\"params\":[]}' http://127.0.0.1:8080/jsonrpc | grep -q irc.ngircd.test"]
@@ -62,15 +62,15 @@ services:
     image: boson-ircds-unrealircd:local
     labels: *labels
     ports:
-      - "127.0.0.1:${UNREAL_ANOPE_TLS_PORT:-26697}:6697"
-      - "127.0.0.1:${UNREAL_ANOPE_PORT:-26667}:6667"
+      - "${IRCDS_BIND:-127.0.0.1}:${UNREAL_ANOPE_TLS_PORT:-26697}:6697"
+      - "${IRCDS_BIND:-127.0.0.1}:${UNREAL_ANOPE_PORT:-26667}:6667"
     healthcheck: *irc-health
   anope-unreal:
     <<: *anope
     profiles: [unreal-anope]
     command: ["bin/anope", "--nofork", "--nopid", "--config=unrealircd.conf"]
     ports:
-      - "127.0.0.1:${UNREAL_ANOPE_RPC_PORT:-28080}:8080"
+      - "${IRCDS_BIND:-127.0.0.1}:${UNREAL_ANOPE_RPC_PORT:-28080}:8080"
     healthcheck:
       <<: *anope-health
       test: ["CMD-SHELL", "curl -sf -H 'Authorization: Bearer Zml4dHVyZS1ycGMtdG9rZW4=' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"anope.listServers\",\"params\":[]}' http://127.0.0.1:8080/jsonrpc | grep -q irc.unreal.test"]
@@ -84,8 +84,8 @@ services:
     image: boson-ircds-inspircd:local
     labels: *labels
     ports:
-      - "127.0.0.1:${INSP_ATHEME_TLS_PORT:-36697}:6697"
-      - "127.0.0.1:${INSP_ATHEME_PORT:-36667}:6667"
+      - "${IRCDS_BIND:-127.0.0.1}:${INSP_ATHEME_TLS_PORT:-36697}:6697"
+      - "${IRCDS_BIND:-127.0.0.1}:${INSP_ATHEME_PORT:-36667}:6667"
     healthcheck: *irc-health
   atheme:
     profiles: [insp-atheme]
@@ -93,7 +93,7 @@ services:
     image: boson-ircds-atheme:local
     labels: *labels
     ports:
-      - "127.0.0.1:${INSP_ATHEME_RPC_PORT:-38080}:8080"
+      - "${IRCDS_BIND:-127.0.0.1}:${INSP_ATHEME_RPC_PORT:-38080}:8080"
     # Linked once the burst is done (Atheme logs the end of the uplink's burst).
     healthcheck:
       test: ["CMD-SHELL", "grep -q 'finished synching with uplink' var/atheme.log"]
@@ -110,6 +110,6 @@ services:
     image: boson-ircds-ngircd:local
     labels: *labels
     ports:
-      - "127.0.0.1:${NGIRCD_TLS_PORT:-46697}:6697"
-      - "127.0.0.1:${NGIRCD_PORT:-46667}:6667"
+      - "${IRCDS_BIND:-127.0.0.1}:${NGIRCD_TLS_PORT:-46697}:6697"
+      - "${IRCDS_BIND:-127.0.0.1}:${NGIRCD_PORT:-46667}:6667"
     healthcheck: *irc-health

@@ -33,6 +33,11 @@ type Options struct {
 	TLS                bool
 	ServerName         string
 	InsecureSkipVerify bool
+	// CheckCert: connect whatever the certificate, then check it against
+	// the system roots and report the outcome (Target.CertTrusted) instead
+	// of failing. One connection either way: a failed handshake would leave
+	// an unregistered connection on servers that count them per address.
+	CheckCert bool
 
 	// Nick is the nick to use (default "bprobe" + 6 random hex digits; a
 	// numeric suffix is tried if it's taken).
@@ -120,6 +125,8 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 		return nil, fmt.Errorf("probe: connect to %s: %w", opts.Addr, err)
 	}
 	defer c.close()
+	r.Target.CertSHA256, r.Target.SPKISHA256 = c.certSHA256, c.spkiSHA256
+	r.Target.CertTrusted, r.Target.CertError = c.certTrusted, c.certError
 	if err := register(c, &opts, r); err != nil {
 		if opts.Transcript {
 			r.Transcript = c.transcriptLines()
@@ -190,6 +197,7 @@ func register(c *conn, o *Options, r *Report) error {
 		case "001":
 			registered = true
 			r.Server.Name = m.Source
+			r.Server.ClientHost = welcomeHost(m.last())
 			if !capDone {
 				// The server ignored CAP (no reply at all before 001).
 				capDone = true
@@ -434,4 +442,18 @@ func sortedKeys(m map[string]string) []string {
 	}
 	sort.Strings(ks)
 	return ks
+}
+
+// welcomeHost is the host in 001's "... nick!user@host" ("" when there's none).
+func welcomeHost(text string) string {
+	f := strings.Fields(text)
+	if len(f) == 0 {
+		return ""
+	}
+	last := f[len(f)-1]
+	at := strings.LastIndexByte(last, '@')
+	if at < 0 || !strings.Contains(last[:at], "!") {
+		return ""
+	}
+	return strings.TrimSpace(last[at+1:])
 }

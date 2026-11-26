@@ -15,6 +15,7 @@ import (
 	"github.com/boson-chat/stack/images/setup/internal/dockercli"
 	"github.com/boson-chat/stack/images/setup/internal/flow"
 	"github.com/boson-chat/stack/images/setup/internal/install"
+	"github.com/boson-chat/stack/images/setup/internal/secret"
 	"github.com/boson-chat/stack/images/setup/internal/stack"
 )
 
@@ -32,8 +33,18 @@ type Deps struct {
 	Finish func()
 }
 
+// Config makes the same pages and API serve another flow (the add-on
+// path reuses domain, TLS, admin, features, ports, review, install, done).
+type Config struct {
+	ID   string
+	Info flow.Info
+	// Mode is stack.Answers.Mode for this flow's answers.
+	Mode string
+}
+
 type Flow struct {
-	d Deps
+	d   Deps
+	cfg Config
 
 	mu       sync.Mutex
 	answers  stack.Answers
@@ -45,23 +56,43 @@ type Flow struct {
 }
 
 func New(d Deps) (*Flow, error) {
+	return NewFlow(d, Config{ID: ID, Info: flow.Info{
+		ID:        ID,
+		Title:     "New Boson server",
+		Summary:   "Install the whole Boson stack on this machine: IRC, accounts, voice, video, uploads, the web client and the admin panel.",
+		Available: true,
+	}})
+}
+
+// NewFlow is New for another flow's ID and answers mode.
+func NewFlow(d Deps, cfg Config) (*Flow, error) {
 	if d.SendMail == nil {
 		d.SendMail = checks.SendTestMail
 	}
-	f := &Flow{d: d, gen: stack.NewGenerator()}
+	f := &Flow{d: d, cfg: cfg, gen: stack.NewGenerator()}
 	ex, err := stack.LoadExisting(d.InstallDir)
 	if err != nil {
 		return nil, err
 	}
 	f.existing = ex
 	f.answers = ex.Answers()
-	if st := d.Runner.State(); st.Flow == ID && st.Answers.Domain != "" {
+	if f.answers.Mode != cfg.Mode {
+		// The install there is the other path's: start this one from its
+		// settings (domain, features), in this flow's mode.
+		f.answers.Mode = cfg.Mode
+		f.answers.Normalize()
+	}
+	if cfg.Mode == stack.ModeAddon && f.answers.Addon.Host == "" {
+		f.answers.Addon.TLS, f.answers.Addon.TLSVerify = true, true
+	}
+	if st := d.Runner.State(); st.Flow == cfg.ID && st.Answers.Domain != "" {
 		// A previous run of the wizard: its answers (with the admin's name).
 		f.answers = st.Answers
 		if ex.Found {
 			// The files win for what they hold (the admin panel may have
 			// changed things since).
 			fromFiles := ex.Answers()
+			fromFiles.Mode, fromFiles.Addon = st.Answers.Mode, st.Answers.Addon
 			fromFiles.Admin.Username = st.Answers.Admin.Username
 			if fromFiles.Admin.Email == "" {
 				fromFiles.Admin.Email = st.Answers.Admin.Email
@@ -72,14 +103,7 @@ func New(d Deps) (*Flow, error) {
 	return f, nil
 }
 
-func (f *Flow) Info() flow.Info {
-	return flow.Info{
-		ID:        ID,
-		Title:     "New Boson server",
-		Summary:   "Install the whole Boson stack on this machine: IRC, accounts, voice, video, uploads, the web client and the admin panel.",
-		Available: true,
-	}
-}
+func (f *Flow) Info() flow.Info { return f.cfg.Info }
 
 func (f *Flow) Register(mux *http.ServeMux, p string) {
 	mux.HandleFunc("GET "+p+"state", f.getState)
@@ -97,6 +121,63 @@ func (f *Flow) Register(mux *http.ServeMux, p string) {
 
 func (f *Flow) needAdminPassword() bool {
 	return !f.d.Runner.State().AdminCreated
+}
+
+// Answers returns the current answers.
+func (f *Flow) Answers() stack.Answers { return f.currentAnswers() }
+
+// Secret returns a secret typed earlier (rpc_token), else the existing
+// .env's value for envKey.
+func (f *Flow) RPCToken() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.secrets.RPCToken != "" {
+		return f.secrets.RPCToken
+	}
+	return f.existing.Env["NICKSERV_RPC_TOKEN"]
+}
+
+// Plan builds the install plan from the current answers.
+func (f *Flow) Plan() (stack.Plan, error) {
+	p, _, err := f.plan()
+	return p, err
+}
+
+// BridgeWebIRCPassword: the bridge's WEBIRC password, from the existing
+// .env or the one this wizard run will write (the snippets show it).
+func (f *Flow) BridgeWebIRCPassword() string {
+	f.mu.Lock()
+	v := f.existing.Env["BRIDGE_WEBIRC_PASSWORD"]
+	f.mu.Unlock()
+	if v != "" {
+		return v
+	}
+	return f.gen.Get("BRIDGE_WEBIRC_PASSWORD", func() string { return secret.Hex(24) })
+}
+
+// SetRPCToken keeps a services RPC token typed on the probe step.
+func (f *Flow) SetRPCToken(t string) {
+	f.mu.Lock()
+	f.secrets.RPCToken = t
+	f.mu.Unlock()
+}
+
+// SaveAddon changes the add-on answers (from the probe) and saves them.
+func (f *Flow) SaveAddon(fn func(*stack.Answers)) stack.Answers {
+	f.mu.Lock()
+	fn(&f.answers)
+	f.answers.Normalize()
+	a := f.answers
+	f.mu.Unlock()
+	f.d.Runner.SaveAnswers(f.cfg.ID, a)
+	return a
+}
+
+// TypedSecrets returns the secrets typed so far.
+func (f *Flow) TypedSecrets() stack.Secrets {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.secrets
 }
 
 type stateResp struct {
@@ -118,6 +199,7 @@ func (f *Flow) snapshot() stateResp {
 			"smtp_password":  f.secrets.SMTPPassword != "" || f.existing.Env["SMTP_PASSWORD"] != "",
 			"s3_keys":        f.secrets.S3AccessKey != "" || f.answers.Files.Storage == "s3" && f.existing.Env["FILES_S3_ACCESS_KEY"] != "",
 			"admin_password": f.secrets.AdminPassword != "",
+			"rpc_token":      f.secrets.RPCToken != "" || f.existing.Env["NICKSERV_RPC_TOKEN"] != "",
 		},
 		Existing: map[string]any{
 			"found":         f.existing.Found,
@@ -153,6 +235,7 @@ func (f *Flow) putAnswers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a := req.Answers
+	a.Mode = f.cfg.Mode
 	a.Normalize()
 	f.mu.Lock()
 	sec := f.secrets
@@ -168,6 +251,9 @@ func (f *Flow) putAnswers(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Secrets.AdminPassword != "" {
 		sec.AdminPassword = req.Secrets.AdminPassword
+	}
+	if req.Secrets.RPCToken != "" {
+		sec.RPCToken = req.Secrets.RPCToken
 	}
 	existing := f.existing
 	f.mu.Unlock()
@@ -189,7 +275,7 @@ func (f *Flow) putAnswers(w http.ResponseWriter, r *http.Request) {
 	f.answers = a
 	f.secrets = sec
 	f.mu.Unlock()
-	f.d.Runner.SaveAnswers(ID, a)
+	f.d.Runner.SaveAnswers(f.cfg.ID, a)
 	flow.JSON(w, http.StatusOK, f.snapshot())
 }
 
@@ -287,6 +373,7 @@ func (f *Flow) review(w http.ResponseWriter, _ *http.Request) {
 		"hosts":          p.Hosts,
 		"kept_secrets":   kept,
 		"existing":       f.existing.Found,
+		"files":          p.Files,
 	})
 }
 
@@ -296,7 +383,7 @@ func (f *Flow) startInstall(w http.ResponseWriter, r *http.Request) {
 		flow.Error(w, http.StatusUnprocessableEntity, "invalid", err.Error())
 		return
 	}
-	if errs := p.Answers.Validate("admin", sec, f.needAdminPassword()); len(errs) > 0 {
+	if errs := p.Answers.Validate("", sec, f.needAdminPassword()); len(errs) > 0 {
 		flow.JSON(w, http.StatusUnprocessableEntity, map[string]any{"code": "admin", "error": errs[0].Message, "errors": errs})
 		return
 	}
@@ -378,7 +465,12 @@ func (f *Flow) done(w http.ResponseWriter, _ *http.Request) {
 		"auth":  "https://" + h[stack.RoleAuth] + "/",
 		"irc":   h[stack.RoleIRC] + ":6697",
 	}
+	if a.IsAddon() {
+		links["their_irc"] = fmt.Sprintf("%s:%d", a.Addon.Host, a.Addon.Port)
+	}
 	flow.JSON(w, http.StatusOK, map[string]any{
+		"mode":          a.Mode,
+		"accounts":      a.Addon.Accounts,
 		"links":         links,
 		"admin":         a.Admin.Username,
 		"oper_password": oper,

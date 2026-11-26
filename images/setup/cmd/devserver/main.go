@@ -69,7 +69,7 @@ func main() {
 	// No Traefik here: skip the certificate and verify steps' network checks.
 	runner.Timeouts = install.Timeouts{Health: time.Minute, Certs: time.Second, Verify: time.Second, FailFor: time.Second, Poll: time.Second}
 	install.DevSkipNetwork(runner)
-	fr, err := fresh.New(fresh.Deps{
+	deps := fresh.Deps{
 		InstallDir: *dir, Runner: runner, Redactor: &dockercli.Redactor{},
 		DNS: &checks.DNS{Resolver: fakeDNS{}, LocalIPs: func() []net.IP { return []net.IP{net.ParseIP("192.0.2.10")} }},
 		Ports: &checks.Ports{HostIP: func() net.IP { return net.ParseIP("127.0.0.1") }, Nonce: func() string { return "n" },
@@ -87,13 +87,20 @@ func main() {
 			return nil
 		},
 		Finish: func() { g.Close() },
-	})
+	}
+	fr, err := fresh.New(deps)
+	if err != nil {
+		panic(err)
+	}
+	// The add-on path probes for real (e.g. a test/ircds fixture on
+	// 127.0.0.1:16697).
+	ad, err := addon.New(deps)
 	if err != nil {
 		panic(err)
 	}
 	reg := &flow.Registry{}
 	reg.Add(fr)
-	reg.Add(addon.Flow{})
+	reg.Add(ad)
 	cert, _, _ := tlscert.New([]net.IP{net.ParseIP("127.0.0.1")}, []string{"localhost"})
 	srv := &http.Server{Addr: *addr, Handler: (&server.Server{Gate: g, Flows: reg, Static: os.DirFS("web"), Instance: "dev", Log: log}).Handler(),
 		TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}}}
