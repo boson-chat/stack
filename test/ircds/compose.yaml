@@ -1,0 +1,112 @@
+# IRC server fixtures for the setup probe and the setup wizard's e2e tests:
+# real UnrealIRCd 6 / InspIRCd 4 / ngIRCd 28 with their services, built from
+# pinned source. One profile per pairing; test/ircds/run.sh brings one up as
+# its own compose project (boson-ircds-<pairing>) and applies config
+# snippets. Ports are published on loopback only.
+#
+#   pairing        IRC server       services   TLS    plain  services RPC
+#   ngircd-anope   ngIRCd 28        Anope 2.1  16697  16667  18080 (/jsonrpc)
+#   unreal-anope   UnrealIRCd 6     Anope 2.1  26697  26667  28080 (/jsonrpc)
+#   insp-atheme    InspIRCd 4       Atheme     36697  36667  38080 (/jsonrpc, /xmlrpc)
+#   ngircd         ngIRCd 28        none       46697  46667  -
+
+x-labels: &labels
+  chat.boson.test: ircds
+
+x-anope: &anope
+  build: { context: ., dockerfile: anope/Dockerfile }
+  image: boson-ircds-anope:local
+  labels: *labels
+  # Linked: Anope's own server list (rpc_data) has the IRC server in it.
+  healthcheck: &anope-health
+    interval: 2s
+    timeout: 3s
+    retries: 90
+
+services:
+  # --- ngircd-anope ---
+  ngircd:
+    profiles: [ngircd-anope]
+    build: { context: ., dockerfile: ngircd/Dockerfile }
+    image: boson-ircds-ngircd:local
+    labels: *labels
+    volumes:
+      - ./ngircd/services.conf:/etc/ngircd/conf.d/services.conf:ro
+    ports:
+      - "127.0.0.1:${NGIRCD_ANOPE_TLS_PORT:-16697}:6697"
+      - "127.0.0.1:${NGIRCD_ANOPE_PORT:-16667}:6667"
+    healthcheck: &irc-health
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 6697 && nc -z 127.0.0.1 6667"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+  anope-ngircd:
+    <<: *anope
+    profiles: [ngircd-anope]
+    command: ["bin/anope", "--nofork", "--nopid", "--config=ngircd.conf"]
+    ports:
+      - "127.0.0.1:${NGIRCD_ANOPE_RPC_PORT:-18080}:8080"
+    healthcheck:
+      <<: *anope-health
+      test: ["CMD-SHELL", "curl -sf -H 'Authorization: Bearer fixture-rpc-token' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"anope.listServers\",\"params\":[]}' http://127.0.0.1:8080/jsonrpc | grep -q irc.ngircd.test"]
+    depends_on:
+      ngircd: { condition: service_healthy }
+
+  # --- unreal-anope ---
+  unrealircd:
+    profiles: [unreal-anope]
+    build: { context: ., dockerfile: unrealircd/Dockerfile }
+    image: boson-ircds-unrealircd:local
+    labels: *labels
+    ports:
+      - "127.0.0.1:${UNREAL_ANOPE_TLS_PORT:-26697}:6697"
+      - "127.0.0.1:${UNREAL_ANOPE_PORT:-26667}:6667"
+    healthcheck: *irc-health
+  anope-unreal:
+    <<: *anope
+    profiles: [unreal-anope]
+    command: ["bin/anope", "--nofork", "--nopid", "--config=unrealircd.conf"]
+    ports:
+      - "127.0.0.1:${UNREAL_ANOPE_RPC_PORT:-28080}:8080"
+    healthcheck:
+      <<: *anope-health
+      test: ["CMD-SHELL", "curl -sf -H 'Authorization: Bearer fixture-rpc-token' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"anope.listServers\",\"params\":[]}' http://127.0.0.1:8080/jsonrpc | grep -q irc.unreal.test"]
+    depends_on:
+      unrealircd: { condition: service_healthy }
+
+  # --- insp-atheme ---
+  inspircd:
+    profiles: [insp-atheme]
+    build: { context: ., dockerfile: inspircd/Dockerfile }
+    image: boson-ircds-inspircd:local
+    labels: *labels
+    ports:
+      - "127.0.0.1:${INSP_ATHEME_TLS_PORT:-36697}:6697"
+      - "127.0.0.1:${INSP_ATHEME_PORT:-36667}:6667"
+    healthcheck: *irc-health
+  atheme:
+    profiles: [insp-atheme]
+    build: { context: ., dockerfile: atheme/Dockerfile }
+    image: boson-ircds-atheme:local
+    labels: *labels
+    ports:
+      - "127.0.0.1:${INSP_ATHEME_RPC_PORT:-38080}:8080"
+    # Linked once the burst is done (Atheme logs the end of the uplink's burst).
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q 'finished synching with uplink' var/atheme.log"]
+      interval: 2s
+      timeout: 3s
+      retries: 90
+    depends_on:
+      inspircd: { condition: service_healthy }
+
+  # --- ngircd (no services) ---
+  ngircd-solo:
+    profiles: [ngircd]
+    build: { context: ., dockerfile: ngircd/Dockerfile }
+    image: boson-ircds-ngircd:local
+    labels: *labels
+    ports:
+      - "127.0.0.1:${NGIRCD_TLS_PORT:-46697}:6697"
+      - "127.0.0.1:${NGIRCD_PORT:-46667}:6667"
+    healthcheck: *irc-health
