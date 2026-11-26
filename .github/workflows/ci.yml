@@ -488,9 +488,50 @@ jobs:
         if: always()
         run: test/ircds/run.sh down "$PAIRING"
 
+  setup:
+    name: setup wizard (Go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: images/setup
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: images/setup/go.mod
+      - run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - run: go vet ./... && go vet -tags dev ./...
+      - run: go test -race -count=1 ./...
+      - name: install.sh is POSIX sh
+        working-directory: .
+        run: sh -n install.sh && shellcheck install.sh test/setup/run.sh test/setup/hooks.sh
+
+  setup-e2e:
+    name: setup wizard e2e (install.sh → wizard → Pebble ACME → working stack → re-run)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: install.sh --yes, the wizard with Playwright (error cases, fake DNS, Pebble), the result, a re-run
+        run: test/setup/run.sh
+      - name: Screenshots of every step (desktop + phone)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: setup-wizard-screenshots
+          path: test/setup/shots/
+          if-no-files-found: ignore
+      - name: Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: setup-wizard-traces
+          path: test/setup/test-results/
+          if-no-files-found: ignore
+
   publish:
     name: publish images to Harbor
-    needs: [helper, webircgateway, smoke, directory, files, minio, nick-claim, roles, acme, probe, ircds]
+    needs: [helper, webircgateway, smoke, directory, files, minio, nick-claim, roles, acme, probe, ircds, setup, setup-e2e]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
@@ -529,3 +570,11 @@ jobs:
               -t $REGISTRY/boson/stack-$name:$tag \
               -t $REGISTRY/boson/stack-$name:sha-${GITHUB_SHA::7} images/$name
           done
+      - name: Build + push harbor.floret.dev/boson/stack-setup (install.sh's wizard; repo-root context, it carries the stack files)
+        if: steps.creds.outputs.ok == 'true'
+        run: |
+          docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --push \
+            --label org.opencontainers.image.source=https://github.com/${{ github.repository }} \
+            -t $REGISTRY/boson/stack-setup:latest \
+            -t $REGISTRY/boson/stack-setup:sha-${GITHUB_SHA::7} \
+            -f images/setup/Dockerfile .

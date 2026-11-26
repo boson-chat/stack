@@ -30,6 +30,15 @@ desktop client configured from your domain.
 
 ## Quick start
 
+On a fresh Linux server, the setup wizard does all of the below from a web
+page ([docs/setup.md](docs/setup.md)):
+
+```sh
+curl -fsSL https://get.boson.chat | sudo sh     # then open the URL it prints
+```
+
+By hand:
+
 ```sh
 scripts/setup.sh            # asks for your domain etc., generates every secret into .env
 docker compose up -d --build
@@ -289,10 +298,10 @@ keys in the database).
   Until then the `node` target shows as down; nothing else is affected.
   Per-container CPU/memory (cAdvisor) is not included: too heavy for a small
   VPS; the admin panel's services page already shows `docker stats`.
-- **Images:** `certsync`, `ergo` and `webircgateway` are built from
-  `images/` and published to `harbor.floret.dev/boson/stack-*` by CI on
+- **Images:** `certsync`, `ergo`, `webircgateway` and `setup` (the
+  wizard) are built from `images/` and published to `harbor.floret.dev/boson/stack-*` by CI on
   every push to `main` (`stack-certsync:latest`, `stack-ergo:2.19.1`,
-  `stack-webircgateway:1.1.0-boson.2`, plus `:sha-<commit>`).
+  `stack-webircgateway:1.1.0-boson.2`, `stack-setup:latest`, plus `:sha-<commit>`).
 - **Compose project name** is `boson`; Traefik only looks at containers of
   that project.
 - Deploying the production host (boson.chat): [docs/deploy-boson-chat.md](docs/deploy-boson-chat.md).

@@ -1,0 +1,7 @@
+{
+  "name": "stack-setup-e2e",
+  "private": true,
+  "description": "CI end-to-end test of the setup wizard (install.sh + images/setup) on a fresh runner.",
+  "scripts": { "test": "playwright test" },
+  "devDependencies": { "@playwright/test": "1.65.1" }
+}

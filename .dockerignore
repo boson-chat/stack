@@ -1,0 +1,10 @@
+# Root-context builds only (images/setup/Dockerfile); the other images
+# build from their own directory.
+.git
+**/node_modules
+**/test-results
+test/setup/shots
+local-certs
+auth-src
+.env
+config/boson.yaml
