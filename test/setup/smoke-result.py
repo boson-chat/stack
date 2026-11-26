@@ -77,7 +77,7 @@ check(f"{IRC}:6697: Ergo has the ACME certificate", args.issuer in iss, iss)
 # 2. the admin
 st, r = https(AUTH, "POST", "/v1/login", {"login": args.admin, "password": args.password})
 check("admin logs in to auth", st == 200 and isinstance(r, dict) and r.get("access_token"), st)
-out = subprocess.run(["docker", "compose", "--project-directory", args.dir, "-p", "boson", "exec", "-T", "auth",
+out = subprocess.run(["sudo", "docker", "compose", "--project-directory", args.dir, "-p", "boson", "exec", "-T", "auth",
                       "./auth", "user", "list", args.admin], capture_output=True, text=True).stdout
 rows = [l.split() for l in out.splitlines()[1:] if len(l.split()) >= 5 and l.split()[1] == args.admin]
 check("exactly one admin account", len(rows) == 1, out.strip().splitlines()[-1] if out.strip() else "no output")
@@ -103,7 +103,8 @@ class IRCConn:
         self.f = self.s.makefile("rb")
         self.lines = []
         self.send("CAP LS 302"); self.send(f"NICK {nick}"); self.send(f"USER {nick} 0 * :e2e")
-        self.wait(lambda l: " CAP " in l and " LS " in l and " * LS " not in l)
+        # the last line of a multi-line CAP LS: ":srv CAP * LS :..." (not "LS * :")
+        self.wait(lambda l: len(l.split()) > 4 and l.split()[1] == "CAP" and l.split()[3] == "LS" and l.split()[4] != "*")
         self.send("CAP REQ :sasl draft/chathistory batch server-time message-tags")
         self.wait(lambda l: " ACK " in l)
         self.send("AUTHENTICATE PLAIN")
@@ -143,6 +144,8 @@ check("admin receives the reply", a.wait(lambda l: "PRIVMSG" in l and "reply " +
 u.close()
 time.sleep(1)
 u2 = IRCConn(user, pw, user)
+u2.send(f"JOIN {chan}")
+u2.wait(lambda l: " JOIN " in l and chan in l)
 u2.send(f"CHATHISTORY LATEST {chan} * 20")
 got = u2.wait(lambda l: "PRIVMSG" in l and text in l, 15)
 check("history after reconnect (CHATHISTORY)", got, " | ".join(u2.lines[-4:]))

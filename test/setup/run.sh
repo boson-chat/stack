@@ -30,7 +30,10 @@ export SHOTS_DIR=$ROOT/test/setup/shots
 dc() { sudo docker compose --project-directory "$DIR" -p boson "$@"; }
 logs() {
 	echo "::group::setup wizard logs"; sudo docker logs boson-setup 2>&1 | tail -150 || true; echo "::endgroup::"
-	echo "::group::stack logs"; dc logs --tail 80 2>&1 | tail -600 || true; echo "::endgroup::"
+	echo "::group::wizard state"; sudo cat "$DIR/.setup/state.json" 2>/dev/null | head -c 6000; echo "::endgroup::"
+	echo "::group::stack containers"; dc ps -a 2>&1 || true; echo "::endgroup::"
+	for s in ergo roleserv auth traefik; do echo "::group::$s logs"; dc logs --no-log-prefix --tail 60 "$s" 2>&1 || true; echo "::endgroup::"; done
+	echo "::group::stack logs"; dc logs --tail 40 2>&1 | tail -400 || true; echo "::endgroup::"
 }
 cleanup() {
 	set +e

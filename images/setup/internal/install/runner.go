@@ -51,6 +51,9 @@ type Runner struct {
 	Timeouts Timeouts
 	// OnDone runs after a successful install.
 	OnDone func(State)
+	// Logf also gets every progress line (already redacted), for the
+	// container's log.
+	Logf func(step, line string)
 
 	mu      sync.Mutex
 	state   State
@@ -66,7 +69,7 @@ type Timeouts struct {
 }
 
 func DefaultTimeouts() Timeouts {
-	return Timeouts{Health: 8 * time.Minute, Certs: 5 * time.Minute, Verify: 2 * time.Minute, FailFor: 60 * time.Second, Poll: 2 * time.Second}
+	return Timeouts{Health: 8 * time.Minute, Certs: 5 * time.Minute, Verify: 4 * time.Minute, FailFor: 60 * time.Second, Poll: 2 * time.Second}
 }
 
 // Steps: the install steps in order.
@@ -184,7 +187,13 @@ func (r *Runner) run(j Job) {
 			p := st.Step(id)
 			p.Status, p.Started = StatusRunning, time.Now().UTC()
 		})
-		log := func(line string) { r.Hub.Publish(Event{Type: "log", Step: id, Line: line}) }
+		log := func(line string) {
+			r.Hub.Publish(Event{Type: "log", Step: id, Line: line})
+			if r.Logf != nil {
+				r.Logf(id, line)
+			}
+		}
+		log("== " + s.title)
 		err := s.run(ctx, r, &j, log)
 		if err != nil {
 			msg, hint, code := err.Error(), "", ""

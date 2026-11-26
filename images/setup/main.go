@@ -186,6 +186,7 @@ func serve() error {
 		default:
 		}
 	}
+	runner.Logf = func(step, line string) { log.Info("install", "step", step, "line", red.Redact(line)) }
 	runner.OnDone = func(install.State) {
 		// The Done page needs the session a while longer; if nobody closes
 		// the wizard, it switches itself off.

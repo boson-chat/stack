@@ -19,6 +19,11 @@ export function h(tag, attrs, ...children) {
 	return el;
 }
 
+/** el.replaceChildren without the null/false holes conditionals leave. */
+export function put(el, ...children) {
+	el.replaceChildren(...children.flat(Infinity).filter((c) => c !== null && c !== undefined && c !== false));
+}
+
 export class ApiError extends Error {
 	constructor(status, body) {
 		super((body && body.error) || `HTTP ${status}`);

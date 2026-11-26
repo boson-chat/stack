@@ -2,7 +2,7 @@
 // install → done. Answers are saved on the server at every Continue (a
 // reload or a restarted wizard comes back to them); secrets typed here are
 // sent once and never shown again.
-import { h, api, ApiError, field, select, toggle, choices, notice, tag, button, errorMap } from '../lib.js';
+import { h, put, api, ApiError, field, select, toggle, choices, notice, tag, button, errorMap } from '../lib.js';
 
 const BASE = '/api/flows/fresh/';
 const STEPS = [
@@ -176,12 +176,12 @@ function domain(errors = {}) {
 			sum.domain = A.domain;
 			lastDNS = sum;
 			dnsOK = sum.ok;
-			list.replaceChildren(dnsList(sum));
-			advice.replaceChildren(dnsAdvice(sum));
+			put(list, dnsList(sum));
+			put(advice, dnsAdvice(sum));
 			const b = nextBtn();
 			if (b) b.disabled = !dnsOK;
 		} catch (err) {
-			list.replaceChildren(notice('warn', err.message));
+			put(list, notice('warn', err.message));
 		}
 		if (!dnsOK) timers.push(setTimeout(check, 5000));
 	}
@@ -198,11 +198,11 @@ function domain(errors = {}) {
 			try {
 				await save('domain');
 				lastDNS = null;
-				list.replaceChildren(dnsList(null));
-				advice.replaceChildren();
+				put(list, dnsList(null));
+				put(advice, );
 				check();
 			} catch (err) {
-				list.replaceChildren(notice('warn', (err.body && err.body.errors && err.body.errors[0].message) || err.message));
+				put(list, notice('warn', (err.body && err.body.errors && err.body.errors[0].message) || err.message));
 			}
 		}, 600);
 	};
@@ -228,7 +228,7 @@ function domain(errors = {}) {
 					A.wellknown = v;
 					await save('').catch(() => {});
 					lastDNS = null;
-					list.replaceChildren(dnsList(null));
+					put(list, dnsList(null));
 					clearTimers();
 					check();
 				},
@@ -378,13 +378,13 @@ function features(errors = {}) {
 		'Send test email',
 		async () => {
 			sendTest.disabled = true;
-			smtpResult.replaceChildren(h('p', { class: 'muted' }, h('span', { class: 'spinner' }), ' Sending…'));
+			put(smtpResult, h('p', { class: 'muted' }, h('span', { class: 'spinner' }), ' Sending…'));
 			try {
 				await save('');
 				const r = await api('POST', BASE + 'check/smtp', { to: testTo.querySelector('input').value });
-				smtpResult.replaceChildren(r.ok ? notice('ok', 'Sent. Check the inbox (and the spam folder).') : notice('bad', 'Not sent: ' + r.error));
+				put(smtpResult, r.ok ? notice('ok', 'Sent. Check the inbox (and the spam folder).') : notice('bad', 'Not sent: ' + r.error));
 			} catch (err) {
-				smtpResult.replaceChildren(notice('bad', err.message));
+				put(smtpResult, notice('bad', err.message));
 			}
 			sendTest.disabled = false;
 		},
@@ -484,11 +484,11 @@ function ports() {
 	let recheck;
 	const run = async () => {
 		if (recheck) recheck.disabled = true;
-		out.replaceChildren(h('p', { class: 'muted' }, h('span', { class: 'spinner' }), ' Testing ports from inside this server…'));
+		put(out, h('p', { class: 'muted' }, h('span', { class: 'spinner' }), ' Testing ports from inside this server…'));
 		try {
 			report = await api('POST', BASE + 'check/ports', {});
 		} catch (err) {
-			out.replaceChildren(notice('bad', err.message));
+			put(out, notice('bad', err.message));
 			return;
 		} finally {
 			if (recheck) recheck.disabled = false;
@@ -499,7 +499,7 @@ function ports() {
 			await save('');
 			run();
 		};
-		out.replaceChildren(
+		put(out, 
 			h(
 				'ul',
 				{ class: 'checks', 'data-testid': 'port-results' },
@@ -549,10 +549,10 @@ function review(error) {
 		} catch (err) {
 			installBtn.disabled = false;
 			if (err.code === 'dns') {
-				dns.replaceChildren(notice('bad', h('strong', {}, 'Not all names point at this server yet. '), 'Fix DNS, then try again.'), dnsList(err.body.dns));
+				put(dns, notice('bad', h('strong', {}, 'Not all names point at this server yet. '), 'Fix DNS, then try again.'), dnsList(err.body.dns));
 			} else if (err.code === 'admin') {
-				dns.replaceChildren(notice('bad', err.message, ' ', h('a', { href: '#/fresh/admin' }, 'Go to the admin step')));
-			} else dns.replaceChildren(notice('bad', err.message));
+				put(dns, notice('bad', err.message, ' ', h('a', { href: '#/fresh/admin' }, 'Go to the admin step')));
+			} else put(dns, notice('bad', err.message));
 		}
 	};
 	installBtn = button(S.existing.found ? 'Apply and restart' : 'Install Boson', start, { kind: 'primary', testid: 'install' });
@@ -570,7 +570,7 @@ function review(error) {
 	(async () => {
 		try {
 			const r = await api('GET', BASE + 'review');
-			body.replaceChildren(
+			put(body, 
 				h(
 					'div',
 					{ class: 'panel' },
@@ -593,7 +593,7 @@ function review(error) {
 				),
 			);
 		} catch (err) {
-			body.replaceChildren(notice('bad', err.message));
+			put(body, notice('bad', err.message));
 			installBtn.disabled = true;
 		}
 	})();
@@ -611,7 +611,7 @@ function install() {
 	let lines = [];
 
 	const draw = (st, running) => {
-		steps.replaceChildren(
+		put(steps, 
 			...st.steps.map((s) =>
 				h(
 					'li',
@@ -625,7 +625,7 @@ function install() {
 		const f = st.steps.find((s) => s.status === 'failed');
 		if (f && !running) {
 			const needPw = (f.hint || '').startsWith('need_admin_password');
-			failure.replaceChildren(
+			put(failure, 
 				notice(
 					'bad',
 					h('strong', {}, `“${f.title}” failed.`),
@@ -638,14 +638,14 @@ function install() {
 					),
 				),
 			);
-		} else failure.replaceChildren();
+		} else put(failure, );
 		if (st.status === 'done') {
 			if (stream) stream.close();
 			setTimeout(() => go('done'), 600);
 		}
 	};
 	const drawServices = (list) => {
-		services.replaceChildren(
+		put(services, 
 			h('details', { open: true }, h('summary', {}, `Services (${list.filter((s) => s.ready).length} of ${list.length} ready)`),
 				h(
 					'ul',
@@ -664,7 +664,7 @@ function install() {
 			log.textContent = '';
 			connect();
 		} catch (err) {
-			failure.replaceChildren(notice('bad', err.message, err.code === 'dns' ? ' (DNS changed: see the Domain step.)' : ''));
+			put(failure, notice('bad', err.message, err.code === 'dns' ? ' (DNS changed: see the Domain step.)' : ''));
 		}
 	}
 	function connect() {
@@ -718,7 +718,7 @@ async function done() {
 			closeBtn.disabled = true;
 			await api('POST', BASE + 'finish', {}).catch(() => {});
 			closed = true;
-			closeNote.replaceChildren(notice('ok', 'Setup is switched off. To change something later, use the admin panel or run install.sh again.'));
+			put(closeNote, notice('ok', 'Setup is switched off. To change something later, use the admin panel or run install.sh again.'));
 		},
 		{ kind: 'primary', testid: 'finish' },
 	);

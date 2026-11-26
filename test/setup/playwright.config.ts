@@ -15,6 +15,8 @@ export default defineConfig({
     ignoreHTTPSErrors: true,
     baseURL: process.env['SETUP_URL'] ?? 'https://127.0.0.1:8443',
     viewport: { width: 1280, height: 900 },
+    // The admin panel's default look (light follows the OS).
+    colorScheme: 'dark',
     trace: 'retain-on-failure',
   },
 });
