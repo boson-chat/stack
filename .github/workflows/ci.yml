@@ -4,6 +4,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Nightly: the add-on e2e for every IRC server (PRs run two of them).
+  schedule:
+    - cron: "17 3 * * *"
   # Run the smoke job against an unreleased auth: build boson-chat/auth at
   # this ref (compose.auth-src.yaml) instead of the newest Harbor release, and
   # fail instead of skipping the checks it should support (branding, email
@@ -488,6 +491,21 @@ jobs:
         if: always()
         run: test/ircds/run.sh down "$PAIRING"
 
+  bridgesync:
+    name: bridge-sync (Go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: images/bridgesync
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: images/bridgesync/go.mod
+      - run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+
   setup:
     name: setup wizard (Go)
     runs-on: ubuntu-latest
@@ -504,7 +522,7 @@ jobs:
       - run: go test -race -count=1 ./...
       - name: install.sh is POSIX sh
         working-directory: .
-        run: sh -n install.sh && shellcheck install.sh test/setup/run.sh test/setup/hooks.sh
+        run: sh -n install.sh && shellcheck install.sh test/setup/run.sh test/setup/run-addon.sh test/setup/hooks.sh
 
   setup-e2e:
     name: setup wizard e2e (install.sh → wizard → Pebble ACME → working stack → re-run)
@@ -529,9 +547,41 @@ jobs:
           path: test/setup/test-results/
           if-no-files-found: ignore
 
+  # The add-on path ("Add Boson to my existing IRC server") against each IRC
+  # server fixture: test/setup/run-addon.sh. Pull requests run ngircd-anope
+  # (NickServ accounts over Anope's RPC) and unreal-anope (Boson accounts,
+  # the +draft/react module); main, the nightly run and manual runs add
+  # insp-atheme (NickServ over Atheme's RPC) and ngircd (no services).
+  setup-addon-e2e:
+    name: setup add-on e2e (${{ matrix.pairing }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        pairing: ${{ fromJSON(github.event_name == 'pull_request' && '["ngircd-anope","unreal-anope"]' || '["ngircd-anope","unreal-anope","insp-atheme","ngircd"]') }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: IRC server up, install.sh, the add-on path (Playwright), snippets applied, the result over the bridge
+        run: test/setup/run-addon.sh "${{ matrix.pairing }}"
+      - name: Screenshots of every step (desktop + phone)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: setup-addon-screenshots-${{ matrix.pairing }}
+          path: test/setup/shots/
+          if-no-files-found: ignore
+      - name: Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: setup-addon-traces-${{ matrix.pairing }}
+          path: test/setup/test-results/
+          if-no-files-found: ignore
+
   publish:
     name: publish images to Harbor
-    needs: [helper, webircgateway, smoke, directory, files, minio, nick-claim, roles, acme, probe, ircds, setup, setup-e2e]
+    needs: [bridgesync, setup-addon-e2e, helper, webircgateway, smoke, directory, files, minio, nick-claim, roles, acme, probe, ircds, setup, setup-e2e]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
@@ -563,7 +613,7 @@ jobs:
         if: steps.creds.outputs.ok == 'true'
         run: |
           # <dir>:<tag>; every image also gets :sha-<commit>.
-          for img in certsync:latest ergo:2.19.1 webircgateway:1.1.0-boson.2; do
+          for img in certsync:latest ergo:2.19.1 webircgateway:1.1.0-boson.2 bridgesync:0.1.0; do
             name=${img%%:*}; tag=${img#*:}
             docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --push \
               --label org.opencontainers.image.source=https://github.com/${{ github.repository }} \

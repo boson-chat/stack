@@ -110,6 +110,9 @@ test(`add Boson to ${PAIRING} through the wizard`, async ({ page, context }) => 
   if (NETWORK) await expect(page.getByLabel('Network name')).toHaveValue(NETWORK);
   await page.getByLabel('Domain', { exact: true }).fill(DOMAIN);
   await expect(page.locator(`[data-host="irc.${DOMAIN}"]`)).toHaveAttribute('data-status', 'ok');
+  // boson.json from the bare domain: it names the bridge as the IRC server.
+  await page.getByRole('switch', { name: /^Also serve app discovery/ }).check({ force: true });
+  await expect(page.locator(`[data-host="${DOMAIN}"]`)).toHaveAttribute('data-status', 'ok');
   await expect(page.locator(`[data-host="irc.${DOMAIN}"]`)).toContainText('the bridge');
   await next(page).click();
   await expect(page.getByRole('heading', { name: 'TLS certificates' })).toBeVisible();

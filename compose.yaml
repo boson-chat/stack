@@ -389,7 +389,7 @@ services:
     profiles: [auth]
     # Releases: harbor.floret.dev/boson/auth:<version>. To run an unreleased
     # checkout instead, add compose.auth-src.yaml (see README).
-    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.21.1}
+    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.23.0}
     environment:
       ENV: production
       LOG_LEVEL: ${AUTH_LOG_LEVEL:-info}
@@ -444,8 +444,8 @@ services:
       ERGO_API_TOKEN: ${ERGO_API_TOKEN:-}
       FILES_ENABLED: ${FILES_ENABLED:-false}
       # Accounts: local (auth's own, the default) or nickserv (an existing
-      # IRC network's NickServ accounts; auth >= the release with
-      # boson-chat/auth#27, docs/bridge.md). Boson setup writes these on the
+      # IRC network's NickServ accounts; auth >= 1.23.0, docs/bridge.md).
+      # Boson setup writes these on the
       # "Add Boson to my existing IRC server" path.
       ACCOUNT_BACKEND: ${ACCOUNT_BACKEND:-local}
       NICKSERV_STRATEGY: ${NICKSERV_STRATEGY:-}
@@ -745,7 +745,8 @@ services:
       # Empty ADMIN_DOCKER_PROXY_URL= turns it off.
       DOCKER_PROXY_URL: ${ADMIN_DOCKER_PROXY_URL-http://docker-proxy:2375}
       DOCKER_PROJECT: boson
-      DOCKER_PROTECTED_SERVICES: admin,traefik
+      # evrd-links: restarting it drops every Boson user off IRC.
+      DOCKER_PROTECTED_SERVICES: admin,traefik,evrd-links
       # Users' boson profiles (avatar, handle) from the api
       # profile. Set ADMIN_BOSON_API_URL= (empty) without it.
       BOSON_API_URL: ${ADMIN_BOSON_API_URL-http://api:3000}

@@ -369,7 +369,7 @@ func RecommendAccounts(rpcFlavor, rpcProtocol string, rpcOK bool, saslPlain, nic
 
 // NickServAuthVersion is the first auth release with the NickServ account
 // backend (boson-chat/auth#27); "" while none is released.
-const NickServAuthVersion = ""
+const NickServAuthVersion = "1.23.0"
 
 // AuthNickServ: the auth image this stack installs can use NickServ
 // accounts. Off, the wizard offers Boson accounts only.

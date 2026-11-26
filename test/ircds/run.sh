@@ -61,7 +61,7 @@ rehash() {
       ;;
     inspircd)
       # InspIRCd reports the rehash (errors included) to the oper who asked.
-      python3 "$here/rehash.py" --port "$plain" || return 1
+      python3 "$here/rehash.py" --host "${IRCDS_BIND:-127.0.0.1}" --port "$plain" || return 1
       ;;
     ngircd|ngircd-solo)
       # ngIRCd keeps the old config if the new one doesn't parse; a config
@@ -120,7 +120,7 @@ case $cmd in
     rehash
     ;;
   smoke)
-    python3 "$here/smoke.py" --port "$tls" --services "$svcpkg" ${rpc:+--rpc-url "http://127.0.0.1:$rpc/jsonrpc"} ${SMOKE_ARGS:-}
+    python3 "$here/smoke.py" --host "${IRCDS_BIND:-127.0.0.1}" --port "$tls" --services "$svcpkg" ${rpc:+--rpc-url "http://${IRCDS_BIND:-127.0.0.1}:$rpc/jsonrpc"} ${SMOKE_ARGS:-}
     ;;
   logs)
     compose logs --no-color --tail "${LOG_TAIL:-200}"
