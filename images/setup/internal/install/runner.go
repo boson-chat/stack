@@ -290,6 +290,23 @@ func stepPull(ctx context.Context, r *Runner, _ *Job, log func(string)) error {
 func stepStart(ctx context.Context, r *Runner, _ *Job, log func(string)) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
+	// A container left "created" by a failed attempt (say its port was
+	// taken) keeps a broken network setup: starting it again gives a
+	// container with no published ports. Remove those so up recreates them.
+	if have, err := r.Compose.PS(ctx); err == nil {
+		var stale []string
+		for _, s := range have {
+			if s.State == "created" {
+				stale = append(stale, s.Service)
+			}
+		}
+		if len(stale) > 0 {
+			log("removing containers a failed attempt left behind: " + strings.Join(stale, ", "))
+			if err := r.Compose.Remove(ctx, stale); err != nil {
+				return err
+			}
+		}
+	}
 	if err := r.Compose.Up(ctx, log); err != nil {
 		hint := "Look at the lines above, fix what they point at, then retry."
 		if s := err.Error(); strings.Contains(s, "address already in use") || strings.Contains(s, "port is already allocated") {
@@ -467,7 +484,13 @@ func stepAdmin(ctx context.Context, r *Runner, j *Job, log func(string)) error {
 	if err != nil {
 		return fmt.Errorf("creating %s: %w", a.Username, err)
 	}
-	log(firstLine(out))
+	line := "created " + a.Username
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "created ") {
+			line = l
+		}
+	}
+	log(line)
 	r.update(func(s *State) { s.AdminCreated = true })
 	return nil
 }

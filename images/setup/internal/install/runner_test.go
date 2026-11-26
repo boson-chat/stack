@@ -96,6 +96,13 @@ func TestInstallFailRetryRerun(t *testing.T) {
 	if fc.Users["alice"] != "owner alice@boson.test" {
 		t.Fatal(fc.Users)
 	}
+	removed := false
+	for _, c := range fc.Calls {
+		removed = removed || c == "rm ergo"
+	}
+	if !removed {
+		t.Fatalf("the retry didn't remove the container the failed attempt left: %v", fc.Calls)
+	}
 	envAfter, _ := os.ReadFile(filepath.Join(dir, ".env"))
 	if string(envBefore) != string(envAfter) {
 		t.Fatal("retry changed .env")

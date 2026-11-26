@@ -34,6 +34,8 @@ type Compose interface {
 	PS(ctx context.Context) ([]ServiceStatus, error)
 	Logs(ctx context.Context, service string, tail int) string
 	Exec(ctx context.Context, service string, stdin io.Reader, args ...string) (string, error)
+	// Remove deletes the services' containers (compose rm -fs).
+	Remove(ctx context.Context, services []string) error
 }
 
 // OneShot services exit 0 when done (restart: "no" in compose.yaml).
@@ -112,6 +114,13 @@ func (d *DockerCompose) PS(ctx context.Context) ([]ServiceStatus, error) {
 		st = append(st, ServiceStatus{Service: r.Service, State: r.State, Health: r.Health, ExitCode: r.ExitCode})
 	}
 	return st, nil
+}
+
+func (d *DockerCompose) Remove(ctx context.Context, services []string) error {
+	if len(services) == 0 {
+		return nil
+	}
+	return d.CLI.Run(ctx, nil, nil, d.CLI.Compose(append([]string{"rm", "-f", "-s"}, services...)...)...)
 }
 
 func (d *DockerCompose) Logs(ctx context.Context, service string, tail int) string {

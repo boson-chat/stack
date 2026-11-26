@@ -38,7 +38,11 @@ test('re-run on an existing install is idempotent', async ({ page, request }) =>
   await shot(page, 'rerun-review', 'rerun-');
   await page.getByTestId('install').click();
   await expect(page.getByRole('heading', { name: 'Applying your settings' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Boson is running' })).toBeVisible({ timeout: 15 * 60_000 });
+  // Done, or a failed step (then fail with its error, not a timeout).
+  const doneOrError = page.getByRole('heading', { name: 'Boson is running' }).or(page.getByTestId('install-error'));
+  await expect(doneOrError.first()).toBeVisible({ timeout: 20 * 60_000 });
+  if (await page.getByTestId('install-error').isVisible()) throw new Error('install failed: ' + (await page.getByTestId('install-error').innerText()));
+
   // The oper password was kept, so there's none to show.
   await expect(page.getByTestId('oper-password')).toHaveCount(0);
   await expect(page.locator('pre')).toHaveCount(0);

@@ -140,7 +140,11 @@ test('new install through the wizard', async ({ page }) => {
   await shot(page, 'install-running');
 
   // ---- done ----
-  await expect(page.getByRole('heading', { name: 'Boson is running' })).toBeVisible({ timeout: 20 * 60_000 });
+  // Done, or a failed step (then fail with its error, not a timeout).
+  const doneOrError = page.getByRole('heading', { name: 'Boson is running' }).or(page.getByTestId('install-error'));
+  await expect(doneOrError.first()).toBeVisible({ timeout: 20 * 60_000 });
+  if (await page.getByTestId('install-error').isVisible()) throw new Error('install failed: ' + (await page.getByTestId('install-error').innerText()));
+
   await expect(page.getByTestId('link-web')).toHaveAttribute('href', `https://chat.${DOMAIN}/`);
   await expect(page.getByTestId('link-admin')).toHaveAttribute('href', `https://admin.${DOMAIN}/`);
   await expect(page.getByTestId('oper-password')).toHaveText(/^[A-Za-z0-9]{20}$/);

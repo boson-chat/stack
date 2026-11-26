@@ -18,8 +18,10 @@ type FakeCompose struct {
 	Users   map[string]string
 	Calls   []string
 	Started bool
-	Svc     []string
-	Delay   time.Duration
+	// Stale: a container a failed Up left "created".
+	Stale bool
+	Svc   []string
+	Delay time.Duration
 }
 
 func (f *FakeCompose) call(s string) {
@@ -43,6 +45,7 @@ func (f *FakeCompose) Up(ctx context.Context, onLine func(string)) error {
 	defer f.mu.Unlock()
 	if f.FailUp > 0 {
 		f.FailUp--
+		f.Stale = true
 		onLine(" Container boson-ergo-1  Starting")
 		return fmt.Errorf("docker compose up: exit status 1\nError response from daemon: failed to set up container networking: driver failed programming external connectivity on endpoint boson-ergo-1: Bind for 0.0.0.0:6697 failed: port is already allocated")
 	}
@@ -62,7 +65,14 @@ func (f *FakeCompose) Services(ctx context.Context) ([]string, error) { return f
 
 func (f *FakeCompose) PS(ctx context.Context) ([]ServiceStatus, error) {
 	var out []ServiceStatus
+	f.mu.Lock()
+	stale := f.Stale
+	f.mu.Unlock()
 	for _, s := range f.svc() {
+		if stale && s == "ergo" {
+			out = append(out, ServiceStatus{Service: s, State: "created"})
+			continue
+		}
 		if OneShot[s] {
 			out = append(out, ServiceStatus{Service: s, State: "exited"})
 		} else {
@@ -114,4 +124,12 @@ func (f *FakeCompose) Exec(ctx context.Context, service string, stdin io.Reader,
 		return args[3] + " role=" + args[4], nil
 	}
 	return "", nil
+}
+
+func (f *FakeCompose) Remove(ctx context.Context, services []string) error {
+	f.call("rm " + strings.Join(services, " "))
+	f.mu.Lock()
+	f.Stale = false
+	f.mu.Unlock()
+	return nil
 }
