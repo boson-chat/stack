@@ -21,7 +21,7 @@ func example(t *testing.T) []byte {
 func answers() Answers {
 	a := Defaults()
 	a.Domain = "boson.test"
-	a.NetworkName = "Test Net"
+	a.NetworkName = "TestNet"
 	a.Admin = AdminAnswers{Username: "alice", Email: "alice@boson.test"}
 	a.TLS.Email = "alice@boson.test"
 	return a
@@ -118,7 +118,7 @@ func TestConfigNewAndRerun(t *testing.T) {
 	if !strings.HasPrefix(string(out), string(ex[:200])) {
 		t.Fatal("example header lost")
 	}
-	if ConfigValue(out, "network", "name") != "Test Net" || ConfigValue(out, "auth", "registration") != "open" ||
+	if ConfigValue(out, "network", "name") != "TestNet" || ConfigValue(out, "auth", "registration") != "open" ||
 		ConfigValue(out, "files", "storage", "driver") != "local" || ConfigValue(out, "version") != 1 {
 		t.Fatalf("values:\n%s", out[:2000])
 	}
@@ -204,7 +204,7 @@ func TestValidate(t *testing.T) {
 	}
 	a.Domain = "https://x.com/"
 	a.Admin.Username = "1bad"
-	a.NetworkName = "it's"
+	a.NetworkName = "My Net"
 	e := a.Validate("", Secrets{AdminPassword: "short"}, true)
 	fields := map[string]bool{}
 	for _, f := range e {

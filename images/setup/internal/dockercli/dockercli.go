@@ -177,8 +177,15 @@ func (c *CLI) bin() string {
 func (c *CLI) describe(args []string) string {
 	// Never echo a command line in full: it could carry a value.
 	for i, a := range args {
-		if a == "compose" && i+7 < len(args) {
-			return "docker compose " + args[i+7]
+		if a == "compose" {
+			// The first word after the global flags.
+			for j := i + 7; j < len(args); j++ {
+				if strings.HasPrefix(args[j], "--") {
+					j++ // its value
+					continue
+				}
+				return "docker compose " + args[j]
+			}
 		}
 	}
 	if len(args) > 0 {

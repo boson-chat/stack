@@ -136,6 +136,9 @@ func (a *Answers) Normalize() {
 var (
 	labelRe    = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 	usernameRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{1,29}$`)
+	// networkNameRe: Ergo refuses a NETWORK token with spaces (and so does
+	// the IRC ISUPPORT grammar).
+	networkNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$`)
 )
 
 // ValidDomain: a DNS name with at least two labels.
@@ -193,8 +196,9 @@ func (a Answers) Validate(section string, s Secrets, needPassword bool) []FieldE
 	add := func(f, m string) { errs = append(errs, FieldError{f, m}) }
 	all := section == ""
 	if all || section == "domain" {
-		if a.NetworkName == "" || len(a.NetworkName) > 64 || !safeText(a.NetworkName) {
-			add("network_name", "Give the network a name (up to 64 characters, no quotes).")
+		if !networkNameRe.MatchString(a.NetworkName) {
+			// It's also IRC's NETWORK= (ISUPPORT): one token, no spaces.
+			add("network_name", "One word, up to 32 characters: letters, digits, - _ and . (it's also the IRC network name, which can't have spaces).")
 		}
 		if !ValidDomain(a.Domain) {
 			add("domain", "Enter a domain name like chat.example.com (no https://, no path).")

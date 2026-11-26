@@ -217,7 +217,7 @@ function domain(errors = {}) {
 			h(
 				'div',
 				{ class: 'grid2' },
-				field({ label: 'Network name', name: 'network_name', value: A.network_name, errors, hint: 'Shown on sign-in pages, in emails and as the IRC network name.', oninput: (e) => (A.network_name = e.target.value) }),
+				field({ label: 'Network name', name: 'network_name', value: A.network_name, errors, hint: 'One word (no spaces): the IRC network name, also shown on sign-in pages and in emails.', oninput: (e) => (A.network_name = e.target.value) }),
 				field({ label: 'Domain', name: 'domain', value: A.domain, errors, placeholder: 'chat.example.com', inputmode: 'url', hint: 'No https://. A subdomain works too.', oninput: onDomain }),
 			),
 			toggle({

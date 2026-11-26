@@ -38,6 +38,9 @@ test('new install through the wizard', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Your domain' })).toBeVisible();
   await page.getByLabel('Network name').fill('E2E Net');
   await page.getByLabel('Domain', { exact: true }).fill(BAD_DOMAIN);
+  await expect(page.getByText('it’s also the IRC network name'.replace('’', "'"))).toBeVisible();
+  await page.getByLabel('Network name').fill('E2E-Net');
+  await page.getByLabel('Domain', { exact: true }).fill(BAD_DOMAIN);
   await expect(page.locator(`[data-host="irc.${BAD_DOMAIN}"]`)).toHaveAttribute('data-status', 'elsewhere');
   await expect(page.getByRole('alert').filter({ hasText: 'DNS points somewhere else' })).toContainText('which is not this server');
   await expect(next(page)).toBeDisabled();
