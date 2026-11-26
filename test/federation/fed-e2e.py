@@ -25,8 +25,8 @@ Traefik through network aliases, TLS is Pebble's, /ca/roots.pem).
                       Ban (Ergo drops her, IRC login and sign-in refused:
                       identity_banned); Unban (back in); "Remote users can
                       join voice" off (voice token: remote_voice_disabled)
-                      and on; Block server (domain_blocked; Ergo drops her at
-                      once with auth >= --block-drops-irc-since) and
+                      and on; Block server (Ergo drops her at once, reconnect
+                      and sign-in refused: domain_blocked) and
                       Unblock; mode Off (boson.json accepts off,
                       federation_off). Screenshots in --shots.
 """
@@ -40,9 +40,6 @@ p.add_argument("--ca", default="/ca/roots.pem")
 p.add_argument("--state", default="/state")
 p.add_argument("--remote-config", default="/remote-config/boson.yaml")
 p.add_argument("--shots", default="/shots")
-# The first auth whose domain block puts the domain's accounts in the
-# removed-accounts feed (so the boson-ergo helper drops them from IRC).
-p.add_argument("--block-drops-irc-since", default=os.environ.get("BLOCK_DROPS_IRC_SINCE", "1.26.0"))
 args = p.parse_args()
 
 HOME, REMOTE = args.home, args.remote
@@ -330,23 +327,12 @@ def phase_main():
     alice.close(); bob.close()
 
 # ---- phase ui: the remote's admin panel, in a browser ----
-def version_at_least(v, want):
-    nums = lambda x: tuple(int(n) for n in re.findall(r"\d+", x)[:3])
-    try: return nums(v) >= nums(want)
-    except ValueError: return False
-
 def phase_ui():
     from playwright.sync_api import sync_playwright, expect, Error as PWError
     st = load_state()
     handle, bob_name, bob_pw = st["handle"], st["bob"], st["bob_pw"]
     me = f"alice@{HOME}"
     os.makedirs(args.shots, exist_ok=True)
-    s, auth_version = req(REMOTE_AUTH, "GET", "/version", headers={"Accept": "text/plain"})
-    auth_version = str(auth_version).strip()
-    drops = version_at_least(auth_version, args.block_drops_irc_since)
-    print(f"remote auth {auth_version}: a domain block drops IRC at once: "
-          f"{'yes' if drops else 'no (needs ' + args.block_drops_irc_since + '), those checks are skipped'}", flush=True)
-
     home_tok = login(HOME_AUTH, "alice", st["alice_pw"])
     def signin():
         return fed_login(assertion(home_tok))
@@ -478,8 +464,8 @@ def phase_ui():
             if ui("remote voice back on in the panel", lambda: voice(True)):
                 wait("she gets a voice token again", lambda: (lambda r: (r[0] == 200, r[0]))(voice_token()), timeout=60)
 
-        # E. block home.test: Ergo drops her at once (auth with the
-        # domain-block feed), she can't sign in; unblock lets her back
+        # E. block home.test: Ergo drops her at once, she can't sign in or
+        # reconnect; unblock lets her back
         def block():
             open_federation()
             row.get_by_role("button", name="Block server").click()
@@ -490,14 +476,16 @@ def phase_ui():
             expect(row.get_by_text("Server blocked", exact=True)).to_be_visible()
             shot("6-blocked")
         if ui(f"block {HOME} in the panel", block):
-            if drops:
-                check("Ergo drops her within seconds", alice.closed.wait(15), alice.lines[-5:])
-                again = IRC(handle, "OAUTHBEARER", oauthbearer(handle, tok))
-                o = again.outcome()
-                check("an IRC reconnect with her token is refused", o in ("sasl-failed", "closed"), f"{o} {again.lines[-5:]}")
-                again.close()
-            else:
-                print(f"SKIP Ergo drops her at once / reconnect refused: remote auth {auth_version} < {args.block_drops_irc_since}", flush=True)
+            # auth >= 1.26.0: the domain's accounts are in the removed-accounts
+            # feed as disabled (the helper disconnects them) and its IRC
+            # lookup says disabled while blocked (the auth-script refuses
+            # them; needs IRC_ROLES=true, which run.sh sets)
+            check("Ergo drops her within seconds", alice.closed.wait(15), alice.lines[-5:])
+            check("bob sees her quit", bob.wait(rf":{re.escape(handle)}!\S+ QUIT") is not None, bob.lines[-5:])
+            again = IRC(handle, "OAUTHBEARER", oauthbearer(handle, tok))
+            o = again.outcome()
+            check("an IRC reconnect with her token is refused", o in ("sasl-failed", "closed"), f"{o} {again.lines[-5:]}")
+            again.close()
             wait(f"a new sign-in: 403 domain_blocked",
                  lambda: (lambda r: (r[0] == 403 and code(r[1]) == "domain_blocked", r))(signin()), timeout=30)
             def unblock():

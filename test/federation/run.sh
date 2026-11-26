@@ -8,6 +8,11 @@
 #                        profile, fake DNS verifier), where irc.home.test
 #                        is listed
 #
+# IRC_ROLES=true (the default, set explicitly): the boson-ergo helper's
+# auth-script asks auth about each IRC login, which is how a banned or
+# domain-blocked account's reconnect is refused. Without it a token that
+# hasn't expired could still log in.
+#
 # Each install is a copy of this repo in its own directory and compose
 # project (-p home / -p remote), with scripts/setup.sh --local's .env plus
 # test/federation/compose.fed.yaml: no published ports, both Traefiks on a
@@ -109,6 +114,7 @@ install() {
 		"STACK_SUBNET=$3" "NODE_EXPORTER_ADDR=${3%.0/24}.1" "COMPOSE_PROFILES=$4" \
 		"REQUIRE_EMAIL_VERIFICATION=false" "FILES_ENABLED=true" \
 		"SETTINGS_POLL_SECONDS=3" "WELLKNOWN_REFRESH_SECONDS=5" \
+		"IRC_ROLES=true" \
 		"FED_NETWORK=$NET" "FED_CA_DIR=$TMP/ca" "STACK_PROJECT=$name"; do
 		setenv "$env" "${kv%%=*}" "${kv#*=}"
 	done
@@ -168,7 +174,6 @@ check() {
 		-v "$ROOT/test/federation:/t:ro" -v "$TMP/ca:/ca:ro" -v "$TMP/state:/state" \
 		-v "$TMP/remote/config:/remote-config:ro" -v "$SHOTS:/shots" \
 		-e REMOTE_ADMIN=remoteadmin -e REMOTE_ADMIN_PASSWORD="$ADMIN_PW" \
-		${BLOCK_DROPS_IRC_SINCE:+-e BLOCK_DROPS_IRC_SINCE="$BLOCK_DROPS_IRC_SINCE"} \
 		"$UI_IMAGE" python3 -u /t/fed-e2e.py --phase "$1"
 }
 mkdir -p "$SHOTS" && chmod 777 "$SHOTS"

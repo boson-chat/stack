@@ -157,12 +157,14 @@ it daily ([directory.md](directory.md)).
   [irc-channels.md](irc-channels.md#deleted-and-disabled-users)).
 - **Blocking a home domain** (`auth.federation.block`) refuses its sign-ins
   from then on and ends that domain's sessions. From auth 1.26.0
-  (boson-chat/auth#30) it also drops its users from IRC at once, like a ban:
+  (the stack's default; boson-chat/auth#30) it also drops its users from IRC at once, like a ban:
   auth puts each of the domain's federated accounts in the same feed as a
   disabled account, so the helper disconnects them, and refuses their
   reconnects until the domain is unblocked (nothing is deleted; unblocking
-  lets them straight back in). With an older auth, IRC clients already
-  connected stay until they reconnect.
+  lets them straight back in). This needs `IRC_ROLES=true` (the default):
+  without it the auth-script doesn't ask auth, and an access token that
+  hasn't expired (at most `ACCESS_TOKEN_TTL`) could still reconnect. With
+  an older auth, IRC clients already connected stay until they reconnect.
 
 ## Settings
 
@@ -243,18 +245,17 @@ and bob are connected to IRC throughout)
 13. "Remote users can join voice" off and saved: `remote_voice: false` in
     config/boson.yaml and her next voice token is refused
     (`remote_voice_disabled`); back on, she gets one again;
-14. **Block server** (home.test): her sign-in is `domain_blocked`; with an
-    auth whose domain block drops IRC at once (`BLOCK_DROPS_IRC_SINCE`,
-    below) Ergo also drops her within seconds and her reconnect is
-    refused; **Unblock**: she signs in and connects again;
+14. **Block server** (home.test): Ergo drops her within seconds (bob sees
+    her quit), her IRC reconnect is refused and her sign-in is
+    `domain_blocked`; **Unblock**: she signs in and connects again;
 15. mode **Off** saved: config/boson.yaml says `mode: off`, the remote's
     boson.json says `accepts: off` within `WELLKNOWN_REFRESH_SECONDS` (5
     in the test) and a sign-in is `federation_off`.
 
 Screenshots of the panel steps go to `test/federation/shots/` (the CI job
-uploads them as `federation-screenshots`). The drop-at-once checks of step
-14 run when the remote's auth (`GET /version`) is at least
-`BLOCK_DROPS_IRC_SINCE` and are printed as `SKIP` otherwise.
+uploads them as `federation-screenshots`). Both installs keep
+`IRC_ROLES=true`: refusing a banned or blocked account's IRC reconnect
+relies on the helper's auth-script asking auth.
 
 Trimmed: home runs `irc,auth,voice,files,wellknown`, the remote adds
 `directory` and `admin`; neither runs api, web, metrics or video, which
