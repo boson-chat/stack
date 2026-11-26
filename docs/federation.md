@@ -194,7 +194,7 @@ own boson.json as a home (it uses `BOSON_DOMAIN`, which compose sets to
 On the add-on path (Boson next to an existing IRC server through the
 bridge, [bridge.md](bridge.md)) the wizard offers the same choice as on a
 new server, verified servers by default, and writes the same
-`auth.federation` keys. It needs auth ≥ 1.26.0 and evrd ≥ 0.60.0 (the
+`auth.federation` keys. It needs auth ≥ 1.27.0 and evrd ≥ 0.60.0 (the
 stack's defaults). Installs made before stay `off` until you change the
 mode.
 
@@ -235,7 +235,7 @@ its own Pebble, on a shared Docker network the add-on's auth joins), let
 `addon-federation.py` checks that alice@home.test signs in on the add-on
 install as `alice-hometest` and gets a bridge account with no services
 login. Someone else has registered `alice` and `alice-hometest` with
-NickServ, with enforcement on (Anope `SET KILL QUICK`, Atheme `SET ENFORCE
+NickServ, with enforcement on (Anope `SET KILL 20`, Atheme `SET ENFORCE
 ON`). The bridge moves her to `alice-hometest_` before she joins. A classic
 client on the IRC server sees her join and talk only under that nick, not
 identified to NickServ. Past the enforcement delay she hasn't been renamed

@@ -6,7 +6,7 @@ an existing IRC server) without signing up there.
 
 0. Someone else registered the nicks alice (her home username) and
    alice-hometest (her handle here) with NickServ on the IRC server, with
-   the services' enforcement on (Anope SET KILL QUICK, Atheme SET ENFORCE
+   the services' enforcement on (Anope SET KILL 20, Atheme SET ENFORCE
    ON). An impostor using alice is renamed or killed: enforcement works.
 1. The add-on's boson.json has the federation section; alice signs up at
    home, gets an assertion for the add-on's auth and signs in there:
@@ -44,7 +44,7 @@ ATHEME = "atheme" in args.pairing
 HANDLE = "alice-" + re.sub(r"[^a-z0-9]", "", HOME)  # alice-hometest
 SAFE = HANDLE + "_"
 # How long the services let an unidentified user keep a registered nick
-# (Anope SET KILL QUICK: 20s; the Atheme fixture's enforce_delay: 10s).
+# (Anope SET KILL 20; the Atheme fixture's enforce_delay: 10s).
 ENFORCE = 10 if ATHEME else 20
 
 ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
@@ -173,9 +173,11 @@ def own(nick, pw):
     c.send(f"PRIVMSG NickServ :REGISTER {pw} {nick}-owner-{secrets.token_hex(2)}@example.org")
     r = c.wait(lambda l: "NickServ" in l and "NOTICE" in l and "registered" in l.lower(), 20)
     must(f"{nick} is registered with NickServ (by someone else)", r, c.lines[-4:])
-    c.send("PRIVMSG NickServ :SET ENFORCE ON" if ATHEME else "PRIVMSG NickServ :SET KILL QUICK")
-    r = c.wait(lambda l: "NickServ" in l and "NOTICE" in l and ("enforce" in l.lower() or "protection" in l.lower() or "kill" in l.lower()), 15)
-    check(f"{nick}: the services' enforcement is on ({'ENFORCE' if ATHEME else 'KILL QUICK'})", r, c.lines[-3:])
+    # Anope 2.1: SET KILL <seconds>; Atheme: SET ENFORCE ON
+    c.send("PRIVMSG NickServ :SET ENFORCE ON" if ATHEME else f"PRIVMSG NickServ :SET KILL {ENFORCE}")
+    r = c.wait(lambda l: "NickServ" in l and "NOTICE" in l and re.search(r"enforce|protection|kill", l, re.I), 15)
+    check(f"{nick}: the services' enforcement is on ({'ENFORCE' if ATHEME else f'KILL {ENFORCE}s'})",
+          r and not re.search(r"syntax|unknown|denied|not available|invalid", r, re.I), c.lines[-3:])
     c.close()
 
 # 0. the nicks someone else owns
@@ -280,7 +282,8 @@ st, r = https(AUTH, "POST", f"/v1/admin/federation/users/{ru['id']}/ban", {"reas
 check("ban alice@home.test", st == 200 and isinstance(r, dict) and r.get("banned") is True, (st, r))
 a.wait(lambda l: l.startswith("ERROR") or " KILL " in l, 45)
 check("the bridge drops her", a.closed or any(l.startswith("ERROR") for l in a.lines[-3:]), a.lines[-4:])
-q = watch.wait(lambda l: l.startswith(f":{SAFE}!") and " QUIT " in l, 30)
+q = next((l for l in watch.lines if " QUIT " in l and l.startswith(f":{SAFE}!")), None) or \
+    watch.wait(lambda l: l.startswith(f":{SAFE}!") and " QUIT " in l, 30)
 check("the classic client sees her quit", q, watch.lines[-4:])
 acct = bridge_api(f"/api/managed/users/{handle.lower()}")
 check("her bridge account is disabled", isinstance(acct, dict) and acct.get("disabled") is True, acct)
