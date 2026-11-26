@@ -84,7 +84,7 @@ func TestGolden(t *testing.T) {
 	}
 	want, err := os.ReadFile(golden)
 	if err != nil {
-		t.Fatalf("%v (run with -update to create it)", err)
+		t.Fatalf("%v (run with -update to create it); got:\n%s", err, got)
 	}
 	if !bytes.Equal(got, want) {
 		t.Errorf("capability table differs from %s (go test -run TestGolden -update to accept):\n--- got\n%s", golden, got)

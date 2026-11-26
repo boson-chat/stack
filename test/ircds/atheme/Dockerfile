@@ -29,4 +29,5 @@ COPY --chown=atheme atheme/atheme.conf /home/atheme/atheme/etc/atheme.conf
 USER atheme
 WORKDIR /home/atheme/atheme
 EXPOSE 8080
-CMD ["bin/atheme-services", "-n"]
+# -b on the first start: there's no database yet.
+CMD ["sh", "-c", "if [ -f etc/services.db ]; then exec bin/atheme-services -n; else exec bin/atheme-services -n -b; fi"]

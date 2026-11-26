@@ -59,8 +59,14 @@ func dial(ctx context.Context, o *Options) (*conn, error) {
 				buf := make([]byte, 512)
 				n, _ := io.ReadFull(rh.Conn, buf)
 				text := strings.TrimSpace(string(rh.RecordHeader[:]) + string(buf[:n]))
+				// Only the record header's 5 bytes survive crypto/tls's
+				// buffering when the rest arrived in the same read.
 				if line, _, _ := strings.Cut(text, "\n"); strings.HasPrefix(line, "ERROR") || strings.HasPrefix(line, ":") {
-					return nil, &plaintextRefusal{line: strings.TrimSpace(line)}
+					line = strings.TrimSpace(line)
+					if line == "ERROR" {
+						line = "ERROR (plaintext, before the TLS handshake)"
+					}
+					return nil, &plaintextRefusal{line: line}
 				}
 			}
 			return nil, fmt.Errorf("TLS handshake: %w", err)
