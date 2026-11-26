@@ -21,3 +21,19 @@ services:
       fed:
         aliases:
           - ergo.${DOMAIN}
+  # The admin panel (admin profile, remote only): the e2e drives its
+  # Federation page with Playwright. It checks https://remote.test's
+  # boson.json and the JWKS it names, so it sits on the shared network too,
+  # trusting Pebble's root. Without docker-proxy (the Stack page's service
+  # controls), which Federation doesn't use: run.sh sets
+  # ADMIN_DOCKER_PROXY_URL= and the service never starts.
+  admin:
+    environment:
+      SSL_CERT_FILE: /fed-ca/roots.pem
+    volumes:
+      - ${FED_CA_DIR:?}:/fed-ca:ro
+    networks: !override
+      default: {}
+      fed: {}
+  docker-proxy:
+    profiles: !override [fed-e2e-never]

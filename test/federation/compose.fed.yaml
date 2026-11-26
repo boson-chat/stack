@@ -26,6 +26,7 @@ services:
           - voice.${DOMAIN}
           - files.${DOMAIN}
           - directory.${DOMAIN}
+          - admin.${DOMAIN}
   ergo:
     ports: !reset []
   quicvoiced:
