@@ -361,7 +361,11 @@ func measurePerIP(ctx context.Context, o *Options) (int, string) {
 	for i := 0; i < o.ConnLimitTest; i++ {
 		c, err := dial(ctx, o)
 		if err != nil {
-			return len(open) + 1, "connect: " + err.Error()
+			var pr *plaintextRefusal
+			if errors.As(err, &pr) {
+				return len(open), pr.line
+			}
+			return len(open), "connect: " + err.Error()
 		}
 		nick := fmt.Sprintf("%s%02d", truncate("blim"+randHex(2), 8), i)
 		c.send("NICK", nick)

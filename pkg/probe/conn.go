@@ -50,7 +50,19 @@ func dial(ctx context.Context, o *Options) (*conn, error) {
 		hctx, cancel := context.WithTimeout(ctx, o.stepTimeout())
 		defer cancel()
 		if err := tc.HandshakeContext(hctx); err != nil {
-			nc.Close()
+			defer nc.Close()
+			// A server that refuses at accept (ngIRCd's per-IP limit) writes
+			// a plaintext ERROR instead of a TLS record.
+			var rh tls.RecordHeaderError
+			if errors.As(err, &rh) && rh.Conn != nil {
+				_ = rh.Conn.SetReadDeadline(time.Now().Add(time.Second))
+				buf := make([]byte, 512)
+				n, _ := io.ReadFull(rh.Conn, buf)
+				text := strings.TrimSpace(string(rh.RecordHeader[:]) + string(buf[:n]))
+				if line, _, _ := strings.Cut(text, "\n"); strings.HasPrefix(line, "ERROR") || strings.HasPrefix(line, ":") {
+					return nil, &plaintextRefusal{line: strings.TrimSpace(line)}
+				}
+			}
 			return nil, fmt.Errorf("TLS handshake: %w", err)
 		}
 		nc = tc
@@ -148,6 +160,13 @@ func (c *conn) next(timeout time.Duration) (message, error) {
 }
 
 var errTimeout = errors.New("timed out waiting for the server")
+
+// plaintextRefusal is a server's plaintext ERROR on a TLS port.
+type plaintextRefusal struct{ line string }
+
+func (p *plaintextRefusal) Error() string {
+	return "the server refused the connection before TLS: " + p.line
+}
 
 // until reads lines until fn returns true (stop) or the timeout expires.
 // Every line goes to fn, including the one that stops it.

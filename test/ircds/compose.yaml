@@ -36,7 +36,8 @@ services:
       - "127.0.0.1:${NGIRCD_ANOPE_TLS_PORT:-16697}:6697"
       - "127.0.0.1:${NGIRCD_ANOPE_PORT:-16667}:6667"
     healthcheck: &irc-health
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 6697 && nc -z 127.0.0.1 6667"]
+      # Plaintext port only: a bare TCP probe on 6697 is a TLS error in the log.
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 6667"]
       interval: 2s
       timeout: 3s
       retries: 60

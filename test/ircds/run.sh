@@ -75,7 +75,7 @@ rehash() {
   esac
   # Still serving after the rehash?
   for i in $(seq 1 30); do
-    compose exec -T "$ircd" nc -z 127.0.0.1 6697 2>/dev/null && return 0
+    compose exec -T "$ircd" nc -z 127.0.0.1 6667 2>/dev/null && return 0
     sleep 1
   done
   echo "$ircd stopped listening after the rehash" >&2

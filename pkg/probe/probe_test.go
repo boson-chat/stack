@@ -65,8 +65,8 @@ func TestIdentify(t *testing.T) {
 	for raw, want := range map[string][2]string{
 		"Anope-2.1.28 services.ngircd.test :ngircd - (enc_sha2) -- Built: ...": {"anope", "2.1.28"},
 		"atheme 7.3.0-rc2. services.insp.test :bf55352 [enc:pbkdf2v2]":         {"atheme", "7.3.0-rc2"},
-		"Atheme IRC Services (atheme-7.2.12)":                                   {"atheme", "7.2.12"},
-		"some services":                                                         {"unknown", ""},
+		"Atheme IRC Services (atheme-7.2.12)":                                  {"atheme", "7.2.12"},
+		"some services":                                                        {"unknown", ""},
 	} {
 		p, v := identifyServices(raw)
 		if p != want[0] || v != want[1] {

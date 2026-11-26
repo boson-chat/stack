@@ -47,6 +47,29 @@ func (e evaluator) has(caps ...string) bool {
 	return false
 }
 
+// nativeOn lists, per feature, the servers that provide it natively
+// (checked against UnrealIRCd 6.2.7.1, InspIRCd 4.12.1, ngIRCd 28, Ergo 2.19).
+var nativeOn = map[string]string{
+	FeatureMessageTags:      "Ergo, UnrealIRCd 6 and InspIRCd 4",
+	FeatureEchoMessage:      "Ergo, UnrealIRCd 6 and InspIRCd 4",
+	FeatureServerTime:       "Ergo, UnrealIRCd 6 and InspIRCd 4",
+	FeatureClientTags:       "Ergo, UnrealIRCd 6 and InspIRCd 4",
+	FeatureChatHistory:      "Ergo and UnrealIRCd 6",
+	FeatureMultiline:        "Ergo and UnrealIRCd 6",
+	FeatureReadMarkers:      "Ergo",
+	FeatureMessageRedaction: "Ergo",
+	FeatureSASL:             "Ergo, and UnrealIRCd 6 or InspIRCd 4 with Anope or Atheme",
+	FeatureWebIRC:           "Ergo, UnrealIRCd 6, InspIRCd 4 and ngIRCd",
+}
+
+func provides(feature string) string {
+	who := nativeOn[feature]
+	if strings.Contains(who, " and ") || strings.Contains(who, " or ") {
+		return who + " provide it natively."
+	}
+	return who + " provides it natively."
+}
+
 // upgrade returns software-specific advice for getting a capability natively.
 func (e evaluator) upgrade(feature string) string {
 	switch e.sw {
@@ -54,18 +77,18 @@ func (e evaluator) upgrade(feature string) string {
 		if m, ok := inspModules[feature]; ok {
 			return m
 		}
-		return "InspIRCd 4 has no module for this; Ergo or UnrealIRCd 6 provide it natively."
+		return "InspIRCd 4 has no module for this; " + provides(feature)
 	case "unrealircd":
 		if m, ok := unrealModules[feature]; ok {
 			return m
 		}
-		return "UnrealIRCd 6 has no module for this; Ergo provides it natively."
+		return "UnrealIRCd 6 has no module for this; " + provides(feature)
 	case "ngircd":
-		return "ngIRCd has no IRCv3 support for this; Ergo, UnrealIRCd 6 or InspIRCd 4 provide it natively."
+		return "ngIRCd has no support for this; " + provides(feature)
 	case "ergo":
 		return "Upgrade Ergo and check that it isn't disabled in ircd.yaml."
 	}
-	return "Upgrade to an IRC server that supports it (Ergo, UnrealIRCd 6, InspIRCd 4)."
+	return "Switch to a server that provides it natively: " + nativeOn[feature] + "."
 }
 
 var inspModules = map[string]string{
