@@ -26,7 +26,7 @@ COPY gencert.sh /usr/local/bin/gencert
 COPY --chown=ircd inspircd/inspircd.conf /home/ircd/inspircd/conf/inspircd.conf
 # extra.conf: test/ircds/run.sh apply appends to it before a rehash.
 RUN echo '# test/ircds/run.sh apply' > /home/ircd/inspircd/conf/extra.conf && echo 'InspIRCd test fixture' > /home/ircd/inspircd/conf/motd.txt \
- && chown ircd /home/ircd/inspircd/conf/extra.conf \
+ && chown ircd:ircd /home/ircd/inspircd/conf/extra.conf /home/ircd/inspircd/conf/motd.txt \
  && mkdir -p /certs && chown ircd /certs
 USER ircd
 WORKDIR /home/ircd/inspircd

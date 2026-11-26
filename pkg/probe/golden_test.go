@@ -7,6 +7,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -30,6 +31,9 @@ var fixtures = map[string]struct {
 // test/ircds/run.sh up + smoke:
 //
 //	PROBE_FIXTURE=insp-atheme [PROBE_WEBIRC_APPLIED=1] go test -run TestGolden [-update]
+//
+// On a mismatch in CI, the job's "probe-<pairing>" artifact has the new
+// table (and the full report): copy it over testdata/golden after review.
 //
 // PROBE_ACCOUNT / PROBE_PASSWORD: the account smoke registered
 // (default bosonprobe / probe-fixture-pass).
@@ -73,6 +77,13 @@ func TestGolden(t *testing.T) {
 
 	got, _ := json.MarshalIndent(r.Table, "", "  ")
 	got = append(got, '\n')
+	// PROBE_GOLDEN_OUT: also write the table (and the full report) there,
+	// for CI to upload when it differs.
+	if dir := os.Getenv("PROBE_GOLDEN_OUT"); dir != "" {
+		_ = os.MkdirAll(dir, 0o755)
+		_ = os.WriteFile(filepath.Join(dir, filepath.Base(golden)), got, 0o644)
+		_ = os.WriteFile(filepath.Join(dir, strings.TrimSuffix(filepath.Base(golden), ".json")+".report.json"), full, 0o644)
+	}
 	if *update {
 		if err := os.MkdirAll(filepath.Dir(golden), 0o755); err != nil {
 			t.Fatal(err)

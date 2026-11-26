@@ -15,6 +15,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"sort"
@@ -366,6 +367,9 @@ func measurePerIP(ctx context.Context, o *Options) (int, string) {
 			var pr *plaintextRefusal
 			if errors.As(err, &pr) {
 				return len(open), pr.line
+			}
+			if errors.Is(err, io.EOF) {
+				return len(open), "the server closed the connection during the TLS handshake"
 			}
 			return len(open), "connect: " + err.Error()
 		}

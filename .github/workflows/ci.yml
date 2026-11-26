@@ -464,7 +464,7 @@ jobs:
       - name: Probe vs pkg/probe/testdata/golden/${{ matrix.pairing }}.json
         continue-on-error: true # TEMP bootstrap
         working-directory: pkg/probe
-        run: PROBE_FIXTURE="$PAIRING" go test -count=1 -run TestGolden -v .
+        run: PROBE_FIXTURE="$PAIRING" PROBE_GOLDEN_OUT="$RUNNER_TEMP/probe-out" go test -count=1 -run TestGolden -v .
       - name: A broken snippet is refused and rolled back
         run: |
           if printf 'this is { not a config\n' | test/ircds/run.sh apply "$PAIRING"; then
@@ -475,7 +475,14 @@ jobs:
         continue-on-error: true # TEMP bootstrap
         run: |
           test/ircds/run.sh apply "$PAIRING" "test/ircds/snippets/webirc.${{ matrix.ircd }}.conf"
-          cd pkg/probe && PROBE_FIXTURE="$PAIRING" PROBE_WEBIRC_APPLIED=1 go test -count=1 -run TestGolden -v .
+          cd pkg/probe && PROBE_FIXTURE="$PAIRING" PROBE_WEBIRC_APPLIED=1 PROBE_GOLDEN_OUT="$RUNNER_TEMP/probe-out" go test -count=1 -run TestGolden -v .
+      - name: Probe output (the tables to compare with testdata/golden)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-${{ matrix.pairing }}
+          path: ${{ runner.temp }}/probe-out/
+          if-no-files-found: ignore
       - name: Logs on failure
         if: failure()
         run: test/ircds/run.sh logs "$PAIRING"

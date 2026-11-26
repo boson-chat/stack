@@ -47,17 +47,18 @@ rehash() {
   case $ircd in
     unrealircd)
       # The control socket reports the rehash's outcome and errors.
-      out=$(compose exec -T "$ircd" ./unrealircd rehash 2>&1) || { echo "$out" >&2; return 1; }
-      echo "$out"
-      echo "$out" | grep -qi 'error' && return 1
+      out=$(compose exec -T "$ircd" ./unrealircd rehash 2>&1) || true
+      echo "$out" | grep -v '^\[advice\]'
+      echo "$out" | grep -q 'Rehashed successfully' || return 1
       ;;
     inspircd)
+      # InspIRCd logs the rehash to its file: only look at what's new.
+      n=$(compose exec -T "$ircd" sh -c 'wc -l < logs/ircd.log' 2>/dev/null || echo 0)
       compose kill -s HUP "$ircd" >/dev/null
-      # InspIRCd logs to its file; errors are "... errors in your configuration".
       sleep 2
-      log=$(compose exec -T "$ircd" sh -c 'tail -n 50 logs/ircd.log 2>/dev/null' || true)
-      if echo "$log" | grep -qiE 'rehash.*(error|fail)|configuration .*error|There were errors'; then
-        echo "$log" | grep -iE 'error|fail' | tail -n 10 >&2
+      log=$(compose exec -T "$ircd" sh -c "tail -n +$((n + 1)) logs/ircd.log" || true)
+      if echo "$log" | grep -qiE 'REHASH: .*error|Syntax error|errors in your configuration|Unable to'; then
+        echo "$log" | grep -iE 'error|unable' | tail -n 10 >&2
         return 1
       fi
       ;;

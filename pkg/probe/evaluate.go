@@ -100,7 +100,7 @@ var inspModules = map[string]string{
 	FeatureReplies:     `Load InspIRCd's ircv3_ctctags module and leave <ctctags clientonlytags="all"> (the default).`,
 	FeatureReactions:   `Load InspIRCd's ircv3_ctctags module and leave <ctctags clientonlytags="all"> (the default).`,
 	FeatureSASL:        `Load InspIRCd's sasl module with <sasl target="your.services.server"> (and services that do SASL).`,
-	FeatureWebIRC:      `Load InspIRCd's gateway module and add <gateway type="webirc" mask="GATEWAY-IP" password="..."> (the wizard generates it).`,
+	FeatureWebIRC:      `Load InspIRCd's gateway module and add <gateway type="webirc" mask="GATEWAY-IP" password="WEBIRC-PASSWORD"> (the wizard generates it).`,
 }
 
 var unrealModules = map[string]string{
@@ -112,7 +112,7 @@ var unrealModules = map[string]string{
 	FeatureReactions:   `UnrealIRCd 6 only relays client tags that a module registers, and it ships none for +draft/react; it needs a third-party module that registers +draft/react (CLIENTTAGDENY then stops listing it).`,
 	FeatureMultiline:   `Load UnrealIRCd's multiline module (modules.default.conf).`,
 	FeatureSASL:        `UnrealIRCd 6 does SASL through services: set set::sasl-server (or services-server) to the services' name and run services that do SASL.`,
-	FeatureWebIRC:      `Add a webirc { mask GATEWAY-IP; password "..."; } block (the wizard generates it).`,
+	FeatureWebIRC:      `Add a webirc { mask GATEWAY-IP; password "WEBIRC-PASSWORD"; } block (the wizard generates it).`,
 }
 
 func (e evaluator) messageTags() Capability {
@@ -297,7 +297,7 @@ func (e evaluator) servicesRPC() Capability {
 	enable := ""
 	switch pkg {
 	case "anope":
-		enable = `Anope 2.1: load httpd, jsonrpc (with a token { token = "..." methods = "anope.checkCredentials anope.identify anope.account" } block) and rpc_user, then give Boson the URL (http://services-host:8080/jsonrpc) and the token.`
+		enable = `Anope 2.1: load httpd, jsonrpc (with a token { token = "TOKEN" methods = "anope.checkCredentials anope.identify anope.account" } block) and rpc_user, then give Boson the URL (http://services-host:8080/jsonrpc) and the token.`
 	case "atheme":
 		enable = `Atheme: load misc/httpd and transport/jsonrpc (httpd { host; port; }), then give Boson the URL (http://services-host:8080/jsonrpc).`
 	case "ergo":
@@ -372,7 +372,7 @@ func (e evaluator) webirc() Capability {
 		return c
 	case w.Tested:
 		c.Status = Unavailable
-		c.Explanation = "The server refused WEBIRC with the given password (" + w.Detail + "): every Boson user would appear to come from the gateway's IP."
+		c.Explanation = "The server refused WEBIRC with the given password (the report's webirc.detail has its answer): every Boson user would appear to come from the gateway's IP."
 	default:
 		c.Status = Unavailable
 		c.Explanation = "Not checked: no WEBIRC password given. Without WEBIRC every Boson user appears to come from the gateway's IP."
