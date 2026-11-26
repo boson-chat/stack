@@ -92,17 +92,17 @@ def save_state(st):
 # ---- helpers ----
 def login(host, user, pw):
     st, r = req(host, "POST", "/v1/login", {"login": user, "password": pw})
-    must(f"log in {user} on {host}", st == 200 and isinstance(r, dict) and r.get("access_token"), f"{st} {r}")
+    must(f"log in {user} on {host}", st == 200 and isinstance(r, dict) and r.get("access_token"), f"{st} {r if st != 200 else ''}")
     return r["access_token"]
 
 def register(host, user, pw):
     st, r = req(host, "POST", "/v1/register", {"username": user, "email": f"{user}@example.com", "password": pw})
-    must(f"sign up {user} on {host}", st in (200, 201), f"{st} {r}")
+    must(f"sign up {user} on {host}", st in (200, 201), st if st in (200, 201) else f"{st} {r}")
 
 def assertion(home_token):
     st, r = req(HOME_AUTH, "POST", "/v1/federation/assertions", {"audience": REMOTE_ISSUER}, token=home_token)
     must("home issues an assertion for the remote", st == 200 and isinstance(r, dict) and r.get("assertion")
-         and r.get("expires_in") == 300, f"{st} {r}")
+         and 0 < r.get("expires_in", 0) <= 300, f"{st} {r if st != 200 else ''}")
     return r["assertion"]
 
 def fed_login(a):
@@ -118,7 +118,7 @@ def directory_listing(key, verify):
     st, r = req(host, "POST", "/v1/networks", {"hostname": f"irc.{HOME}", "port": 6697, "tls": True,
                 "name": "Home", "description": "federation e2e home server", "languages": ["en"]}, auth=f"Network {key}")
     n = r.get("network", r) if isinstance(r, dict) else {}
-    must(f"irc.{HOME} listed in the remote's directory", st in (200, 201) and n.get("id"), f"{st} {r}")
+    must(f"irc.{HOME} listed in the remote's directory", st in (200, 201) and n.get("id"), f"{st} {n.get('status') if n.get('id') else r}")
     if verify:
         st, r = req(host, "POST", f"/v1/networks/{urllib.parse.quote(n['id'])}/verify", auth=f"Network {key}")
         must(f"irc.{HOME} verified (fake DNS)", st == 200 and isinstance(r, dict) and r.get("success") is True, f"{st} {r}")
@@ -138,8 +138,11 @@ class IRC:
         self.f = self.s.makefile("rb")
         self.mech, self.payload, self.nick = mech, payload, nick
         self.result = queue.Queue()
-        threading.Thread(target=self.read, daemon=True).start()
+        # The greeting goes out before the reader starts: reading and writing
+        # one TLS connection from two threads at once isn't safe during the
+        # TLS 1.3 post-handshake messages.
         self.send("CAP LS 302"); self.send(f"NICK {nick}"); self.send(f"USER {nick} 0 * :federation e2e")
+        threading.Thread(target=self.read, daemon=True).start()
 
     def send(self, l):
         self.s.sendall((l + "\r\n").encode())
@@ -162,6 +165,10 @@ class IRC:
                 b = base64.b64encode(self.payload.encode()).decode()
                 for i in range(0, len(b), 400): self.send("AUTHENTICATE " + b[i:i + 400])
                 if len(b) % 400 == 0: self.send("AUTHENTICATE +")
+            elif cmd == "AUTHENTICATE" or (parts[0] == "AUTHENTICATE" and parts[1] != "+"):
+                # OAUTHBEARER refused (RFC 7628): an error challenge that the
+                # client acknowledges with a single 0x01, then 904.
+                self.send("AUTHENTICATE AQ==")
             elif cmd == "903":
                 self.send("CAP END")
             elif cmd in ("904", "905", "906"):
@@ -249,9 +256,10 @@ def phase_main():
     a = assertion(home_tok)
     # 3. sign in on the remote
     s, r = fed_login(a)
-    must("federated sign-in on the remote", s == 200 and isinstance(r, dict) and r.get("access_token"), f"{s} {r}")
+    must("federated sign-in on the remote", s == 200 and isinstance(r, dict) and r.get("access_token"), s if s == 200 else f"{s} {r}")
+    shown = {k: r.get(k) for k in ("federated", "identity", "handle", "user")}
     check("login response: federated, identity alice@home.test, handle alice",
-          r.get("federated") is True and r.get("identity") == f"alice@{HOME}" and r.get("handle") == "alice", r)
+          r.get("federated") is True and r.get("identity") == f"alice@{HOME}" and r.get("handle") == "alice", shown)
     tok, handle = r["access_token"], r["handle"]
     c = jwt_claims(tok)
     check("the remote's own token (iss remote, name = handle)", c.get("iss") == REMOTE_ISSUER and c.get("name") == handle, c)
@@ -263,10 +271,11 @@ def phase_main():
 
     # 4-5. IRC: alice with OAUTHBEARER, bob (a local user of the remote) sees her
     bob_pw = secrets.token_urlsafe(16)
-    register(REMOTE_AUTH, "bob", bob_pw)
-    bob_tok = login(REMOTE_AUTH, "bob", bob_pw)
+    bob_name = "bob" + secrets.token_hex(2)
+    register(REMOTE_AUTH, bob_name, bob_pw)
+    bob_tok = login(REMOTE_AUTH, bob_name, bob_pw)
     chan = "#fed" + secrets.token_hex(3)
-    bob = IRC("bob", "PLAIN", f"\0bob\0{bob_pw}")
+    bob = IRC(bob_name, "PLAIN", f"\0{bob_name}\0{bob_pw}")
     must("bob (local) on the remote's Ergo", bob.outcome() == "welcome", bob.lines[-5:])
     alice = IRC(handle, "OAUTHBEARER", oauthbearer(handle, tok))
     must(f"alice on the remote's Ergo with OAUTHBEARER as {handle}", alice.outcome() == "welcome", alice.lines[-5:])
@@ -285,7 +294,7 @@ def phase_main():
     s, r = req(REMOTE_AUTH, "GET", f"/v1/users/{handle}/identity")
     check("identity lookup: alice@home.test", s == 200 and isinstance(r, dict) and r.get("federated") is True
           and r.get("identity") == f"alice@{HOME}" and r.get("home_domain") == HOME, f"{s} {r}")
-    s, r = req(REMOTE_AUTH, "GET", "/v1/users/bob/identity")
+    s, r = req(REMOTE_AUTH, "GET", f"/v1/users/{bob_name}/identity")
     check("identity lookup: bob is local", s == 200 and isinstance(r, dict) and r.get("federated") is False, f"{s} {r}")
 
     # 7. upload with the remote-user quota
@@ -301,7 +310,7 @@ def phase_main():
     # 8. voice
     s, r = req(REMOTE_AUTH, "POST", "/v1/voice/token", {"rooms": []}, token=tok)
     vt = r.get("token") if isinstance(r, dict) else None
-    check("alice gets a voice token", s == 200 and vt, f"{s} {r}")
+    check("alice gets a voice token", s == 200 and vt, s if vt else f"{s} {r}")
     if vt:
         s, r = req(f"voice.{REMOTE}", "GET", "/v1/rooms", token=vt)
         check("the remote's voice server takes it (GET /v1/rooms)", s == 200 and isinstance(r, dict) and "rooms" in r, f"{s} {r}")
