@@ -108,19 +108,25 @@ func notFound(err error) bool {
 	return errors.As(err, &de) && (de.IsNotFound || strings.Contains(de.Err, "no such host"))
 }
 
-func (d *DNS) one(ctx context.Context, h stack.Host, ours func(net.IP) bool) HostResult {
-	r := HostResult{Host: h, A: []string{}, AAAA: []string{}}
+func (d *DNS) one(ctx context.Context, h stack.Host, ours func(net.IP) bool) (r HostResult) {
+	r = HostResult{Host: h, A: []string{}, AAAA: []string{}}
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	v4, err4 := d.Resolver.LookupIP(ctx, "ip4", h.Name)
 	v6, err6 := d.Resolver.LookupIP(ctx, "ip6", h.Name)
-	for _, err := range []error{err4, err6} {
-		if err != nil && !notFound(err) {
-			r.Status = "error"
-			r.Message = "Couldn't look this name up right now (" + shortErr(err) + "). Checking again shortly."
-			return r
-		}
+	if err4 != nil && !notFound(err4) {
+		r.Status = "error"
+		r.Message = "Couldn't look this name up right now (" + shortErr(err4) + "). Checking again shortly."
+		return r
 	}
+	aaaaNote := ""
+	if err6 != nil && !notFound(err6) {
+		// Some DNS servers answer AAAA badly when there is none; the A
+		// record decides, with a note.
+		v6 = nil
+		aaaaNote = " (The AAAA lookup failed: " + shortErr(err6) + ".)"
+	}
+	defer func() { r.Message += aaaaNote }()
 	var wrong []string
 	for _, ip := range v4 {
 		r.A = append(r.A, ip.String())

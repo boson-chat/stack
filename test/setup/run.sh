@@ -59,6 +59,11 @@ for h in irc auth chat admin api voice files; do
 	curl -fsS -X POST -d "{\"host\":\"$h.$BAD.\",\"addresses\":[\"203.0.113.9\"]}" http://127.0.0.1:8055/add-a
 done
 
+for q in "irc.$DOMAIN A" "irc.$DOMAIN AAAA" "irc.$BAD A" "irc.$BAD AAAA"; do
+	# shellcheck disable=SC2086
+	echo "dig $q: $(dig +time=2 +tries=1 @127.0.0.1 -p 8053 $q | grep -E 'status:|IN\s+(A|AAAA)\s' | tr -s ' \t' ' ' | tr '\n' ' ')"
+done
+
 echo "== Pebble as the ACME CA (compose.override.yaml in $DIR, like test/acme)"
 sudo mkdir -p "$DIR/e2e"
 sudo cp test/acme/pebble.json test/acme/pebble.minica.pem "$DIR/e2e/"
