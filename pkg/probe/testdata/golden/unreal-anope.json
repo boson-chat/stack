@@ -1,0 +1,84 @@
+{
+  "schema": 1,
+  "software": "unrealircd",
+  "services": "anope",
+  "needs_bridge": true,
+  "features": [
+    {
+      "feature": "message-tags",
+      "title": "Message tags",
+      "status": "native",
+      "explanation": "The server offers message-tags: Boson gets message IDs, timestamps and client tags from it."
+    },
+    {
+      "feature": "echo-message",
+      "title": "Echo of sent messages",
+      "status": "native",
+      "explanation": "The server offers echo-message: Boson sees its own messages as the server delivered them."
+    },
+    {
+      "feature": "server-time",
+      "title": "Server timestamps",
+      "status": "native",
+      "explanation": "The server offers server-time: every message carries the time the server saw it."
+    },
+    {
+      "feature": "chathistory",
+      "title": "Chat history",
+      "status": "native",
+      "explanation": "The server offers CHATHISTORY: Boson can scroll back in channels and private messages from the server's own log. On UnrealIRCd only channels with mode +H keep history, and private messages have none."
+    },
+    {
+      "feature": "read-markers",
+      "title": "Read markers",
+      "status": "via-bridge",
+      "explanation": "The server has no draft/read-marker. evrd keeps each account's read markers and syncs them between that user's Boson devices.",
+      "fix": "UnrealIRCd 6 has no module for this; Ergo provides it natively."
+    },
+    {
+      "feature": "replies",
+      "title": "Replies",
+      "status": "native",
+      "explanation": "The server relays +draft/reply (message-tags, not in CLIENTTAGDENY): it reaches everyone with an IRCv3 client."
+    },
+    {
+      "feature": "reactions",
+      "title": "Reactions",
+      "status": "unavailable",
+      "explanation": "The server has message-tags but CLIENTTAGDENY (*,-draft/typing,-typing,-draft/channel-context,-draft/reply,-reply) drops +draft/react, so other users never receive it. Boson hides reactions.",
+      "fix": "UnrealIRCd 6 only relays client tags that a module registers, and it ships none for +draft/react; it needs a third-party module that registers +draft/react (CLIENTTAGDENY then stops listing it)."
+    },
+    {
+      "feature": "message-redaction",
+      "title": "Deleting messages",
+      "status": "unavailable",
+      "explanation": "The server has no draft/message-redaction. Deleting has to reach every user's client, which only the server can do; Boson hides Delete.",
+      "fix": "UnrealIRCd 6 has no module for this; Ergo provides it natively."
+    },
+    {
+      "feature": "sasl",
+      "title": "SASL login",
+      "status": "native",
+      "explanation": "The server offers SASL (ANONYMOUS, EXTERNAL, PLAIN): Boson logs users in before they join anything."
+    },
+    {
+      "feature": "services-rpc",
+      "title": "Existing accounts (services RPC)",
+      "status": "native",
+      "explanation": "The Anope RPC endpoint accepted the test account: Boson can log users in with their existing NickServ accounts."
+    },
+    {
+      "feature": "webirc",
+      "title": "Real user IPs (WEBIRC)",
+      "status": "unavailable",
+      "explanation": "The server refused WEBIRC with the given password (the report's webirc.detail has its answer): every Boson user would appear to come from the gateway's IP.",
+      "fix": "Add a webirc { mask GATEWAY-IP; password \"WEBIRC-PASSWORD\"; } block (the wizard generates it)."
+    },
+    {
+      "feature": "multiline",
+      "title": "Multiline messages",
+      "status": "native",
+      "explanation": "The server offers draft/multiline (max-bytes=1500,max-lines=7): a pasted block arrives as one message."
+    }
+  ]
+}

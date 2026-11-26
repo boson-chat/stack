@@ -422,9 +422,75 @@ jobs:
       - run: scripts/setup.sh --local
       - run: test/acme/run.sh
 
+  probe:
+    name: setup probe (Go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pkg/probe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: pkg/probe/go.mod
+      - run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+
+  ircds:
+    name: IRC fixture ${{ matrix.pairing }} (smoke, probe golden, config snippet)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { pairing: ngircd-anope, ircd: ngircd }
+          - { pairing: unreal-anope, ircd: unrealircd }
+          - { pairing: insp-atheme, ircd: inspircd }
+          - { pairing: ngircd, ircd: ngircd }
+    env:
+      PAIRING: ${{ matrix.pairing }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: pkg/probe/go.mod
+      - name: Build from pinned source and start (test/ircds/run.sh up)
+        run: test/ircds/run.sh up "$PAIRING"
+      - name: Smoke (TLS, NickServ REGISTER + IDENTIFY, SASL PLAIN when offered, services RPC)
+        env:
+          SMOKE_ARGS: --nick bosonprobe --password probe-fixture-pass
+        run: test/ircds/run.sh smoke "$PAIRING"
+      - name: Probe vs pkg/probe/testdata/golden/${{ matrix.pairing }}.json
+        working-directory: pkg/probe
+        run: PROBE_FIXTURE="$PAIRING" PROBE_GOLDEN_OUT="$RUNNER_TEMP/probe-out" go test -count=1 -run TestGolden -v .
+      - name: A broken snippet is refused and rolled back
+        run: |
+          if printf 'this is { not a config\n' | test/ircds/run.sh apply "$PAIRING"; then
+            echo "run.sh apply accepted a broken snippet"; exit 1
+          fi
+          test/ircds/run.sh smoke "$PAIRING"
+      - name: Apply the WEBIRC snippet (test/ircds/snippets/webirc.${{ matrix.ircd }}.conf), probe again
+        run: |
+          test/ircds/run.sh apply "$PAIRING" "test/ircds/snippets/webirc.${{ matrix.ircd }}.conf"
+          cd pkg/probe && PROBE_FIXTURE="$PAIRING" PROBE_WEBIRC_APPLIED=1 PROBE_GOLDEN_OUT="$RUNNER_TEMP/probe-out" go test -count=1 -run TestGolden -v .
+      - name: Probe output (the tables to compare with testdata/golden)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-${{ matrix.pairing }}
+          path: ${{ runner.temp }}/probe-out/
+          if-no-files-found: ignore
+      - name: Logs on failure
+        if: failure()
+        run: test/ircds/run.sh logs "$PAIRING"
+      - name: Down
+        if: always()
+        run: test/ircds/run.sh down "$PAIRING"
+
   publish:
     name: publish images to Harbor
-    needs: [helper, webircgateway, smoke, directory, files, minio, nick-claim, roles, acme]
+    needs: [helper, webircgateway, smoke, directory, files, minio, nick-claim, roles, acme, probe, ircds]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
