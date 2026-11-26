@@ -410,6 +410,8 @@ function features(errors = {}) {
 		if (gi.disabled) gi.checked = A.guest_voice = false;
 	};
 
+	const federation = federationSection(section, errors);
+
 	const smtpResult = h('div', { 'aria-live': 'polite' });
 	const smtpTLS = select({
 		label: 'Security',
@@ -520,9 +522,58 @@ function features(errors = {}) {
 				toggle({ label: 'List this network in the Boson directory', detail: 'So people can find it in the app. You finish the listing in the admin panel (a DNS TXT record proves the domain is yours).', checked: A.directory_listing, onchange: (v) => (A.directory_listing = v) }),
 				toggle({ label: 'Run a directory of my own', detail: `A network directory at directory.${A.domain || 'your-domain'}, federated with directory.boson.chat (advanced).`, checked: A.own_directory, onchange: (v) => (A.own_directory = v) }),
 			),
+			federation,
 			smtp,
 			nav(prevOf('features'), () => saveAndGo('features', nextOf('features'), features)),
 		),
+	);
+}
+
+// Federated sign-in (docs/federation.md): who may sign in here with an
+// account from another Boson server. Off on the add-on path (v1 needs Ergo).
+function federationSection(section, errors) {
+	const title = 'Accounts from other servers';
+	if (A.mode === 'addon') {
+		return section(
+			title,
+			h('p', { class: 'muted' }, 'People with an account on another Boson server could sign in here without signing up.'),
+			notice('info', 'Not on this path yet: signing in with an account from another server needs Boson’s own IRC server. It stays off here for now; nothing to choose.'),
+		);
+	}
+	const allow = field({
+		label: 'Servers to accept',
+		name: 'federation_allow',
+		value: (A.federation_allow || '').split(',').filter(Boolean).join(', '),
+		errors,
+		placeholder: 'boson.chat, friends.example.org',
+		hint: 'Their domains, separated by commas. *.example.org also takes its subdomains.',
+		oninput: (e) => (A.federation_allow = e.target.value),
+	});
+	const allowBox = h('div', { class: 'stack', hidden: A.federation !== 'allowlist' }, allow);
+	const discovery = notice('warn', `People here can’t use their account on other servers until app discovery is on (https://${A.domain || 'your-domain'}/.well-known/boson.json, on the Domain step): that’s where other servers check who you are.`);
+	discovery.hidden = A.wellknown || A.federation === 'off';
+	return section(
+		title,
+		h('p', { class: 'muted' }, 'People with an account on another Boson server can join here without signing up, and people from here can do the same elsewhere. No passwords or messages cross servers, only a short-lived signed note of who someone is. They follow this server’s rules, and you can ban them or block their whole server later.'),
+		errors.federation ? notice('bad', errors.federation) : null,
+		choices({
+			legend: 'Accept accounts from',
+			name: 'federation',
+			value: A.federation || 'directory',
+			options: [
+				{ value: 'directory', label: 'Verified servers (recommended)', detail: 'Servers with a verified listing in the Boson directory: their owner proved the domain is theirs.' },
+				{ value: 'allowlist', label: 'Only servers I list', detail: 'The tightest choice. You add each server you trust.' },
+				{ value: 'open', label: 'Any Boson server', detail: 'Anyone can set up a server, spammers too. Only with active moderation.' },
+				{ value: 'off', label: 'Off', detail: 'Only accounts made here. People from here can’t use their account on other servers either.' },
+			],
+			onchange: (v) => {
+				A.federation = v;
+				allowBox.hidden = v !== 'allowlist';
+				discovery.hidden = A.wellknown || v === 'off';
+			},
+		}),
+		allowBox,
+		discovery,
 	);
 }
 

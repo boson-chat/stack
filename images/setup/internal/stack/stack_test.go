@@ -173,6 +173,8 @@ func TestExistingAnswersRoundTrip(t *testing.T) {
 	a.SMTP = SMTPAnswers{Host: "smtp.boson.test", Port: 465, From: "Boson <no@boson.test>", TLS: "tls", User: "u"}
 	a.EmailVerification = true
 	a.TLS.CA = "staging"
+	a.Federation = FederationAllowlist
+	a.FederationAllow = "boson.chat, *.example.org"
 	p, err := BuildPlan(a, Secrets{SMTPPassword: "pw-secret"}, nil, NewGenerator(), "999")
 	if err != nil {
 		t.Fatal(err)
@@ -246,5 +248,57 @@ func TestWriteFileAtomicMode(t *testing.T) {
 	st, _ := os.Stat(p)
 	if st.Mode().Perm() != 0o600 {
 		t.Fatalf("mode %v", st.Mode())
+	}
+}
+
+func TestFederationAnswers(t *testing.T) {
+	a := answers()
+	p, err := BuildPlan(a, Secrets{}, nil, NewGenerator(), "999")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _, _ := ApplyConfig(nil, example(t), p.Config)
+	if ConfigValue(out, "auth", "federation", "mode") != "directory" || ConfigValue(out, "auth", "federation", "allow") != nil {
+		t.Fatalf("default: verified servers, no allow list:\n%s", out[:1500])
+	}
+
+	a.Federation = FederationAllowlist
+	a.FederationAllow = "https://Boson.chat/, alice@friends.example.org\n*.example.net boson.chat"
+	p, err = BuildPlan(a, Secrets{}, nil, NewGenerator(), "999")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Answers.FederationAllow; got != "boson.chat,friends.example.org,*.example.net" {
+		t.Fatalf("allow %q", got)
+	}
+	out, _, _ = ApplyConfig(out, example(t), p.Config)
+	allow, _ := ConfigValue(out, "auth", "federation", "allow").([]any)
+	if ConfigValue(out, "auth", "federation", "mode") != "allowlist" || len(allow) != 3 || allow[2] != "*.example.net" {
+		t.Fatalf("allowlist:\n%s", out)
+	}
+
+	for _, bad := range []Answers{
+		func() Answers { b := answers(); b.Federation = "everyone"; return b }(),
+		func() Answers { b := answers(); b.Federation = FederationAllowlist; return b }(),
+		func() Answers {
+			b := answers()
+			b.Federation = FederationAllowlist
+			b.FederationAllow = "not a domain!"
+			return b
+		}(),
+	} {
+		bad.Normalize()
+		if e := bad.Validate("features", Secrets{}, false); len(e) == 0 || !strings.HasPrefix(e[0].Field, "federation") {
+			t.Errorf("%q %q: %v", bad.Federation, bad.FederationAllow, e)
+		}
+	}
+
+	// The add-on path: off (federation v1 needs Ergo).
+	b := answers()
+	b.Mode = ModeAddon
+	b.Federation = FederationOpen
+	b.Normalize()
+	if b.Federation != FederationOff {
+		t.Fatalf("add-on: %q", b.Federation)
 	}
 }

@@ -212,7 +212,7 @@ after downtime):
 | In auth | On IRC |
 |---|---|
 | user **deleted** | the Ergo account is **erased** (patched Ergo `POST /v1/ns/unregister` with `erase`, i.e. `NS ERASE`): their connections are closed, **every channel they founded is unregistered** (Ergo's own unregister logic), their always-on client, read markers, account settings and vhost go, and the name is free for a new account |
-| user **disabled** | nothing: the account and its channels are kept, so re-enabling them restores everything. They can't log in (auth refuses), and their unused channels still expire with `channel_expiry_days` |
+| user **disabled** (also a banned [federated](federation.md) user) | their connections are closed (patched Ergo `POST /v1/account_disconnect`; an always-on client too, and always-on is switched off so a restart doesn't bring it back), but the account and its channels are kept, so re-enabling them restores everything. They can't log in again (the auth-script asks auth, which says disabled), and their unused channels still expire with `channel_expiry_days` |
 
 Why erase rather than only unregister the channels: the person is gone,
 and Ergo's account holds their data (always-on client, settings, read
@@ -220,7 +220,7 @@ markers) and reserves the name. A plain `NS UNREGISTER` would keep the name
 reserved forever, so a new auth user who later takes the username couldn't
 log in to IRC. Auth only reports a deletion while nobody has that username
 again, so a re-created user's account is never touched. Disabling is
-reversible, so it destroys nothing.
+reversible, so it destroys nothing: it only ends the sessions.
 
 With an older auth (no feed) deleted users keep their Ergo accounts and
 channels; their channels then only go away by expiry (or an oper:
@@ -375,6 +375,10 @@ v2.19.1 (see [ergo-account-opers.md](ergo-account-opers.md) for 0001):
   freeing it.
 - **0003 `api: add /v1/ns/unregister`**: `NS UNREGISTER`/`NS ERASE` over the
   HTTP API, for deleted users.
+- **0008 `api: add /v1/account_disconnect`**: every client logged into an
+  account quits (always-on ones too, and always-on is turned off for it),
+  the account is kept: for disabled users and banned federated users
+  (`irc/apidisconnect.go`, tests in `irc/apidisconnect_test.go`).
 - **0004** and **0005**: account extbans, `channel_access`/`sajoin` and the
   network channel API ([roles.md](roles.md), above).
 - **0006 `api: channel guard`**: `POST /v1/channel_access` takes

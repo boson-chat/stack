@@ -20,9 +20,12 @@ import (
 //	          always-on client, read markers, settings and vhost go, and the
 //	          name is free for a new account (auth only reports a deletion if
 //	          nobody has the username again)
-//	disabled: nothing; the account and its channels are kept so that
-//	          re-enabling restores everything. Logins are refused by auth;
-//	          idle channels still expire (channel_expiry_days)
+//	disabled: its clients are disconnected (POST /v1/account_disconnect,
+//	          patched Ergo; also a banned federated user, docs/federation.md)
+//	          and new logins are refused (the auth-script asks auth); the
+//	          account and its channels are kept so that re-enabling
+//	          restores everything. Idle channels still expire
+//	          (channel_expiry_days)
 //
 // The feed's cursor is kept in /ircd/boson-removed.json, so every removal is
 // handled once, also across restarts and while Ergo or auth were down.
@@ -52,7 +55,11 @@ func saveRemovedState(dir string, st removedState) error {
 // eraser is the part of the Ergo API syncRemoved needs.
 type eraser interface {
 	EraseAccount(ctx context.Context, account string) error
+	DisconnectAccount(ctx context.Context, account, reason string) (int, error)
 }
+
+// disabledReason is the QUIT message of a disabled account's clients.
+const disabledReason = "Your account was disabled on this server"
 
 type removedFeed interface {
 	RemovedAccounts(ctx context.Context, since string, limit int) ([]roles.RemovedAccount, string, error)
@@ -71,8 +78,16 @@ func syncRemovedAccounts(ctx context.Context, feed removedFeed, ergo eraser, st 
 		for _, a := range accounts {
 			switch {
 			case a.Username == "":
+			case a.Reason == "disabled" && isProtectedAccount(a.Username, protected):
 			case a.Reason == "disabled":
-				logf("removed accounts: %s was disabled in auth; keeping their Ergo account and channels", a.Username)
+				n, err := ergo.DisconnectAccount(ctx, a.Username, disabledReason)
+				switch {
+				case err == nil:
+					logf("removed accounts: %s was disabled in auth: disconnected %d client(s); keeping their Ergo account and channels", a.Username, n)
+				case ergoapi.IsCode(err, "ACCOUNT_DOES_NOT_EXIST"):
+				default:
+					return st, err
+				}
 			case a.Reason != "deleted":
 				logf("removed accounts: %s: unknown reason %q, ignored", a.Username, a.Reason)
 			case isProtectedAccount(a.Username, protected):

@@ -69,7 +69,9 @@ services:
       # Only this compose project's containers, and only those with traefik.enable=true.
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
-      - --providers.docker.constraints=Label(`com.docker.compose.project`,`boson`)
+      # STACK_PROJECT: only when the stack runs under another compose project
+      # name (docker compose -p NAME), as the federation e2e's two installs do.
+      - --providers.docker.constraints=Label(`com.docker.compose.project`,`${STACK_PROJECT:-boson}`)
       # traefik/dynamic: the stack's cert routers (stack.yml) + your own files.
       - --providers.file.directory=/etc/traefik/dynamic
       - --providers.file.watch=true
@@ -389,7 +391,7 @@ services:
     profiles: [auth]
     # Releases: harbor.floret.dev/boson/auth:<version>. To run an unreleased
     # checkout instead, add compose.auth-src.yaml (see README).
-    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.23.0}
+    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.24.0}
     environment:
       ENV: production
       LOG_LEVEL: ${AUTH_LOG_LEVEL:-info}
@@ -458,6 +460,29 @@ services:
       NICKSERV_ALLOW_PLAINTEXT: ${NICKSERV_ALLOW_PLAINTEXT:-false}
       NICKSERV_SERVICES_SERVER: ${NICKSERV_SERVICES_SERVER:-}
       NICKSERV_REGISTRATION: ${NICKSERV_REGISTRATION:-true}
+      # Federated login (docs/federation.md, auth >= 1.24.0): people with an
+      # account on another Boson server sign in here with it, and people
+      # from here on other servers. FEDERATION_DOMAIN is this install's
+      # boson_domain: the domain whose /.well-known/boson.json (wellknown
+      # profile) lists this auth. auth's default is AUTH_HOST without
+      # "auth." (= DOMAIN on a usual install); set it in .env when AUTH_HOST
+      # isn't auth.DOMAIN. The rest are defaults: config/boson.yaml
+      # auth.federation.{mode,allow,block,directory_url,remote_upload_quota,
+      # remote_voice} wins (the admin panel's Federation page writes them).
+      FEDERATION_DOMAIN: ${FEDERATION_DOMAIN:-}
+      FEDERATION_MODE: ${FEDERATION_MODE:-directory}
+      FEDERATION_ALLOW: ${FEDERATION_ALLOW:-}
+      FEDERATION_BLOCK: ${FEDERATION_BLOCK:-}
+      FEDERATION_DIRECTORY_URL: ${FEDERATION_DIRECTORY_URL:-https://directory.boson.chat}
+      FEDERATION_REMOTE_ROLE: ${FEDERATION_REMOTE_ROLE:-Remote}
+      FEDERATION_REMOTE_UPLOAD_QUOTA: ${FEDERATION_REMOTE_UPLOAD_QUOTA:-}
+      FEDERATION_REMOTE_MAX_FILE: ${FEDERATION_REMOTE_MAX_FILE:-}
+      FEDERATION_REMOTE_VOICE: ${FEDERATION_REMOTE_VOICE:-true}
+      # Remote users' upload quota is a per-user override on the files
+      # service (files profile), set through its internal API. Without the
+      # profile the pushes fail quietly and are retried at the next sign-in.
+      FILES_INTERNAL_URL: ${AUTH_FILES_INTERNAL_URL-http://files:3001}
+      FILES_INTERNAL_TOKEN: ${FILES_INTERNAL_TOKEN:-}
     volumes:
       # Read-only: boson.yaml (auth:, network:, branding:) and the branding
       # images in config/branding/, served at /v1/branding/assets/.
@@ -705,6 +730,11 @@ services:
       CONFIG_STATUS_TARGETS: >-
         ${ADMIN_CONFIG_STATUS_TARGETS:-auth=http://auth:8081/internal/config/status,quicvoiced=http://quicvoiced:8080/internal/config/status,directory=http://directory:8081/internal/config/status,ergo=http://ergo:8098/internal/config/status,api=http://api:3001/internal/config/status,files=http://files:3001/internal/config/status}
       PUBLIC_URL: https://${ADMIN_HOST:-admin.${DOMAIN:-localhost}}
+      # This install's domain: the Federation page checks
+      # https://BOSON_DOMAIN/.well-known/boson.json (admin with
+      # boson-chat/admin#34; older panels ignore it). The settings themselves
+      # are auth.federation.* in config/boson.yaml (mounted rw below).
+      BOSON_DOMAIN: ${DOMAIN:-}
       # Seals the admin's auth tokens in the session cookie (32 random bytes, base64).
       SESSION_KEY: ${ADMIN_SESSION_KEY:-}
       TRUSTED_PROXIES: ${STACK_SUBNET:-10.203.53.0/24}
@@ -744,7 +774,7 @@ services:
       # Services control (restart/stop/start, logs) through docker-proxy below.
       # Empty ADMIN_DOCKER_PROXY_URL= turns it off.
       DOCKER_PROXY_URL: ${ADMIN_DOCKER_PROXY_URL-http://docker-proxy:2375}
-      DOCKER_PROJECT: boson
+      DOCKER_PROJECT: ${STACK_PROJECT:-boson}
       # evrd-links: restarting it drops every Boson user off IRC.
       DOCKER_PROTECTED_SERVICES: admin,traefik,evrd-links
       # Users' boson profiles (avatar, handle) from the api
@@ -795,7 +825,7 @@ services:
     labels:
       - traefik.enable=true
       # Two networks: tell Traefik which one reaches the panel.
-      - traefik.docker.network=boson_default
+      - traefik.docker.network=${STACK_PROJECT:-boson}_default
       - traefik.http.routers.admin.rule=Host(`${ADMIN_HOST:-admin.${DOMAIN:-localhost}}`)
       - traefik.http.routers.admin.entrypoints=websecure
       - traefik.http.routers.admin.tls=true
@@ -1063,7 +1093,7 @@ services:
   files:
     <<: *restart
     profiles: [files]
-    image: ${FILES_IMAGE:-harbor.floret.dev/boson/files:1.0.1}
+    image: ${FILES_IMAGE:-harbor.floret.dev/boson/files:1.0.3}
     environment:
       ENV: ${FILES_ENV:-production}
       LOG_LEVEL: ${FILES_LOG_LEVEL:-info}
@@ -1238,6 +1268,12 @@ services:
       AUTH_HOST: ${AUTH_HOST}
       VOICE_HOST: ${VOICE_HOST}
       FILES_HOST: ${FILES_HOST:-files.${DOMAIN:-localhost}}
+      # The "federation" section (docs/federation.md): auth's metadata,
+      # fetched inside the network and refreshed every
+      # WELLKNOWN_REFRESH_SECONDS ("accepts" follows the admin setting).
+      # Only with the auth section; empty = no federation section.
+      WELLKNOWN_FEDERATION_URL: ${WELLKNOWN_FEDERATION_URL-http://auth:8080/.well-known/boson-federation.json}
+      WELLKNOWN_REFRESH_SECONDS: ${WELLKNOWN_REFRESH_SECONDS:-60}
     volumes:
       - ./images/wellknown/serve.sh:/serve.sh:ro
     labels:

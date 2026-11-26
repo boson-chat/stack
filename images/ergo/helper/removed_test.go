@@ -35,8 +35,20 @@ func (f *fakeFeed) RemovedAccounts(_ context.Context, since string, limit int) (
 }
 
 type fakeEraser struct {
-	erased []string
-	fail   map[string]error
+	erased       []string
+	disconnected []string
+	fail         map[string]error
+}
+
+func (e *fakeEraser) DisconnectAccount(_ context.Context, account, reason string) (int, error) {
+	if err := e.fail[account]; err != nil {
+		return 0, err
+	}
+	if reason == "" {
+		return 0, errors.New("no reason")
+	}
+	e.disconnected = append(e.disconnected, account)
+	return 1, nil
 }
 
 func (e *fakeEraser) EraseAccount(_ context.Context, account string) error {
@@ -69,6 +81,9 @@ func TestSyncRemovedAccounts(t *testing.T) {
 	}
 	if strings.Join(ergo.erased, ",") != "alice" {
 		t.Fatalf("erased %v; disabled users and service accounts must be kept", ergo.erased)
+	}
+	if strings.Join(ergo.disconnected, ",") != "bob" {
+		t.Fatalf("disconnected %v; want the disabled user only", ergo.disconnected)
 	}
 
 	// nothing new: the cursor stays

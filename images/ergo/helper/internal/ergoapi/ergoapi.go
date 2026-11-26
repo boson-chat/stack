@@ -142,6 +142,18 @@ func (c *Client) EraseAccount(ctx context.Context, account string) error {
 	return c.call(ctx, "/v1/ns/unregister", map[string]any{"accountName": account, "erase": true}, nil)
 }
 
+// DisconnectAccount calls POST /v1/account_disconnect (patched Ergo,
+// patches/0008): every client logged into the account quits (always-on
+// ones too, and always-on is switched off for it); the account is kept.
+// It returns how many clients were disconnected.
+func (c *Client) DisconnectAccount(ctx context.Context, account, reason string) (int, error) {
+	var out struct {
+		Clients int `json:"clients"`
+	}
+	err := c.call(ctx, "/v1/account_disconnect", map[string]any{"accountName": account, "reason": reason}, &out)
+	return out.Clients, err
+}
+
 // ChannelAccess is the request of POST /v1/channel_access (patched Ergo,
 // patches/0004): set or clear +i / +R (nil leaves a mode alone) and make
 // Accounts the a:<account> invite exceptions SetBy manages.
