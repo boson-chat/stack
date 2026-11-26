@@ -92,7 +92,11 @@ cmd/devserver            -tags dev: the pages against fake docker/DNS
 `/api/flows/<id>/`), one `reg.Add(...)` in `main.go`, and
 `web/flows/<id>.js` exporting `mount(ctx)`. It can reuse `internal/stack`
 for its plan (a profile set without `irc`), `internal/checks`, and
-`install.Runner` for the install with its own steps.
+`install.Runner` for the install with its own steps. The add-on flow will
+read the IRC server with `pkg/probe` (its own module: `replace
+github.com/boson-chat/stack/pkg/probe => ../../pkg/probe` in
+`images/setup/go.mod`) and is tested against the `test/ircds` fixtures;
+`internal/flow/addon` says where each piece goes.
 
 ## Developing
 
