@@ -62,7 +62,10 @@ section is left out. `WELLKNOWN_FEDERATION_URL=` (empty) leaves it out for
 good.
 
 **Which domain.** Assertions name the home by its `boson_domain`: auth's
-`FEDERATION_DOMAIN`, which compose sets to `DOMAIN`. Other servers fetch
+`FEDERATION_DOMAIN`, by default `AUTH_HOST` without its `auth.` (so
+`DOMAIN` with the usual `AUTH_HOST=auth.DOMAIN`). Set `FEDERATION_DOMAIN=DOMAIN`
+in `.env` when `AUTH_HOST` is something else. (A dev install on `localhost`
+has no domain and issues no assertions.) Other servers fetch
 `https://<boson_domain>/.well-known/boson.json` and require its
 `federation.issuer` to be this auth. So `DOMAIN` must be the domain that
 serves boson.json. If boson.json is served elsewhere (your website at
@@ -170,7 +173,7 @@ in the file apply live ([config.md](config.md)):
 | `auth.federation.remote_upload_quota` | `FEDERATION_REMOTE_UPLOAD_QUOTA` | e.g. `500MB`; empty = the account quota |
 | `auth.federation.remote_voice` | `FEDERATION_REMOTE_VOICE` (`true`) | remote users may get voice and video tokens |
 
-`.env` only: `FEDERATION_DOMAIN` (default `DOMAIN`),
+`.env` only: `FEDERATION_DOMAIN` (default `AUTH_HOST` minus `auth.`),
 `FEDERATION_REMOTE_ROLE` (`Remote`), `FEDERATION_REMOTE_MAX_FILE`,
 `WELLKNOWN_REFRESH_SECONDS` (60), `WELLKNOWN_FEDERATION_URL`.
 

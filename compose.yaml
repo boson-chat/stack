@@ -464,10 +464,12 @@ services:
       # account on another Boson server sign in here with it, and people
       # from here on other servers. FEDERATION_DOMAIN is this install's
       # boson_domain: the domain whose /.well-known/boson.json (wellknown
-      # profile) lists this auth. The rest are defaults: config/boson.yaml
+      # profile) lists this auth. auth's default is AUTH_HOST without
+      # "auth." (= DOMAIN on a usual install); set it in .env when AUTH_HOST
+      # isn't auth.DOMAIN. The rest are defaults: config/boson.yaml
       # auth.federation.{mode,allow,block,directory_url,remote_upload_quota,
       # remote_voice} wins (the admin panel's Federation page writes them).
-      FEDERATION_DOMAIN: ${FEDERATION_DOMAIN:-${DOMAIN:-}}
+      FEDERATION_DOMAIN: ${FEDERATION_DOMAIN:-}
       FEDERATION_MODE: ${FEDERATION_MODE:-directory}
       FEDERATION_ALLOW: ${FEDERATION_ALLOW:-}
       FEDERATION_BLOCK: ${FEDERATION_BLOCK:-}
