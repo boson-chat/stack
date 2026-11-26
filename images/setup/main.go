@@ -37,6 +37,7 @@ import (
 	"github.com/boson-chat/stack/images/setup/internal/install"
 	"github.com/boson-chat/stack/images/setup/internal/secret"
 	"github.com/boson-chat/stack/images/setup/internal/server"
+	"github.com/boson-chat/stack/images/setup/internal/stack"
 	"github.com/boson-chat/stack/images/setup/internal/tlscert"
 	"github.com/boson-chat/stack/images/setup/web"
 )
@@ -68,6 +69,15 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println(strings.TrimSpace(string(b)))
+	case "ircprobe":
+		// The add-on path's IRC probe, run in a container on the stack's
+		// network (addon.ContainerProbe): options on stdin, a report out.
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+		if err := addon.RunWire(ctx, os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "stack-setup ircprobe:", err)
+			os.Exit(1)
+		}
 	case "probe":
 		fs := flag.NewFlagSet("probe", flag.ExitOnError)
 		host := fs.String("host", "", "address to test")
@@ -219,6 +229,13 @@ func serve() error {
 	ad, err := addon.New(deps)
 	if err != nil {
 		return err
+	}
+	if probeImage != "" {
+		subnet := "10.203.53.0/24"
+		if ex, err := stack.LoadExisting(dir); err == nil && ex.Env["STACK_SUBNET"] != "" {
+			subnet = ex.Env["STACK_SUBNET"]
+		}
+		ad.Probe = addon.ContainerProbe(cli, probeImage, "boson", subnet)
 	}
 	reg := &flow.Registry{}
 	reg.Add(fr)
