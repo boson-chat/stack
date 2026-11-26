@@ -522,7 +522,7 @@ jobs:
       - run: go test -race -count=1 ./...
       - name: install.sh is POSIX sh
         working-directory: .
-        run: sh -n install.sh && shellcheck install.sh test/setup/run.sh test/setup/run-addon.sh test/setup/hooks.sh
+        run: sh -n install.sh && shellcheck install.sh test/setup/run.sh test/setup/run-addon.sh test/setup/hooks.sh test/federation/run.sh && sh -n images/wellknown/serve.sh
 
   setup-e2e:
     name: setup wizard e2e (install.sh → wizard → Pebble ACME → working stack → re-run)
@@ -546,6 +546,18 @@ jobs:
           name: setup-wizard-traces
           path: test/setup/test-results/
           if-no-files-found: ignore
+
+  # Federated login between two full installs on one runner (home.test and
+  # remote.test, separate compose projects, Pebble certificates, the
+  # remote's own directory): test/federation/run.sh, docs/federation.md.
+  federation-e2e:
+    name: federation e2e (two installs, home -> remote sign-in, IRC, uploads, voice, ban)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: home.test + remote.test, alice signs in on the remote with her home account
+        run: test/federation/run.sh
 
   # The add-on path ("Add Boson to my existing IRC server") against each IRC
   # server fixture: test/setup/run-addon.sh. Pull requests run ngircd-anope
@@ -581,7 +593,7 @@ jobs:
 
   publish:
     name: publish images to Harbor
-    needs: [bridgesync, setup-addon-e2e, helper, webircgateway, smoke, directory, files, minio, nick-claim, roles, acme, probe, ircds, setup, setup-e2e]
+    needs: [bridgesync, setup-addon-e2e, federation-e2e, helper, webircgateway, smoke, directory, files, minio, nick-claim, roles, acme, probe, ircds, setup, setup-e2e]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:

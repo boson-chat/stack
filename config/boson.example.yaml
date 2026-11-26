@@ -118,6 +118,29 @@ version: 1
 #       invite:                  # an invite to sign up (registration: invite)
 #         subject: "{{inviter}} invited you to {{network}}"
 #         body: "{{inviter}} invited you to {{network}}.\n\nCreate your account: {{link}}\n\nThe invite works for {{expires}}."
+#   # Federated login (docs/federation.md, auth 1.24+): people with an
+#   # account on another Boson server sign in here with it. The admin panel's
+#   # Federation page edits these.
+#   federation:
+#     # Whose accounts are accepted: directory (servers verified in the
+#     # directory below) | allowlist (only `allow`) | open (any Boson server)
+#     # | off (nobody; this server's users can't sign in elsewhere either).
+#     # Default: FEDERATION_MODE / directory.
+#     mode: directory
+#     # Home domains allowlist mode accepts; *.example.org = it and its
+#     # subdomains. Default: FEDERATION_ALLOW.
+#     allow: [boson.chat]
+#     # Home domains refused in every mode. Default: FEDERATION_BLOCK.
+#     block: [spam.example]
+#     # The directory directory mode trusts.
+#     # Default: FEDERATION_DIRECTORY_URL / https://directory.boson.chat.
+#     directory_url: https://directory.boson.chat
+#     # Remote users' upload quota per rolling window ("" = the account quota).
+#     # Default: FEDERATION_REMOTE_UPLOAD_QUOTA.
+#     remote_upload_quota: 1GB
+#     # Remote users may get voice (and video) tokens.
+#     # Default: FEDERATION_REMOTE_VOICE / true.
+#     remote_voice: true
 
 # ---- branding: the network's look in the boson client (auth service) --------------
 # Theme colors, pane backgrounds, logo and sign-in background, served to the

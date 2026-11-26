@@ -173,6 +173,9 @@ certsync always run).
   [docs/directory.md](docs/directory.md).
 - `files` needs `auth` (database, sign-in); add `minio` for S3 storage on
   the same host. See [docs/files.md](docs/files.md).
+- Federated login (people from other Boson servers sign in here with
+  their account, and yours elsewhere) needs `auth` and `wellknown`, with
+  `DOMAIN` pointing here. See [docs/federation.md](docs/federation.md).
 
 ## TLS and certificates
 
