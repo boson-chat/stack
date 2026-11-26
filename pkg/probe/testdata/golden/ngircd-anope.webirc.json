@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "software": "ngircd",
+  "services": "anope",
+  "needs_bridge": true,
+  "features": [
+    {
+      "feature": "message-tags",
+      "title": "Message tags",
+      "status": "via-bridge",
+      "explanation": "The server has no message-tags. evrd offers message-tags to Boson and adds its own message IDs and timestamps; tags between users (replies, reactions) still need the server.",
+      "fix": "ngIRCd has no support for this; Ergo, UnrealIRCd 6 and InspIRCd 4 provide it natively."
+    },
+    {
+      "feature": "echo-message",
+      "title": "Echo of sent messages",
+      "status": "via-bridge",
+      "explanation": "The server has no echo-message. evrd echoes each message back to Boson once the server has taken it.",
+      "fix": "ngIRCd has no support for this; Ergo, UnrealIRCd 6 and InspIRCd 4 provide it natively."
+    },
+    {
+      "feature": "server-time",
+      "title": "Server timestamps",
+      "status": "via-bridge",
+      "explanation": "The server has no server-time. evrd stamps messages with the time it received them.",
+      "fix": "ngIRCd has no support for this; Ergo, UnrealIRCd 6 and InspIRCd 4 provide it natively."
+    },
+    {
+      "feature": "chathistory",
+      "title": "Chat history",
+      "status": "via-bridge",
+      "explanation": "The server has no CHATHISTORY. evrd logs the channels and private messages of Boson users and serves history from that log, so history starts when Boson first joins a channel.",
+      "fix": "ngIRCd has no support for this; Ergo and UnrealIRCd 6 provide it natively."
+    },
+    {
+      "feature": "read-markers",
+      "title": "Read markers",
+      "status": "via-bridge",
+      "explanation": "The server has no draft/read-marker. evrd keeps each account's read markers and syncs them between that user's Boson devices.",
+      "fix": "ngIRCd has no support for this; Ergo provides it natively."
+    },
+    {
+      "feature": "replies",
+      "title": "Replies",
+      "status": "unavailable",
+      "explanation": "Replies use the client tag +draft/reply, which the server has to pass between users, and this server has no message-tags. evrd can't add it: other users would never receive it. Boson shows replies as plain messages.",
+      "fix": "ngIRCd has no support for this; Ergo, UnrealIRCd 6 and InspIRCd 4 provide it natively."
+    },
+    {
+      "feature": "reactions",
+      "title": "Reactions",
+      "status": "unavailable",
+      "explanation": "Reactions use the client tag +draft/react, which the server has to pass between users, and this server has no message-tags. evrd can't add it: other users would never receive it. Boson hides reactions.",
+      "fix": "ngIRCd has no support for this; Ergo and InspIRCd 4 provide it natively."
+    },
+    {
+      "feature": "message-redaction",
+      "title": "Deleting messages",
+      "status": "unavailable",
+      "explanation": "The server has no draft/message-redaction. Deleting has to reach every user's client, which only the server can do; Boson hides Delete.",
+      "fix": "ngIRCd has no support for this; Ergo provides it natively."
+    },
+    {
+      "feature": "sasl",
+      "title": "SASL login",
+      "status": "via-bridge",
+      "explanation": "The server has no SASL. evrd takes Boson's SASL login and identifies to NickServ (IDENTIFY) right after connecting, before joining channels.",
+      "fix": "ngIRCd has no support for this; Ergo, and UnrealIRCd 6 or InspIRCd 4 with Anope or Atheme provide it natively."
+    },
+    {
+      "feature": "services-rpc",
+      "title": "Existing accounts (services RPC)",
+      "status": "native",
+      "explanation": "The Anope RPC endpoint accepted the test account: Boson can log users in with their existing NickServ accounts."
+    },
+    {
+      "feature": "webirc",
+      "title": "Real user IPs (WEBIRC)",
+      "status": "native",
+      "explanation": "The server accepted WEBIRC with the given password: it sees each Boson user's real IP, so bans work per user. (ngIRCd still counts connections against the gateway's address: see the connection limit hint.)"
+    },
+    {
+      "feature": "multiline",
+      "title": "Multiline messages",
+      "status": "unavailable",
+      "explanation": "The server has no draft/multiline. A pasted block goes out as separate lines (evrd and Boson split it), and everyone sees separate lines: keeping it one message needs the server.",
+      "fix": "ngIRCd has no support for this; Ergo and UnrealIRCd 6 provide it natively."
+    }
+  ]
+}

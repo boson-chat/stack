@@ -52,15 +52,8 @@ rehash() {
       echo "$out" | grep -q 'Rehashed successfully' || return 1
       ;;
     inspircd)
-      # InspIRCd logs the rehash to its file: only look at what's new.
-      n=$(compose exec -T "$ircd" sh -c 'wc -l < logs/ircd.log' 2>/dev/null || echo 0)
-      compose kill -s HUP "$ircd" >/dev/null
-      sleep 2
-      log=$(compose exec -T "$ircd" sh -c "tail -n +$((n + 1)) logs/ircd.log" || true)
-      if echo "$log" | grep -qiE 'REHASH: .*error|Syntax error|errors in your configuration|Unable to'; then
-        echo "$log" | grep -iE 'error|unable' | tail -n 10 >&2
-        return 1
-      fi
+      # InspIRCd reports the rehash (errors included) to the oper who asked.
+      python3 "$here/rehash.py" --port "$plain" || return 1
       ;;
     ngircd|ngircd-solo)
       # ngIRCd keeps the old config if the new one doesn't parse; a config
