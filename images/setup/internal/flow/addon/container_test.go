@@ -50,21 +50,15 @@ func TestContainerProbe(t *testing.T) {
 	}
 	all := strings.Join(d.calls, "\n")
 	for _, want := range []string{"network create --subnet 10.203.53.0/24 --label org.boson.setup=probe boson-setup-irc-probe",
-		"run --rm -i --network boson-setup-irc-probe"} {
+		"run -d --rm --name boson-setup-irc-probe --network boson-setup-irc-probe", "exec -i boson-setup-irc-probe /usr/local/bin/stack-setup ircprobe"} {
 		if !strings.Contains(all, want) {
 			t.Fatalf("no %q in\n%s", want, all)
 		}
 	}
-	if strings.Contains(all, "network rm") {
-		t.Fatal("the probe network goes only before the install")
-	}
-	RemoveProbeNetwork(context.Background(), d, "boson")
-	if all := strings.Join(d.calls, "\n"); !strings.Contains(all, "network inspect boson-setup-irc-probe") {
+	if strings.Contains(all, "network rm") || strings.Contains(all, "pw") || !strings.Contains(d.stdin, `"webirc_password":"pw"`) {
 		t.Fatal(all)
 	}
-	if strings.Contains(all, "pw") || !strings.Contains(d.stdin, `"webirc_password":"pw"`) {
-		t.Fatal("the password goes on stdin only")
-	}
+	RemoveProbeHelper(context.Background(), d, "boson")
 	// After the install: the stack's own network.
 	d = &fakeDocker{haveStack: true}
 	if _, err := ContainerProbe(d, "img", "boson", "10.203.53.0/24")(context.Background(), probe.Options{Addr: "x:1"}); err != nil {

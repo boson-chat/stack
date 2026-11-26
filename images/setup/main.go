@@ -69,6 +69,11 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println(strings.TrimSpace(string(b)))
+	case "idle":
+		// The add-on probe's helper container: waits for docker exec.
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+		<-sig
 	case "ircprobe":
 		// The add-on path's IRC probe, run in a container on the stack's
 		// network (addon.ContainerProbe): options on stdin, a report out.
@@ -237,11 +242,11 @@ func serve() error {
 		}
 		ad.Probe = addon.ContainerProbe(cli, probeImage, "boson", subnet)
 		pctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		if err := addon.PrepareProbeNetwork(pctx, cli, "boson", subnet); err != nil {
-			log.Warn("add-on probe network", "err", err)
+		if err := addon.StartProbeHelper(pctx, cli, probeImage, "boson", subnet); err != nil {
+			log.Warn("add-on probe container", "err", err)
 		}
 		cancel()
-		runner.BeforeUp = func(ctx context.Context) { addon.RemoveProbeNetwork(ctx, cli, "boson") }
+		runner.BeforeUp = func(ctx context.Context) { addon.RemoveProbeHelper(ctx, cli, "boson") }
 	}
 	reg := &flow.Registry{}
 	reg.Add(fr)
@@ -259,6 +264,9 @@ func serve() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(ctx)
+		if probeImage != "" {
+			addon.RemoveProbeHelper(ctx, cli, "boson")
+		}
 	}()
 	log.Info("Boson setup is listening", "port", port, "install_dir", dir, "certificate_sha256", fp)
 	log.Info("get the one-time code with: docker exec boson-setup stack-setup code")

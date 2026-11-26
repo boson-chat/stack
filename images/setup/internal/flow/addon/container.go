@@ -74,50 +74,59 @@ type Docker interface {
 	Run(ctx context.Context, stdin io.Reader, onLine func(string), args ...string) error
 }
 
-// ProbeNetwork is the temporary network the probe uses before the stack's
-// own exists: made once when the wizard starts and removed just before the
-// install starts the stack (RemoveProbeNetwork), so the host's interfaces
-// don't change while someone is using the wizard (a browser on this machine
-// drops requests in flight when they do).
-func ProbeNetwork(project string) string { return project + "-setup-irc-probe" }
+// The probe runs in a long-lived helper container (ProbeHelper, idle,
+// started when the wizard starts) through docker exec: starting a container
+// per probe, or making the network then, changes the host's interfaces
+// mid-request, and a browser on this machine drops requests in flight when
+// they do (Chrome's ERR_NETWORK_CHANGED). The helper sits on the stack's
+// network (project_default), or before the first install on a temporary
+// network with the same subnet (ProbeNetwork); both go just before the
+// install starts the stack (RemoveProbeHelper).
 
-// PrepareProbeNetwork makes the probe network unless the stack's exists.
-func PrepareProbeNetwork(ctx context.Context, d Docker, project, subnet string) error {
-	if _, err := d.Output(ctx, "network", "inspect", project+"_default"); err == nil {
+func ProbeNetwork(project string) string { return project + "-setup-irc-probe" }
+func ProbeHelper(project string) string  { return project + "-setup-irc-probe" }
+
+// StartProbeHelper starts the helper (and its network) unless it runs.
+func StartProbeHelper(ctx context.Context, d Docker, image, project, subnet string) error {
+	if out, err := d.Output(ctx, "container", "inspect", "-f", "{{.State.Running}}", ProbeHelper(project)); err == nil && strings.TrimSpace(string(out)) == "true" {
 		return nil
 	}
-	if _, err := d.Output(ctx, "network", "inspect", ProbeNetwork(project)); err == nil {
-		return nil
+	_, _ = d.Output(ctx, "rm", "-f", ProbeHelper(project))
+	network := project + "_default"
+	if _, err := d.Output(ctx, "network", "inspect", network); err != nil {
+		network = ProbeNetwork(project)
+		if _, err := d.Output(ctx, "network", "inspect", network); err != nil {
+			if _, err := d.Output(ctx, "network", "create", "--subnet", subnet, "--label", "org.boson.setup=probe", network); err != nil {
+				return fmt.Errorf("creating the probe's network (%s): %w", subnet, err)
+			}
+		}
 	}
-	if _, err := d.Output(ctx, "network", "create", "--subnet", subnet, "--label", "org.boson.setup=probe", ProbeNetwork(project)); err != nil {
-		return fmt.Errorf("creating the probe's network (%s): %w", subnet, err)
+	if _, err := d.Output(ctx, "run", "-d", "--rm", "--name", ProbeHelper(project), "--network", network, "--label", "org.boson.setup=probe",
+		"--entrypoint", "/usr/local/bin/stack-setup", image, "idle"); err != nil {
+		return fmt.Errorf("starting the probe container: %w", err)
 	}
 	return nil
 }
 
-// RemoveProbeNetwork removes it (the stack's network takes its subnet).
-func RemoveProbeNetwork(ctx context.Context, d Docker, project string) {
+// RemoveProbeHelper removes the helper and the temporary network (the
+// stack's network takes its subnet).
+func RemoveProbeHelper(ctx context.Context, d Docker, project string) {
+	_, _ = d.Output(ctx, "rm", "-f", ProbeHelper(project))
 	if _, err := d.Output(ctx, "network", "inspect", ProbeNetwork(project)); err == nil {
 		_, _ = d.Output(ctx, "network", "rm", ProbeNetwork(project))
 	}
 }
 
-// ContainerProbe runs the probe in image on the stack's network (or the
-// probe network with its subnet).
+// ContainerProbe runs the probe in the helper.
 func ContainerProbe(d Docker, image, project, subnet string) Runner {
 	return func(ctx context.Context, o probe.Options) (*probe.Report, error) {
-		network := project + "_default"
-		if _, err := d.Output(ctx, "network", "inspect", network); err != nil {
-			if err := PrepareProbeNetwork(ctx, d, project, subnet); err != nil {
-				return nil, err
-			}
-			network = ProbeNetwork(project)
+		if err := StartProbeHelper(ctx, d, image, project, subnet); err != nil {
+			return nil, err
 		}
 		in, _ := json.Marshal(toWire(o))
 		var out bytes.Buffer
 		err := d.Run(ctx, bytes.NewReader(in), func(l string) { out.WriteString(l + "\n") },
-			"run", "--rm", "-i", "--network", network, "--label", "org.boson.setup=probe",
-			"--entrypoint", "/usr/local/bin/stack-setup", image, "ircprobe")
+			"exec", "-i", ProbeHelper(project), "/usr/local/bin/stack-setup", "ircprobe")
 		var res WireResult
 		for _, l := range strings.Split(out.String(), "\n") {
 			if strings.HasPrefix(l, "{") && json.Unmarshal([]byte(l), &res) == nil {
