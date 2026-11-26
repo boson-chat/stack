@@ -65,6 +65,9 @@ type ServerInfo struct {
 	// ClientHost is the host the server says the probe connects from
 	// (001's nick!user@host, when it has one): the address to exempt.
 	ClientHost string `json:"client_host,omitempty"`
+	// ClientIP is the address the server sees the probe at (001, or WHOIS
+	// of itself: 378/338/311), when it shows one.
+	ClientIP string `json:"client_ip,omitempty"`
 }
 
 // ServicesInfo describes NickServ and the services RPC check.

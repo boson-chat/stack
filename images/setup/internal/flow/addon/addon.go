@@ -320,6 +320,9 @@ func (f *Flow) snippets(w http.ResponseWriter, _ *http.Request) {
 // sourceIP: the address the server says we come from (001), else this
 // machine's primary address.
 func (f *Flow) sourceIP(rep *probe.Report) string {
+	if ip := net.ParseIP(rep.Server.ClientIP); ip != nil {
+		return ip.String()
+	}
 	if h := rep.Server.ClientHost; h != "" {
 		if ip := net.ParseIP(h); ip != nil {
 			return ip.String()

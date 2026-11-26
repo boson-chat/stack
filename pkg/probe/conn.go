@@ -30,6 +30,8 @@ type conn struct {
 	// certTrusted / certError: the chain against the system roots (CheckCert).
 	certTrusted bool
 	certError   string
+	// nick: ours, once registered (001).
+	nick string
 
 	lines chan message
 	errc  chan error

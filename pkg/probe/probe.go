@@ -134,6 +134,7 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 		return r, fmt.Errorf("probe: register on %s: %w", opts.Addr, err)
 	}
 	queryVersion(c, &opts, r)
+	queryOwnAddress(c, &opts, r)
 	queryServices(c, &opts, r)
 	c.quit()
 	if opts.Transcript {
@@ -198,6 +199,7 @@ func register(c *conn, o *Options, r *Report) error {
 			registered = true
 			r.Server.Name = m.Source
 			r.Server.ClientHost = welcomeHost(m.last())
+			c.nick = m.param(0)
 			if !capDone {
 				// The server ignored CAP (no reply at all before 001).
 				capDone = true
@@ -456,4 +458,33 @@ func welcomeHost(text string) string {
 		return ""
 	}
 	return strings.TrimSpace(last[at+1:])
+}
+
+// queryOwnAddress asks WHOIS about ourselves for the address the server
+// sees (378 "is connecting from *@host IP", 338): 001 often has a host name
+// there, which can't be resolved back reliably (a name the server's
+// resolver made up for a private address, say).
+func queryOwnAddress(c *conn, o *Options, r *Report) {
+	if ip := net.ParseIP(r.Server.ClientHost); ip != nil {
+		r.Server.ClientIP = ip.String()
+	}
+	if c.nick == "" {
+		return
+	}
+	c.send("WHOIS", c.nick)
+	_ = c.until(o.stepTimeout(), lineFn(func(m message) bool {
+		switch m.Command {
+		case "378", "338":
+			for _, f := range append(strings.Fields(m.last()), m.Params...) {
+				if ip := net.ParseIP(strings.TrimPrefix(f, "*@")); ip != nil && r.Server.ClientIP == "" {
+					r.Server.ClientIP = ip.String()
+				}
+			}
+		case "311":
+			if ip := net.ParseIP(m.param(3)); ip != nil && r.Server.ClientIP == "" {
+				r.Server.ClientIP = ip.String()
+			}
+		}
+		return false
+	}).withPing(c, "whoisself"))
 }
