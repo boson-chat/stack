@@ -4,7 +4,7 @@
 #   docker compose up -d --build
 # Which parts run is chosen by COMPOSE_PROFILES in .env
 # (irc, voice, video, auth, api, directory, files, minio, metrics, admin,
-# webroot, wellknown, web). traefik and
+# updates, webroot, wellknown, web). traefik and
 # certsync always run.
 # Install-specific additions: traefik/dynamic/*.yml and compose.override.yaml.
 name: boson
@@ -665,10 +665,27 @@ services:
       # Empty ADMIN_FILES_INTERNAL_URL= without the profile.
       BOSON_FILES_INTERNAL_URL: ${ADMIN_FILES_INTERNAL_URL-http://files:3001}
       BOSON_FILES_INTERNAL_TOKEN: ${FILES_INTERNAL_TOKEN:-}
+      # Updates page (docs/updates.md): newer releases of every part, their
+      # changelogs and who an update affects. Applying them needs the
+      # updates profile (docker-proxy-updates below) and
+      # ADMIN_UPDATES_DOCKER_PROXY_URL=http://docker-proxy-updates:2375;
+      # without it updates are shown, not applied.
+      UPDATES_DOCKER_PROXY_URL: ${ADMIN_UPDATES_DOCKER_PROXY_URL:-}
+      UPDATES_GITHUB_TOKEN: ${ADMIN_UPDATES_GITHUB_TOKEN:-}
+      UPDATES_CHECK_INTERVAL: ${ADMIN_UPDATES_CHECK_INTERVAL:-6h}
+      # Host directory for the backup taken before every update (.env,
+      # config, image digests, database dumps, data volumes); the newest
+      # ADMIN_UPDATES_BACKUP_KEEP are kept.
+      UPDATES_BACKUP_DIR: ${ADMIN_UPDATES_BACKUP_DIR:-/root/backups/boson-updates}
+      UPDATES_BACKUP_KEEP: ${ADMIN_UPDATES_BACKUP_KEEP:-5}
+      # The update journal survives the panel's own restart (it updates
+      # itself last and picks the run up again).
+      UPDATES_STATE_DIR: /data
     volumes:
       # rw: the panel saves config/boson.yaml (temp file + rename in this dir)
       # and the Branding page's images in config/branding/.
       - ./config:/config
+      - admin_data:/data
     networks: [default, docker-proxy]
     labels:
       - traefik.enable=true
@@ -684,6 +701,17 @@ services:
         condition: service_started
       config-init:
         condition: service_completed_successfully
+      admin-data-init:
+        condition: service_completed_successfully
+
+  # The panel's own data volume (the update journal), owned by its uid.
+  admin-data-init:
+    profiles: [admin]
+    image: busybox:1.37.0
+    command: ["sh", "-c", "chown 65532:65532 /data && chmod 700 /data"]
+    volumes:
+      - admin_data:/data
+    restart: "no"
 
   # The admin panel's only door to Docker: a socket proxy that allows listing
   # and inspecting containers, their logs and stats, and start/stop/restart,
@@ -711,6 +739,37 @@ services:
       - '-allowGET=(/v1\.[0-9]+)?/(_ping|version|containers/json|containers/[a-zA-Z0-9_.-]+/(json|logs|stats))'
       - '-allowHEAD=(/v1\.[0-9]+)?/_ping'
       - '-allowPOST=(/v1\.[0-9]+)?/containers/[a-zA-Z0-9_.-]+/(start|stop|restart)'
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [docker-proxy]
+
+  # Applying updates from the admin panel (opt-in: COMPOSE_PROFILES gets
+  # "updates" and ADMIN_UPDATES_DOCKER_PROXY_URL=http://docker-proxy-updates:2375).
+  # Everything docker-proxy allows, plus pulling images and creating and
+  # removing containers: the panel runs each update step in a short-lived
+  # docker:cli helper (label chat.boson.updates) with the Docker socket and
+  # this directory mounted. That is root-equivalent access to the host,
+  # which is why it is a separate proxy in its own profile. docs/updates.md.
+  docker-proxy-updates:
+    <<: *restart
+    profiles: [updates]
+    image: wollomatic/socket-proxy:1.13.2
+    user: "65534:${DOCKER_GID:-999}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 64m
+    command:
+      - -loglevel=info
+      - -listenip=0.0.0.0
+      - -allowfrom=admin
+      - -watchdoginterval=600
+      - -stoponwatchdog
+      - -shutdowngracetime=5
+      - '-allowGET=(/v1\.[0-9]+)?/(_ping|version|containers/json|containers/[a-zA-Z0-9_.-]+/(json|logs|stats))'
+      - '-allowHEAD=(/v1\.[0-9]+)?/_ping'
+      - '-allowPOST=(/v1\.[0-9]+)?/(containers/[a-zA-Z0-9_.-]+/(start|stop|restart)|containers/create|images/create)'
+      - '-allowDELETE=(/v1\.[0-9]+)?/containers/[a-zA-Z0-9_.-]+'
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks: [docker-proxy]
@@ -1173,3 +1232,4 @@ volumes:
   directory_media:
   files_data:
   minio_data:
+  admin_data:

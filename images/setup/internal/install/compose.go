@@ -40,7 +40,7 @@ type Compose interface {
 
 // OneShot services exit 0 when done (restart: "no" in compose.yaml).
 var OneShot = map[string]bool{"config-init": true, "voice-data-init": true, "api-migrate": true,
-	"directory-media-init": true, "files-data-init": true, "minio-init": true}
+	"directory-media-init": true, "files-data-init": true, "minio-init": true, "admin-data-init": true}
 
 // DockerCompose runs compose through the docker CLI.
 type DockerCompose struct{ CLI *dockercli.CLI }
