@@ -18,6 +18,7 @@ x-anope: &anope
   image: boson-ircds-anope:local
   labels: *labels
   # Linked: Anope's own server list (rpc_data) has the IRC server in it.
+  # Anope 2.1 wants the bearer token base64-encoded (base64 of fixture-rpc-token).
   healthcheck: &anope-health
     interval: 2s
     timeout: 3s
@@ -50,7 +51,7 @@ services:
       - "127.0.0.1:${NGIRCD_ANOPE_RPC_PORT:-18080}:8080"
     healthcheck:
       <<: *anope-health
-      test: ["CMD-SHELL", "curl -sf -H 'Authorization: Bearer fixture-rpc-token' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"anope.listServers\",\"params\":[]}' http://127.0.0.1:8080/jsonrpc | grep -q irc.ngircd.test"]
+      test: ["CMD-SHELL", "curl -sf -H 'Authorization: Bearer Zml4dHVyZS1ycGMtdG9rZW4=' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"anope.listServers\",\"params\":[]}' http://127.0.0.1:8080/jsonrpc | grep -q irc.ngircd.test"]
     depends_on:
       ngircd: { condition: service_healthy }
 
@@ -72,7 +73,7 @@ services:
       - "127.0.0.1:${UNREAL_ANOPE_RPC_PORT:-28080}:8080"
     healthcheck:
       <<: *anope-health
-      test: ["CMD-SHELL", "curl -sf -H 'Authorization: Bearer fixture-rpc-token' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"anope.listServers\",\"params\":[]}' http://127.0.0.1:8080/jsonrpc | grep -q irc.unreal.test"]
+      test: ["CMD-SHELL", "curl -sf -H 'Authorization: Bearer Zml4dHVyZS1ycGMtdG9rZW4=' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"anope.listServers\",\"params\":[]}' http://127.0.0.1:8080/jsonrpc | grep -q irc.unreal.test"]
     depends_on:
       unrealircd: { condition: service_healthy }
 

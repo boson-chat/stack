@@ -368,7 +368,7 @@ func TestRPCAnope(t *testing.T) {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		reply := func(v any) { _ = json.NewEncoder(w).Encode(v) }
-		if r.Header.Get("Authorization") != "Bearer tok" {
+		if r.Header.Get("Authorization") != "Bearer dG9r" { // base64("tok")
 			reply(map[string]any{"jsonrpc": "2.0", "id": "x", "error": map[string]any{"code": -32601, "message": "No authorization for method: " + req.Method}})
 			return
 		}

@@ -65,7 +65,9 @@ type RPCOptions struct {
 	// or xmlrpc, Atheme's /jsonrpc or /xmlrpc. A path ending in "/xmlrpc"
 	// means XML-RPC, anything else JSON-RPC.
 	URL string
-	// Token is Anope's bearer token (jsonrpc/xmlrpc <token> block).
+	// Token is Anope's bearer token as written in its jsonrpc/xmlrpc
+	// token { token = "..." } block; it's sent base64-encoded, which is
+	// what Anope 2.1 expects.
 	Token string
 	// Account and Password, when set, are checked with
 	// anope.checkCredentials or atheme.login.

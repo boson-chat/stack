@@ -2,6 +2,7 @@ package probe
 
 import (
 	"bytes"
+	"encoding/base64"
 	"context"
 	"encoding/json"
 	"encoding/xml"
@@ -104,7 +105,9 @@ func (c rpcClient) call(ctx context.Context, method string, params ...string) (s
 	}
 	req.Header.Set("Content-Type", ctype)
 	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+		// Anope 2.1 base64-decodes the bearer token before comparing it
+		// with the one in its config (include/modules/rpc.h CanExecute).
+		req.Header.Set("Authorization", "Bearer "+base64.StdEncoding.EncodeToString([]byte(c.token)))
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {

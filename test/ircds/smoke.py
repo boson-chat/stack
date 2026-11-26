@@ -130,7 +130,8 @@ def rpc(url, method, params, token=None):
     body = json.dumps({"jsonrpc": "2.0", "id": "smoke", "method": method, "params": params}).encode()
     req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
     if token:
-        req.add_header("Authorization", "Bearer " + token)
+        # Anope 2.1 base64-decodes the bearer token.
+        req.add_header("Authorization", "Bearer " + base64.b64encode(token.encode()).decode())
     with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
         return json.load(r)
 
