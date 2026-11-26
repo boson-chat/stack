@@ -127,14 +127,6 @@ func serve() error {
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		return err
 	}
-	// The code is a secret: never logged, only readable through
-	// `docker exec boson-setup stack-setup code` (install.sh does that).
-	if err := os.WriteFile(filepath.Join(runDir, "code"), []byte(g.Code()+"\n"), 0o600); err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "fingerprint"), []byte(fp+"\n"), 0o600); err != nil {
-		return err
-	}
 
 	red := &dockercli.Redactor{}
 	cli := &dockercli.CLI{Dir: dir, Project: "boson", Redact: red}
@@ -244,6 +236,10 @@ func serve() error {
 		pctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		if err := addon.StartProbeHelper(pctx, cli, probeImage, "boson", subnet); err != nil {
 			log.Warn("add-on probe container", "err", err)
+		} else {
+			// Its interfaces settle before anyone loads the wizard (a
+			// browser on this machine drops requests while they change).
+			time.Sleep(3 * time.Second)
 		}
 		cancel()
 		runner.BeforeUp = func(ctx context.Context) { addon.RemoveProbeHelper(ctx, cli, "boson") }
@@ -254,6 +250,15 @@ func serve() error {
 
 	srv.Handler = (&server.Server{Gate: g, Flows: reg, Static: web.FS, Instance: instance, Log: log}).Handler()
 
+	// Written last: install.sh prints the address once the code is there.
+	// The code is a secret: never logged, only readable through
+	// `docker exec boson-setup stack-setup code` (install.sh does that).
+	if err := os.WriteFile(filepath.Join(runDir, "code"), []byte(g.Code()+"\n"), 0o600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "fingerprint"), []byte(fp+"\n"), 0o600); err != nil {
+		return err
+	}
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
