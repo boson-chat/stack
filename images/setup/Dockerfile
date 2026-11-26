@@ -27,7 +27,6 @@ COPY images/certsync/ /stack/images/certsync/
 COPY images/ergo/ /stack/images/ergo/
 COPY images/webircgateway/ /stack/images/webircgateway/
 COPY images/wellknown/ /stack/images/wellknown/
-COPY images/bridgesync/ /stack/images/bridgesync/
 RUN rm -rf /stack/scripts/__pycache__
 
 FROM alpine:3.22

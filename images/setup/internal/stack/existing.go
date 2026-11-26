@@ -148,6 +148,7 @@ func (ex Existing) Answers() Answers {
 		}
 		a.Addon.RPCURL = e["NICKSERV_RPC_URL"]
 		a.Addon.ServicesServer = e["NICKSERV_SERVICES_SERVER"]
+		a.Addon.NoSASL = e["BRIDGE_NICKSERV_METHOD"] == "nickserv"
 	}
 	a.Normalize()
 	return a

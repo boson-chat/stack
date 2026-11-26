@@ -37,7 +37,7 @@ dc() { sudo docker compose --project-directory "$DIR" -p boson "$@"; }
 logs() {
 	echo "::group::setup wizard logs"; sudo docker logs boson-setup 2>&1 | tail -150 || true; echo "::endgroup::"
 	echo "::group::stack containers"; dc ps -a 2>&1 || true; echo "::endgroup::"
-	for s in evrd evrd-links bridge-sync auth traefik certsync webircgateway; do echo "::group::$s logs"; dc logs --no-log-prefix --tail 80 "$s" 2>&1 || true; echo "::endgroup::"; done
+	for s in evrd evrd-links auth traefik certsync webircgateway; do echo "::group::$s logs"; dc logs --no-log-prefix --tail 80 "$s" 2>&1 || true; echo "::endgroup::"; done
 	echo "::group::IRC server ($PAIRING)"; LOG_TAIL=120 test/ircds/run.sh logs "$PAIRING" 2>&1 || true; echo "::endgroup::"
 	for c in $(sudo docker ps -q --filter label=chat.boson.test=ircds); do
 		echo "::group::$(sudo docker inspect -f '{{.Name}}' "$c") log files"
@@ -58,9 +58,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "== build $IMAGE and bridge-sync (not on Harbor until this merges)"
+echo "== build $IMAGE"
 docker build -q -f images/setup/Dockerfile -t "$IMAGE" . >/dev/null
-sudo docker build -q -t harbor.floret.dev/boson/stack-bridgesync:0.1.0 images/bridgesync >/dev/null
 
 echo "== the IRC server: $PAIRING on $IP"
 test/ircds/run.sh up "$PAIRING"

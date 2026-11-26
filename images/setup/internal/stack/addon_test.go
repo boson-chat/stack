@@ -129,6 +129,21 @@ func TestAddonNickServ(t *testing.T) {
 	if p.EnvValue("NICKSERV_IRC_ADDR") != "irc.example.org:6697" || p.EnvValue("NICKSERV_RPC_URL") != "" || p.EnvValue("NICKSERV_ALLOW_PLAINTEXT") != "false" {
 		t.Fatal("sasl env")
 	}
+	if p.EnvValue("BRIDGE_NICKSERV_METHOD") != "" {
+		t.Fatalf("a server with SASL: auth's default (sasl), got %q", p.EnvValue("BRIDGE_NICKSERV_METHOD"))
+	}
+	// No SASL on the server (ngIRCd): the bridge identifies with NickServ.
+	a.Addon.Strategy, a.Addon.NoSASL = "anope_rpc", true
+	p, _ = BuildPlan(a, Secrets{RPCToken: "t"}, nil, NewGenerator(), "999")
+	if got := p.EnvValue("BRIDGE_NICKSERV_METHOD"); got != "nickserv" {
+		t.Fatalf("BRIDGE_NICKSERV_METHOD=%q, want nickserv", got)
+	}
+	// Boson accounts: nothing to identify.
+	a.Addon.Accounts = AccountsBoson
+	p, _ = BuildPlan(a, Secrets{}, nil, NewGenerator(), "999")
+	if got := p.EnvValue("BRIDGE_NICKSERV_METHOD"); got != "" {
+		t.Fatalf("boson accounts: %q", got)
+	}
 }
 
 func TestRecommendAccounts(t *testing.T) {

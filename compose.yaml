@@ -327,35 +327,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 120s
-  # bridge-sync: every Boson account (auth's users table, read-only) gets
-  # its bridge account through the managed API; disabled and deleted ones
-  # are switched off / removed. Polls every BRIDGE_SYNC_INTERVAL.
-  bridge-sync:
-    <<: *restart
-    profiles: [bridge]
-    build: images/bridgesync
-    image: harbor.floret.dev/boson/stack-bridgesync:0.1.0
-    environment:
-      DATABASE_URL: postgres://auth:${POSTGRES_PASSWORD}@postgres:5432/auth?sslmode=disable
-      BRIDGE_API_URL: http://evrd-links:8098
-      BRIDGE_TOKEN: ${BRIDGE_TOKEN:-}
-      BRIDGE_SYNC_INTERVAL: ${BRIDGE_SYNC_INTERVAL:-2s}
-    read_only: true
-    tmpfs:
-      - /tmp:uid=65532,gid=65532
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      evrd:
-        condition: service_started
-    healthcheck:
-      test: ["CMD", "/bridge-sync", "health"]
-      interval: 10s
-      timeout: 3s
-      retries: 3
-      start_period: 60s
 
   postgres:
     <<: *restart
@@ -391,7 +362,7 @@ services:
     profiles: [auth]
     # Releases: harbor.floret.dev/boson/auth:<version>. To run an unreleased
     # checkout instead, add compose.auth-src.yaml (see README).
-    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.24.0}
+    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.25.0}
     environment:
       ENV: production
       LOG_LEVEL: ${AUTH_LOG_LEVEL:-info}
@@ -460,6 +431,16 @@ services:
       NICKSERV_ALLOW_PLAINTEXT: ${NICKSERV_ALLOW_PLAINTEXT:-false}
       NICKSERV_SERVICES_SERVER: ${NICKSERV_SERVICES_SERVER:-}
       NICKSERV_REGISTRATION: ${NICKSERV_REGISTRATION:-true}
+      # Bridge accounts (bridge profile, auth >= 1.25.0, auth docs/bridge.md):
+      # auth gives every Boson account its account on the bridge through
+      # evrd's managed API on the compose network, and hands it the NickServ
+      # login after each NickServ sign-in. On when BRIDGE_CERT_HOST is set
+      # (the add-on path); empty = off. BRIDGE_NICKSERV_METHOD: how the bridge
+      # identifies NickServ accounts (sasl | nickserv | auto; empty = auth's
+      # default); setup writes nickserv for an IRC server without SASL.
+      BRIDGE_API_URL: ${AUTH_BRIDGE_API_URL:-${BRIDGE_CERT_HOST:+http://evrd-links:8098}}
+      BRIDGE_TOKEN: ${BRIDGE_TOKEN:-}
+      BRIDGE_NICKSERV_METHOD: ${BRIDGE_NICKSERV_METHOD:-}
       # Federated login (docs/federation.md, auth >= 1.24.0): people with an
       # account on another Boson server sign in here with it, and people
       # from here on other servers. FEDERATION_DOMAIN is this install's
