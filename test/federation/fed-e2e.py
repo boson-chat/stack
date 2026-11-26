@@ -17,20 +17,32 @@ Traefik through network aliases, TLS is Pebble's, /ca/roots.pem).
     6. the remote's identity lookup says alice@home.test;
     7. she uploads a file; her quota is the remote-user quota (2MB);
     8. she gets a voice token that the remote's voice server takes;
-    then the refusals: a replayed assertion (replayed), the remote's mode
-    off (federation_off, config/boson.yaml edited live, then back), and
-    9. the remote admin bans her: Ergo drops her connection, a new IRC login
-       with her token and a new sign-in (identity_banned) are refused.
+    then a replayed assertion is refused (replayed). Saves bob's login and
+    both voice tokens in /state for the QUIC voice check (run.sh, voice/).
+  --phase ui          the remote's admin panel in Chromium (Playwright), with
+                      alice and bob on IRC: the owner signs in; Federation's
+                      home status is green and alice@home.test is listed;
+                      Ban (Ergo drops her, IRC login and sign-in refused:
+                      identity_banned); Unban (back in); "Remote users can
+                      join voice" off (voice token: remote_voice_disabled)
+                      and on; Block server (domain_blocked; Ergo drops her at
+                      once with auth >= --block-drops-irc-since) and
+                      Unblock; mode Off (boson.json accepts off,
+                      federation_off). Screenshots in --shots.
 """
 import argparse, base64, http.client, json, os, queue, re, secrets, socket, ssl, sys, threading, time, urllib.parse
 
 p = argparse.ArgumentParser()
-p.add_argument("--phase", required=True, choices=["untrusted", "main"])
+p.add_argument("--phase", required=True, choices=["untrusted", "main", "ui"])
 p.add_argument("--home", default="home.test")
 p.add_argument("--remote", default="remote.test")
 p.add_argument("--ca", default="/ca/roots.pem")
 p.add_argument("--state", default="/state")
 p.add_argument("--remote-config", default="/remote-config/boson.yaml")
+p.add_argument("--shots", default="/shots")
+# The first auth whose domain block puts the domain's accounts in the
+# removed-accounts feed (so the boson-ergo helper drops them from IRC).
+p.add_argument("--block-drops-irc-since", default=os.environ.get("BLOCK_DROPS_IRC_SINCE", "1.26.0"))
 args = p.parse_args()
 
 HOME, REMOTE = args.home, args.remote
@@ -236,15 +248,8 @@ def phase_untrusted():
     check("not verified in the directory: 403 domain_not_trusted", s == 403 and code(r) == "domain_not_trusted", f"{s} {r}")
 
 # ---- phase main ----
-def set_remote_mode(mode):
-    text = open(args.remote_config).read()
-    new = re.sub(r"(\n  federation:\n    mode: )\w+", r"\g<1>" + mode, text, count=1)
-    assert new != text or f"mode: {mode}" in text, "no auth.federation.mode in the remote's config"
-    tmp = args.remote_config + ".e2e-tmp"
-    open(tmp, "w").write(new)
-    st = os.stat(args.remote_config)
-    os.chmod(tmp, 0o644); os.chown(tmp, st.st_uid, st.st_gid)
-    os.replace(tmp, args.remote_config)
+def remote_config():
+    return open(args.remote_config).read()
 
 def phase_main():
     st = load_state()
@@ -315,39 +320,223 @@ def phase_main():
         s, r = req(f"voice.{REMOTE}", "GET", "/v1/rooms", token=vt)
         check("the remote's voice server takes it (GET /v1/rooms)", s == 200 and isinstance(r, dict) and "rooms" in r, f"{s} {r}")
 
-    # federation off on the remote (its config file, applied live), then back
-    set_remote_mode("off")
-    def off():
-        s, r = fed_login(assertion(home_tok))
-        return s == 403 and code(r) == "federation_off", (s, r)
-    wait("remote mode off: 403 federation_off", off, timeout=60, every=3)
-    wait(f"https://{REMOTE}/.well-known/boson.json follows: accepts off",
-         lambda: (lambda r: (r[0] == 200 and (r[1].get("federation") or {}).get("accepts") == "off", r))(req(REMOTE, "GET", "/.well-known/boson.json")), timeout=60)
-    set_remote_mode("directory")
-    def back():
-        s, r = fed_login(assertion(home_tok))
-        return s == 200, (s, code(r))
-    wait("remote mode directory again: signs in", back, timeout=60, every=3)
+    # for the QUIC voice check (run.sh, fedvoice) and the ui phase: bob's
+    # login and both voice tokens (5 minutes; the voice check runs next)
+    s, r = req(REMOTE_AUTH, "POST", "/v1/voice/token", {"rooms": []}, token=bob_tok)
+    bvt = r.get("token") if isinstance(r, dict) else None
+    check("bob (local) gets a voice token", s == 200 and bvt, s if bvt else f"{s} {r}")
+    st.update(handle=handle, bob=bob_name, bob_pw=bob_pw, voice_alice=vt, voice_bob=bvt)
+    save_state(st)
+    alice.close(); bob.close()
 
-    # 9. ban
-    admin = login(REMOTE_AUTH, os.environ["REMOTE_ADMIN"], os.environ["REMOTE_ADMIN_PASSWORD"])
-    s, r = req(REMOTE_AUTH, "GET", f"/v1/admin/federation/users?q=alice", token=admin)
-    users = r.get("users", []) if isinstance(r, dict) else []
-    ru = next((x for x in users if x.get("identity") == f"alice@{HOME}"), None)
-    must("the remote admin lists alice@home.test as a remote user", s == 200 and ru, f"{s} {r}")
-    check("remote user: handle, home domain", ru.get("handle") == handle and ru.get("home_domain") == HOME, ru)
-    s, r = req(REMOTE_AUTH, "POST", f"/v1/admin/federation/users/{ru['id']}/ban", {"reason": "e2e"}, token=admin)
-    check("ban alice@home.test", s == 200 and isinstance(r, dict) and r.get("banned") is True, f"{s} {r}")
-    check("Ergo drops her (account disabled -> disconnected)", alice.closed.wait(45), alice.lines[-5:])
-    check("bob sees her quit", bob.wait(rf":{re.escape(handle)}!\S+ QUIT") is not None, bob.lines[-5:])
-    again = IRC(handle, "OAUTHBEARER", oauthbearer(handle, tok))
-    o = again.outcome()
-    check("a new IRC login with her token is refused", o in ("sasl-failed", "closed"), f"{o} {again.lines[-5:]}")
-    again.close()
-    s, r = fed_login(assertion(home_tok))
-    check("a new sign-in: 403 identity_banned", s == 403 and code(r) == "identity_banned", f"{s} {r}")
-    bob.close()
+# ---- phase ui: the remote's admin panel, in a browser ----
+def version_at_least(v, want):
+    nums = lambda x: tuple(int(n) for n in re.findall(r"\d+", x)[:3])
+    try: return nums(v) >= nums(want)
+    except ValueError: return False
+
+def phase_ui():
+    from playwright.sync_api import sync_playwright, expect, Error as PWError
+    st = load_state()
+    handle, bob_name, bob_pw = st["handle"], st["bob"], st["bob_pw"]
+    me = f"alice@{HOME}"
+    os.makedirs(args.shots, exist_ok=True)
+    s, auth_version = req(REMOTE_AUTH, "GET", "/version", headers={"Accept": "text/plain"})
+    auth_version = str(auth_version).strip()
+    drops = version_at_least(auth_version, args.block_drops_irc_since)
+    print(f"remote auth {auth_version}: a domain block drops IRC at once: "
+          f"{'yes' if drops else 'no (needs ' + args.block_drops_irc_since + '), those checks are skipped'}", flush=True)
+
+    home_tok = login(HOME_AUTH, "alice", st["alice_pw"])
+    def signin():
+        return fed_login(assertion(home_tok))
+    def on_irc(name, tok):
+        c = IRC(handle, "OAUTHBEARER", oauthbearer(handle, tok))
+        must(name, c.outcome() == "welcome", c.lines[-5:])
+        return c
+    s, r = signin()
+    must("alice signs in on the remote", s == 200 and isinstance(r, dict) and r.get("access_token"), s if s == 200 else f"{s} {r}")
+    tok = r["access_token"]
+    bob = IRC(bob_name, "PLAIN", f"\0{bob_name}\0{bob_pw}")
+    must("bob on the remote's Ergo", bob.outcome() == "welcome", bob.lines[-5:])
+    alice = on_irc("alice on the remote's Ergo", tok)
+    chan = "#fedui" + secrets.token_hex(3)
+    bob.send(f"JOIN {chan}"); bob.wait(rf"JOIN :?{re.escape(chan)}")
+    alice.send(f"JOIN {chan}")
+    check(f"alice and bob in {chan}", bob.wait(rf":{re.escape(handle)}!\S+ JOIN :?{re.escape(chan)}") is not None, bob.lines[-5:])
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        # Chromium doesn't read SSL_CERT_FILE: Pebble's certificate is taken
+        # as is here (the other clients verify it).
+        bctx = browser.new_context(base_url=f"https://admin.{REMOTE}", ignore_https_errors=True,
+                                   viewport={"width": 1280, "height": 900})
+        page = bctx.new_page()
+        page.set_default_timeout(20_000)
+        expect.set_options(timeout=20_000)
+
+        def shot(name):
+            # the whole page at its height (the sidebar is sticky, so a
+            # full_page capture would draw it mid-page)
+            path = f"{args.shots}/{name}.png"
+            try:
+                page.wait_for_timeout(300)
+                h = page.evaluate("document.documentElement.scrollHeight")
+                page.set_viewport_size({"width": 1280, "height": max(900, h)})
+                page.wait_for_timeout(200)
+                page.screenshot(path=path)
+                page.set_viewport_size({"width": 1280, "height": 900})
+                print(f"screenshot {path}", flush=True)
+            except PWError as e: print(f"screenshot {name}: {e}", flush=True)
+
+        def ui(name, fn, critical=False):
+            """One UI step: fn() raises on failure (expect, timeouts)."""
+            try:
+                fn(); return check(name, True)
+            except (AssertionError, PWError) as e:
+                shot("FAIL-" + re.sub(r"[^a-z0-9]+", "-", name.lower())[:60])
+                (must if critical else check)(name, False, str(e).split("\n")[0])
+                return False
+
+        row = page.locator('tr[data-testid^="remote-"]').filter(has_text=me)
+        toast = lambda text: expect(page.get_by_text(text).first).to_be_visible()
+
+        def open_federation():
+            page.goto("/federation")
+            expect(page.get_by_role("heading", name="Federation", level=1)).to_be_visible()
+
+        def save():
+            page.get_by_role("button", name="Save changes").click()
+            toast(re.compile(r"Federation saved"))
+
+        # A. the owner signs in, opens Federation
+        def sign_in():
+            page.goto("/login")
+            page.get_by_label(re.compile("username or email", re.I)).fill(os.environ["REMOTE_ADMIN"])
+            page.get_by_label(re.compile("password", re.I)).fill(os.environ["REMOTE_ADMIN_PASSWORD"])
+            page.get_by_role("button", name="Sign in").click()
+            expect(page.get_by_role("heading", name="Stack", level=1)).to_be_visible()
+        ui("admin panel: the remote's owner signs in", sign_in, critical=True)
+
+        def home_green():
+            open_federation()
+            home = page.get_by_test_id("home-status")
+            home.get_by_role("button", name="Check again").click()
+            expect(home).to_have_attribute("data-tone", "ok")
+            expect(home.get_by_text("Its issuer is this auth service")).to_be_visible()
+        ui("Federation: \"Your server as a home\" is green (boson.json, issuer, keys, mode)", home_green)
+
+        def listed():
+            expect(row).to_be_visible()
+            expect(row).to_contain_text(handle)
+            shot("1-federation")
+        ui(f"Federation: {me} is in Remote users", listed, critical=True)
+
+        # B. ban through the UI: the same as the API ban
+        def ban():
+            row.get_by_role("button", name="Ban", exact=True).click()
+            dlg = page.get_by_role("dialog", name=f"Ban {me}?")
+            expect(dlg).to_contain_text("dropped from IRC")
+            dlg.get_by_label(re.compile("Reason")).fill("federation e2e")
+            shot("2-ban-confirm")
+            dlg.get_by_role("button", name="Ban", exact=True).click()
+            expect(row.get_by_text("Banned", exact=True)).to_be_visible()
+            shot("3-banned")
+        if ui(f"ban {me} in the panel", ban):
+            check("Ergo drops her (account disabled -> disconnected)", alice.closed.wait(45), alice.lines[-5:])
+            check("bob sees her quit", bob.wait(rf":{re.escape(handle)}!\S+ QUIT") is not None, bob.lines[-5:])
+            again = IRC(handle, "OAUTHBEARER", oauthbearer(handle, tok))
+            o = again.outcome()
+            check("a new IRC login with her token is refused", o in ("sasl-failed", "closed"), f"{o} {again.lines[-5:]}")
+            again.close()
+            s, r = signin()
+            check("a new sign-in: 403 identity_banned", s == 403 and code(r) == "identity_banned", f"{s} {r}")
+
+        # C. unban through the UI
+        def unban():
+            row.get_by_role("button", name="Unban", exact=True).click()
+            page.get_by_role("dialog", name=re.compile("Unban")).get_by_role("button", name="Unban", exact=True).click()
+            expect(row.get_by_text("Banned", exact=True)).to_have_count(0)
+        if ui(f"unban {me} in the panel", unban):
+            s, r = signin()
+            if check("she signs in again", s == 200 and isinstance(r, dict) and r.get("access_token"), f"{s} {code(r)}"):
+                tok = r["access_token"]
+                alice = on_irc("and connects to IRC again", tok)
+
+        # D. remote voice off (the voice token is refused), then on again
+        def voice_token():
+            return req(REMOTE_AUTH, "POST", "/v1/voice/token", {"rooms": []}, token=tok)
+        def voice(on):
+            open_federation()
+            page.get_by_text("Remote users can join voice").click()
+            save()
+            if not on: shot("4-remote-voice-off")
+        if ui("remote voice off in the panel", lambda: voice(False)):
+            check("config/boson.yaml: remote_voice: false", "remote_voice: false" in remote_config())
+            wait("her voice token is refused: 403 remote_voice_disabled",
+                 lambda: (lambda r: (r[0] == 403 and code(r[1]) == "remote_voice_disabled", r))(voice_token()), timeout=60)
+            if ui("remote voice back on in the panel", lambda: voice(True)):
+                wait("she gets a voice token again", lambda: (lambda r: (r[0] == 200, r[0]))(voice_token()), timeout=60)
+
+        # E. block home.test: Ergo drops her at once (auth with the
+        # domain-block feed), she can't sign in; unblock lets her back
+        def block():
+            open_federation()
+            row.get_by_role("button", name="Block server").click()
+            dlg = page.get_by_role("dialog", name=f"Block {HOME}?")
+            shot("5-block-confirm")
+            dlg.get_by_role("button", name="Block and end sessions").click()
+            toast(f"{HOME} is blocked")
+            expect(row.get_by_text("Server blocked", exact=True)).to_be_visible()
+            shot("6-blocked")
+        if ui(f"block {HOME} in the panel", block):
+            if drops:
+                check("Ergo drops her within seconds", alice.closed.wait(15), alice.lines[-5:])
+                again = IRC(handle, "OAUTHBEARER", oauthbearer(handle, tok))
+                o = again.outcome()
+                check("an IRC reconnect with her token is refused", o in ("sasl-failed", "closed"), f"{o} {again.lines[-5:]}")
+                again.close()
+            else:
+                print(f"SKIP Ergo drops her at once / reconnect refused: remote auth {auth_version} < {args.block_drops_irc_since}", flush=True)
+            wait(f"a new sign-in: 403 domain_blocked",
+                 lambda: (lambda r: (r[0] == 403 and code(r[1]) == "domain_blocked", r))(signin()), timeout=30)
+            def unblock():
+                row.get_by_role("button", name=f"Unblock {HOME}").click()
+                toast(f"{HOME} is off the blocklist.")
+                expect(page.get_by_role("list", name="blocklist").get_by_text(HOME)).to_have_count(0)
+                # The row's badge comes from auth, which reads the file
+                # within SETTINGS_POLL_SECONDS: reload until it's gone.
+                for _ in range(15):
+                    if page.get_by_text("Server blocked", exact=True).count() == 0: break
+                    page.wait_for_timeout(1000); open_federation(); expect(row).to_be_visible()
+                expect(page.get_by_text("Server blocked", exact=True)).to_have_count(0)
+                shot("7-unblocked")
+            if ui(f"unblock {HOME} in the panel", unblock):
+                def back_in():
+                    s, r = signin()
+                    return s == 200, (s, code(r))
+                if wait("she signs in again", back_in, timeout=30):
+                    s, r = signin()
+                    alice.close()
+                    alice = on_irc("and connects to IRC again", r["access_token"])
+
+        # F. mode Off in the panel: boson.json follows, sign-ins are refused
+        def mode_off():
+            open_federation()
+            page.get_by_role("radio", name=re.compile(r"^Off")).check()
+            save()
+            shot("8-mode-off")
+        if ui("mode Off in the panel", mode_off):
+            check("config/boson.yaml: auth.federation.mode: off", re.search(r"\n  federation:\n(    .*\n)*?    mode: [\"']?off[\"']?\n", remote_config()) is not None, remote_config().split("federation:")[-1][:200])
+            wait(f"https://{REMOTE}/.well-known/boson.json: accepts off (WELLKNOWN_REFRESH_SECONDS)",
+                 lambda: (lambda r: (r[0] == 200 and (r[1].get("federation") or {}).get("accepts") == "off", r))(req(REMOTE, "GET", "/.well-known/boson.json")),
+                 timeout=30, every=1)
+            wait("a sign-in: 403 federation_off",
+                 lambda: (lambda r: (r[0] == 403 and code(r[1]) == "federation_off", r))(signin()), timeout=30)
+        browser.close()
+    alice.close(); bob.close()
 
 if args.phase == "untrusted": phase_untrusted()
-else: phase_main()
+elif args.phase == "main": phase_main()
+else: phase_ui()
 finish()

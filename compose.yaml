@@ -699,7 +699,7 @@ services:
   admin:
     <<: *restart
     profiles: [admin]
-    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.26.0}
+    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.29.0}
     environment:
       ENV: production
       # The stack config file: the panel edits it (Settings pages, Config

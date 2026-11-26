@@ -156,8 +156,13 @@ it daily ([directory.md](directory.md)).
   (patched Ergo `POST /v1/account_disconnect`,
   [irc-channels.md](irc-channels.md#deleted-and-disabled-users)).
 - **Blocking a home domain** (`auth.federation.block`) refuses its sign-ins
-  from then on; the panel also ends that domain's sessions. IRC clients
-  already connected stay until they reconnect.
+  from then on and ends that domain's sessions. From auth 1.26.0
+  (boson-chat/auth#30) it also drops its users from IRC at once, like a ban:
+  auth puts each of the domain's federated accounts in the same feed as a
+  disabled account, so the helper disconnects them, and refuses their
+  reconnects until the domain is unblocked (nothing is deleted; unblocking
+  lets them straight back in). With an older auth, IRC clients already
+  connected stay until they reconnect.
 
 ## Settings
 
@@ -197,27 +202,60 @@ from its own copy of the repo. Nothing is published on the host. Both
 Traefiks join a shared Docker network under their hostnames, which is the
 test's DNS, and certificates come from Pebble over real HTTP-01. The remote
 trusts verified servers in its own directory (`directory` profile, fake DNS
-verifier). Checked, API level (`test/federation/fed-e2e.py`):
+verifier) and runs the admin panel (`admin` profile, without docker-proxy).
+The checks are `test/federation/fed-e2e.py`, in four phases:
+
+**untrusted** (API)
 
 1. alice signs up on home; home's boson.json has the federation section;
-2. home issues her an assertion for the remote;
+2. home issues her an assertion for the remote (claims, `boson-fed+jwt`,
+   EdDSA);
 3. while home is only *pending* in the remote's directory, the sign-in is
-   refused with `domain_not_trusted`; once verified, it works
-   (`federated`, `alice@home.test`, handle `alice`);
-4. she connects to the remote's Ergo with SASL OAUTHBEARER as her handle
-   and joins a channel;
-5. bob, a local user of the remote, sees her message;
-6. the remote's identity lookup returns `alice@home.test`;
+   refused with `domain_not_trusted`.
+
+**main** (API; home is verified now)
+
+4. the sign-in works (`federated`, `alice@home.test`, handle `alice`), with
+   the remote's own token; the same assertion again is `replayed`;
+5. she connects to the remote's Ergo with SASL OAUTHBEARER as her handle
+   and joins a channel; bob, a local user of the remote, sees her message;
+6. the remote's identity lookup returns `alice@home.test` (bob: local);
 7. she uploads a file, with the remote-user quota (2MB, the account quota
    being 10MB);
-8. she gets a voice token that the remote's voice server takes;
-9. a replayed assertion is refused (`replayed`); the remote's mode set to
-   `off` in its config file refuses her (`federation_off`, and its
-   boson.json says `accepts: off`), and back to `directory` lets her in;
-10. the remote admin bans her: Ergo drops her connection, a new IRC login
-    with her token and a new sign-in (`identity_banned`) are refused.
+8. she gets a voice token that the remote's voice server's HTTPS API takes.
 
-Trimmed: each install runs `irc,auth,voice,files,wellknown` (plus
-`directory` on the remote), not api, web, admin, metrics or video, which
-federation doesn't touch. The admin panel's Federation page has its own e2e
-in boson-chat/admin. Voice is checked over its HTTPS API, not QUIC.
+**voice** (QUIC, `test/federation/voice`: the quicvoice client SDK in a
+container on the remote's network, verifying quicvoiced's certificate)
+
+9. alice, with her remote voice token, and bob join the room `general` on
+   the remote's quicvoiced; both send 20 ms audio datagrams for 3 seconds
+   and each must receive at least 20 of the other's.
+
+**ui** (the remote's admin panel in Chromium, Playwright for Python; alice
+and bob are connected to IRC throughout)
+
+10. the remote's owner signs in to the panel and opens Federation: "Your
+    server as a home" is green and `alice@home.test` is in Remote users;
+11. **Ban** on her row: Ergo drops her connection, bob sees her quit, a new
+    IRC login with her token is refused and a new sign-in is
+    `identity_banned`;
+12. **Unban**: she signs in and connects to IRC again;
+13. "Remote users can join voice" off and saved: `remote_voice: false` in
+    config/boson.yaml and her next voice token is refused
+    (`remote_voice_disabled`); back on, she gets one again;
+14. **Block server** (home.test): her sign-in is `domain_blocked`; with an
+    auth whose domain block drops IRC at once (`BLOCK_DROPS_IRC_SINCE`,
+    below) Ergo also drops her within seconds and her reconnect is
+    refused; **Unblock**: she signs in and connects again;
+15. mode **Off** saved: config/boson.yaml says `mode: off`, the remote's
+    boson.json says `accepts: off` within `WELLKNOWN_REFRESH_SECONDS` (5
+    in the test) and a sign-in is `federation_off`.
+
+Screenshots of the panel steps go to `test/federation/shots/` (the CI job
+uploads them as `federation-screenshots`). The drop-at-once checks of step
+14 run when the remote's auth (`GET /version`) is at least
+`BLOCK_DROPS_IRC_SINCE` and are printed as `SKIP` otherwise.
+
+Trimmed: home runs `irc,auth,voice,files,wellknown`, the remote adds
+`directory` and `admin`; neither runs api, web, metrics or video, which
+federation doesn't touch.
