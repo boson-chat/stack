@@ -21,3 +21,6 @@
 # The web smoke (test/web)
 node_modules/
 test-results/
+
+# The setup wizard e2e (test/setup)
+test/setup/shots/
