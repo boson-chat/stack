@@ -97,7 +97,7 @@ func TestEvaluateBareServer(t *testing.T) {
 	s := statuses(tab)
 	want := map[string]Status{
 		FeatureMessageTags: ViaBridge, FeatureEchoMessage: ViaBridge, FeatureServerTime: ViaBridge,
-		FeatureChatHistory: ViaBridge, FeatureReadMarkers: ViaBridge, FeatureClientTags: Unavailable,
+		FeatureChatHistory: ViaBridge, FeatureReadMarkers: ViaBridge, FeatureReplies: Unavailable, FeatureReactions: Unavailable,
 		FeatureMessageRedaction: Unavailable, FeatureSASL: Unavailable, FeatureServicesRPC: Unavailable,
 		FeatureWebIRC: Unavailable, FeatureMultiline: Unavailable,
 	}
@@ -142,12 +142,17 @@ func TestEvaluateModernServer(t *testing.T) {
 		t.Error("needs_bridge on an all-native server")
 	}
 	r.ISupport["CLIENTTAGDENY"] = "*,-draft/typing"
-	if s := statuses(Evaluate(r)); s[FeatureClientTags] != Unavailable {
-		t.Errorf("CLIENTTAGDENY=*: %s", s[FeatureClientTags])
+	if s := statuses(Evaluate(r)); s[FeatureReplies] != Unavailable || s[FeatureReactions] != Unavailable {
+		t.Errorf("CLIENTTAGDENY=*: %v", s)
 	}
 	r.ISupport["CLIENTTAGDENY"] = "*,-draft/reply,-draft/react"
-	if s := statuses(Evaluate(r)); s[FeatureClientTags] != Native {
-		t.Errorf("CLIENTTAGDENY allows reply/react: %s", s[FeatureClientTags])
+	if s := statuses(Evaluate(r)); s[FeatureReplies] != Native || s[FeatureReactions] != Native {
+		t.Errorf("CLIENTTAGDENY allows reply/react: %v", s)
+	}
+	// UnrealIRCd 6's default: replies relayed, reactions dropped.
+	r.ISupport["CLIENTTAGDENY"] = "*,-draft/typing,-typing,-draft/channel-context,-draft/reply,-reply"
+	if s := statuses(Evaluate(r)); s[FeatureReplies] != Native || s[FeatureReactions] != Unavailable {
+		t.Errorf("UnrealIRCd default CLIENTTAGDENY: %v", s)
 	}
 }
 
@@ -343,7 +348,7 @@ func TestRunFakeBare(t *testing.T) {
 	if r.Limits.MaxPerIP != 3 || !strings.Contains(r.Limits.Refusal, "Too many") {
 		t.Errorf("limits %+v", r.Limits)
 	}
-	if s := statuses(r.Table); s[FeatureSASL] != ViaBridge || s[FeatureClientTags] != Unavailable {
+	if s := statuses(r.Table); s[FeatureSASL] != ViaBridge || s[FeatureReplies] != Unavailable {
 		t.Errorf("table %v", s)
 	}
 }

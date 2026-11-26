@@ -2,6 +2,7 @@ package probe
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -73,6 +74,8 @@ func tryWebIRC(ctx context.Context, o *Options) WebIRCResult {
 		switch {
 		case refused != "":
 			res.Detail = refused
+		case errors.Is(err, errClosed):
+			res.Detail = "the server closed the connection"
 		case err != nil:
 			res.Detail = "no registration: " + err.Error()
 		default:

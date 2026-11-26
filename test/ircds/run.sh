@@ -47,7 +47,7 @@ rehash() {
   case $ircd in
     unrealircd)
       # The control socket reports the rehash's outcome and errors.
-      out=$(compose exec -T "$ircd" bin/unrealircd rehash 2>&1) || { echo "$out" >&2; return 1; }
+      out=$(compose exec -T "$ircd" ./unrealircd rehash 2>&1) || { echo "$out" >&2; return 1; }
       echo "$out"
       echo "$out" | grep -qi 'error' && return 1
       ;;

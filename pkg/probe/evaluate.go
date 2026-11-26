@@ -18,7 +18,8 @@ func Evaluate(r *Report) Table {
 		e.serverTime(),
 		e.chathistory(),
 		e.readMarkers(),
-		e.clientTags(),
+		e.replies(),
+		e.reactions(),
 		e.redaction(),
 		e.sasl(),
 		e.servicesRPC(),
@@ -53,7 +54,8 @@ var nativeOn = map[string]string{
 	FeatureMessageTags:      "Ergo, UnrealIRCd 6 and InspIRCd 4",
 	FeatureEchoMessage:      "Ergo, UnrealIRCd 6 and InspIRCd 4",
 	FeatureServerTime:       "Ergo, UnrealIRCd 6 and InspIRCd 4",
-	FeatureClientTags:       "Ergo, UnrealIRCd 6 and InspIRCd 4",
+	FeatureReplies:          "Ergo, UnrealIRCd 6 and InspIRCd 4",
+	FeatureReactions:        "Ergo and InspIRCd 4",
 	FeatureChatHistory:      "Ergo and UnrealIRCd 6",
 	FeatureMultiline:        "Ergo and UnrealIRCd 6",
 	FeatureReadMarkers:      "Ergo",
@@ -95,7 +97,8 @@ var inspModules = map[string]string{
 	FeatureMessageTags: `Load InspIRCd's ircv3_ctctags and ircv3_msgid modules (<module name="ircv3_ctctags">, <module name="ircv3_msgid">).`,
 	FeatureEchoMessage: `Load InspIRCd's ircv3_echomessage module (<module name="ircv3_echomessage">).`,
 	FeatureServerTime:  `Load InspIRCd's ircv3_servertime module (<module name="ircv3_servertime">).`,
-	FeatureClientTags:  `Load InspIRCd's ircv3_ctctags module and leave <ctctags clientonlytags="all"> (the default).`,
+	FeatureReplies:     `Load InspIRCd's ircv3_ctctags module and leave <ctctags clientonlytags="all"> (the default).`,
+	FeatureReactions:   `Load InspIRCd's ircv3_ctctags module and leave <ctctags clientonlytags="all"> (the default).`,
 	FeatureSASL:        `Load InspIRCd's sasl module with <sasl target="your.services.server"> (and services that do SASL).`,
 	FeatureWebIRC:      `Load InspIRCd's gateway module and add <gateway type="webirc" mask="GATEWAY-IP" password="..."> (the wizard generates it).`,
 }
@@ -105,7 +108,8 @@ var unrealModules = map[string]string{
 	FeatureEchoMessage: `UnrealIRCd 6 loads echo-message by default; check it isn't blacklisted.`,
 	FeatureServerTime:  `UnrealIRCd 6 loads server-time by default; check it isn't blacklisted.`,
 	FeatureChatHistory: `Load UnrealIRCd's chathistory and history modules (both in modules.default.conf) and set channel mode +H on channels.`,
-	FeatureClientTags:  `Allow +draft/reply and +draft/react: remove them from set::clienttagdeny (they're allowed by default).`,
+	FeatureReplies:     `Load UnrealIRCd's reply-tag module (modules.default.conf): UnrealIRCd only relays client tags a module registers.`,
+	FeatureReactions:   `UnrealIRCd 6 only relays client tags that a module registers, and it ships none for +draft/react; it needs a third-party module that registers +draft/react (CLIENTTAGDENY then stops listing it).`,
 	FeatureMultiline:   `Load UnrealIRCd's multiline module (modules.default.conf).`,
 	FeatureSASL:        `UnrealIRCd 6 does SASL through services: set set::sasl-server (or services-server) to the services' name and run services that do SASL.`,
 	FeatureWebIRC:      `Add a webirc { mask GATEWAY-IP; password "..."; } block (the wizard generates it).`,
@@ -207,38 +211,34 @@ func deniedClientTags(isupport map[string]string, tags ...string) []string {
 	return denied
 }
 
-func (e evaluator) clientTags() Capability {
-	c := Capability{Feature: FeatureClientTags, Title: "Replies and reactions"}
+// clientTag is the row for one client tag Boson sends (+draft/reply or
+// +draft/react): the server has to relay it to other users, which takes
+// message-tags and no CLIENTTAGDENY for it.
+func (e evaluator) clientTag(feature, title, tag, what string) Capability {
+	c := Capability{Feature: feature, Title: title}
 	if !e.has("message-tags") {
 		c.Status = Unavailable
-		c.Explanation = "Replies and reactions are client tags (+draft/reply, +draft/react) that the server has to pass between users, and this server has no message-tags. evrd can't add them: other users would never receive them. Boson shows replies as plain messages and hides reactions."
-		c.Fix = e.upgrade(FeatureClientTags)
+		c.Explanation = title + " use the client tag " + tag + ", which the server has to pass between users, and this server has no message-tags. evrd can't add it: other users would never receive it. " + what
+		c.Fix = e.upgrade(feature)
 		return c
 	}
-	if denied := deniedClientTags(e.r.ISupport, "+draft/reply", "+draft/react", "+reply", "+react"); len(denied) > 0 && containsAll(denied, "+draft/reply", "+draft/react") {
+	if denied := deniedClientTags(e.r.ISupport, tag); len(denied) > 0 {
 		c.Status = Unavailable
-		c.Explanation = "The server has message-tags but its CLIENTTAGDENY drops " + strings.Join(denied, ", ") + ", so replies and reactions never reach other users."
-		c.Fix = e.upgrade(FeatureClientTags)
+		c.Explanation = "The server has message-tags but CLIENTTAGDENY (" + e.r.ISupport["CLIENTTAGDENY"] + ") drops " + tag + ", so other users never receive it. " + what
+		c.Fix = e.upgrade(feature)
 		return c
 	}
 	c.Status = Native
-	c.Explanation = "The server relays client tags (message-tags, no CLIENTTAGDENY for replies or reactions): replies and reactions reach everyone with an IRCv3 client."
+	c.Explanation = "The server relays " + tag + " (message-tags, not in CLIENTTAGDENY): it reaches everyone with an IRCv3 client."
 	return c
 }
 
-func containsAll(list []string, want ...string) bool {
-	for _, w := range want {
-		found := false
-		for _, l := range list {
-			if l == w {
-				found = true
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
+func (e evaluator) replies() Capability {
+	return e.clientTag(FeatureReplies, "Replies", "+draft/reply", "Boson shows replies as plain messages.")
+}
+
+func (e evaluator) reactions() Capability {
+	return e.clientTag(FeatureReactions, "Reactions", "+draft/react", "Boson hides reactions.")
 }
 
 func (e evaluator) redaction() Capability {
@@ -362,7 +362,10 @@ func (e evaluator) webirc() Capability {
 	switch {
 	case w.Tested && w.Accepted:
 		c.Status = Native
-		c.Explanation = "The server accepted WEBIRC with the given password: it sees each Boson user's real IP (bans and per-IP limits work per user)."
+		c.Explanation = "The server accepted WEBIRC with the given password: it sees each Boson user's real IP, so bans work per user."
+		if e.sw == "ngircd" {
+			c.Explanation += " (ngIRCd still counts connections against the gateway's address: see the connection limit hint.)"
+		}
 		if !w.Verified {
 			c.Explanation += " (The server didn't show the claimed IP back, so this is from the absence of a refusal.)"
 		}

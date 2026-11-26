@@ -135,7 +135,8 @@ const (
 	FeatureServerTime       = "server-time"
 	FeatureChatHistory      = "chathistory"
 	FeatureReadMarkers      = "read-markers"
-	FeatureClientTags       = "client-tags"
+	FeatureReplies          = "replies"
+	FeatureReactions        = "reactions"
 	FeatureMessageRedaction = "message-redaction"
 	FeatureSASL             = "sasl"
 	FeatureServicesRPC      = "services-rpc"
@@ -146,7 +147,7 @@ const (
 // Features lists every feature in table order.
 var Features = []string{
 	FeatureMessageTags, FeatureEchoMessage, FeatureServerTime, FeatureChatHistory,
-	FeatureReadMarkers, FeatureClientTags, FeatureMessageRedaction, FeatureSASL,
+	FeatureReadMarkers, FeatureReplies, FeatureReactions, FeatureMessageRedaction, FeatureSASL,
 	FeatureServicesRPC, FeatureWebIRC, FeatureMultiline,
 }
 
