@@ -37,6 +37,15 @@ type Report struct {
 type Target struct {
 	Addr string `json:"addr"`
 	TLS  bool   `json:"tls"`
+	// CertSHA256 is the SHA-256 (hex) of the certificate the server
+	// presented on TLS: for pinning a self-signed one.
+	CertSHA256 string `json:"cert_sha256,omitempty"`
+	// SPKISHA256 is the SHA-256 (hex) of its public key (SubjectPublicKeyInfo).
+	SPKISHA256 string `json:"spki_sha256,omitempty"`
+	// CertTrusted: the chain verifies against the system roots for the
+	// host (Options.CheckCert); CertError says why not.
+	CertTrusted bool   `json:"cert_trusted,omitempty"`
+	CertError   string `json:"cert_error,omitempty"`
 }
 
 // ServerInfo identifies the IRC server software.
@@ -53,6 +62,12 @@ type ServerInfo struct {
 	RawVersion string `json:"raw_version"`
 	// Network is ISUPPORT NETWORK.
 	Network string `json:"network"`
+	// ClientHost is the host the server says the probe connects from
+	// (001's nick!user@host, when it has one): the address to exempt.
+	ClientHost string `json:"client_host,omitempty"`
+	// ClientIP is the address the server sees the probe at (001, or WHOIS
+	// of itself: 378/338/311), when it shows one.
+	ClientIP string `json:"client_ip,omitempty"`
 }
 
 // ServicesInfo describes NickServ and the services RPC check.

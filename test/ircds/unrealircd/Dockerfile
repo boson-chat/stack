@@ -13,6 +13,10 @@ WORKDIR /home/ircd/src
 RUN curl -fsSLo unrealircd.tar.gz "https://www.unrealircd.org/downloads/unrealircd-${UNREALIRCD_VERSION}.tar.gz" \
  && echo "${UNREALIRCD_SHA256}  unrealircd.tar.gz" | sha256sum -c - \
  && tar xf unrealircd.tar.gz --strip-components=1
+# Boson's optional +draft/react module (the setup wizard's snippet; a copy
+# of images/setup/internal/stack/snippets/boson-react.c): built, not loaded
+# until a snippet says loadmodule "third/boson-react".
+COPY --chown=ircd unrealircd/boson-react.c src/modules/third/boson-react.c
 # ./configure directly (what ./Config -quick runs), installed under /ircd.
 RUN B=/home/ircd/unrealircd; ./configure --enable-ssl --enable-dynamic-linking --with-system-argon2 \
       --with-bindir=$B/bin --with-datadir=$B/data --with-pidfile=$B/data/unrealircd.pid \

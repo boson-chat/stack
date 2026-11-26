@@ -111,9 +111,18 @@ func (f *FakeCompose) Exec(ctx context.Context, service string, stdin io.Reader,
 				email = args[i+1]
 			}
 		}
-		pw, _ := io.ReadAll(stdin)
-		if len(strings.TrimSpace(string(pw))) == 0 {
-			return "", fmt.Errorf("no password")
+		noPassword := false
+		for _, a := range args {
+			noPassword = noPassword || a == "--no-password"
+		}
+		if !noPassword {
+			if stdin == nil {
+				return "", fmt.Errorf("no password")
+			}
+			pw, _ := io.ReadAll(stdin)
+			if len(strings.TrimSpace(string(pw))) == 0 {
+				return "", fmt.Errorf("no password")
+			}
 		}
 		f.Users[name] = "owner " + email
 		return "created " + name + " (id1) role=owner", nil

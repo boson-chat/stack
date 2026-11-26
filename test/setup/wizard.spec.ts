@@ -26,12 +26,12 @@ test('new install through the wizard', async ({ page }) => {
 
   // ---- the two paths ----
   await expect(page.getByRole('heading', { name: 'What are you setting up?' })).toBeVisible();
-  await expect(page.locator('[data-flow=addon]')).toContainText('Coming soon');
+  await expect(page.locator('[data-flow=addon]')).not.toContainText('Coming soon');
   await shot(page, 'chooser');
+  // The add-on path is its own e2e (addon.spec.ts); here: it opens, and back.
   await page.locator('[data-flow=addon]').click();
-  await expect(page.getByRole('heading', { name: 'Add Boson to my existing IRC server' })).toBeVisible();
-  await shot(page, 'addon-stub');
-  await page.getByRole('link', { name: '← Back' }).click();
+  await expect(page.getByRole('heading', { name: 'Your IRC server' })).toBeVisible();
+  await page.getByRole('link', { name: '← Start' }).click();
   await page.locator('[data-flow=fresh]').click();
 
   // ---- domain: elsewhere is blocked ----

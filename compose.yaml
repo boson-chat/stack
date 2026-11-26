@@ -4,7 +4,7 @@
 #   docker compose up -d --build
 # Which parts run is chosen by COMPOSE_PROFILES in .env
 # (irc, voice, video, auth, api, directory, files, minio, metrics, admin,
-# updates, webroot, wellknown, web). traefik and
+# updates, webroot, wellknown, web, bridge). traefik and
 # certsync always run.
 # Install-specific additions: traefik/dynamic/*.yml and compose.override.yaml.
 name: boson
@@ -127,12 +127,14 @@ services:
         ${IRC_HOST}:/certs/irc:10000:fullchain.pem:privkey.pem
         ${VOICE_HOST}:/certs/voice:65532:tls.crt:tls.key
         ${VIDEO_HOST:-}:/certs/video:65532:tls.crt:tls.key
+        ${BRIDGE_CERT_HOST:-}:/certs/bridge:1000:fullchain.pem:privkey.pem
     volumes:
       - traefik_acme:/acme:ro
       - ./local-certs:/local-certs:ro
       - certs_irc:/certs/irc
       - certs_voice:/certs/voice
       - certs_video:/certs/video
+      - certs_bridge:/certs/bridge
     depends_on: [traefik]
 
   # ---- irc ------------------------------------------------------------------
@@ -266,6 +268,93 @@ services:
         condition: service_completed_successfully
 
   # ---- auth -----------------------------------------------------------------
+  # ---- bridge (Boson next to an existing IRC server, docs/bridge.md) ---------
+  # Instead of Ergo (no irc profile): Boson apps connect to IRC_HOST:6697,
+  # which is evrd in managed mode (4evrd/evrd docs/managed.md), an IRCv3
+  # bridge that connects each signed-in Boson user to your IRC server
+  # (BRIDGE_IRC_SERVER) with WEBIRC, and gives Boson message tags, history,
+  # read markers and the rest. Classic IRC users keep using your server.
+  # Nothing Boson users see names the bridge.
+  #
+  # evrd-links is evrd's connection holder: it keeps every user's IRC
+  # connection (and their clients' connections) open while evrd restarts
+  # or is updated, and evrd runs in its network namespace. It's pinned to
+  # its own image (EVRD_LINKS_IMAGE): updating the stack (or evrd) never
+  # recreates it, so nobody drops off IRC. Restarting it drops everyone:
+  # never restart it to update (the admin panel's Updates must not either).
+  evrd-links:
+    <<: *restart
+    profiles: [bridge]
+    image: ${EVRD_LINKS_IMAGE:-ghcr.io/4evrd/evrd:0.59.0}
+    entrypoint: ["evrd-links", "-socket", "/run/evrd-links/links.sock"]
+    command: []
+    ports:
+      - "6697:6697"
+    volumes:
+      - bridge_links:/run/evrd-links
+  evrd:
+    <<: *restart
+    profiles: [bridge]
+    image: ${EVRD_IMAGE:-ghcr.io/4evrd/evrd:0.59.0}
+    network_mode: "service:evrd-links"
+    # Waits for its certificate (certsync copies IRC_HOST's from Traefik);
+    # evrd re-reads it when it changes.
+    entrypoint: ["sh", "-c", "until [ -s /certs/fullchain.pem ] && [ -s /certs/privkey.pem ]; do sleep 2; done; exec evrd -config /etc/evrd/evrd.conf"]
+    command: []
+    environment:
+      # Secrets; the rest is bridge/evrd.conf (written by Boson setup).
+      EVRD_MANAGED_TOKEN: ${BRIDGE_TOKEN:-}
+      EVRD_MANAGED_WEBIRC_PASSWORD: ${BRIDGE_WEBIRC_PASSWORD:-}
+      EVRD_SECRET_KEY: ${BRIDGE_SECRET_KEY:-}
+    volumes:
+      - ./bridge/evrd.conf:/etc/evrd/evrd.conf:ro
+      - bridge_data:/var/lib/evrd
+      - bridge_links:/run/evrd-links
+      - certs_bridge:/certs:ro
+    depends_on:
+      evrd-links:
+        condition: service_started
+      certsync:
+        condition: service_started
+      auth:
+        condition: service_started
+    healthcheck:
+      # The managed API's health (compose network only, never published).
+      test: ["CMD-SHELL", "wget -q -O /dev/null --header \"Authorization: Bearer $$EVRD_MANAGED_TOKEN\" http://127.0.0.1:8098/api/managed/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+  # bridge-sync: every Boson account (auth's users table, read-only) gets
+  # its bridge account through the managed API; disabled and deleted ones
+  # are switched off / removed. Polls every BRIDGE_SYNC_INTERVAL.
+  bridge-sync:
+    <<: *restart
+    profiles: [bridge]
+    build: images/bridgesync
+    image: harbor.floret.dev/boson/stack-bridgesync:0.1.0
+    environment:
+      DATABASE_URL: postgres://auth:${POSTGRES_PASSWORD}@postgres:5432/auth?sslmode=disable
+      BRIDGE_API_URL: http://evrd-links:8098
+      BRIDGE_TOKEN: ${BRIDGE_TOKEN:-}
+      BRIDGE_SYNC_INTERVAL: ${BRIDGE_SYNC_INTERVAL:-2s}
+    read_only: true
+    tmpfs:
+      - /tmp:uid=65532,gid=65532
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      evrd:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "/bridge-sync", "health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
+
   postgres:
     <<: *restart
     profiles: [auth]
@@ -300,7 +389,7 @@ services:
     profiles: [auth]
     # Releases: harbor.floret.dev/boson/auth:<version>. To run an unreleased
     # checkout instead, add compose.auth-src.yaml (see README).
-    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.21.1}
+    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.23.0}
     environment:
       ENV: production
       LOG_LEVEL: ${AUTH_LOG_LEVEL:-info}
@@ -354,6 +443,21 @@ services:
       ERGO_API_URL: ${AUTH_ERGO_API_URL:-http://ergo:8089}
       ERGO_API_TOKEN: ${ERGO_API_TOKEN:-}
       FILES_ENABLED: ${FILES_ENABLED:-false}
+      # Accounts: local (auth's own, the default) or nickserv (an existing
+      # IRC network's NickServ accounts; auth >= 1.23.0, docs/bridge.md).
+      # Boson setup writes these on the
+      # "Add Boson to my existing IRC server" path.
+      ACCOUNT_BACKEND: ${ACCOUNT_BACKEND:-local}
+      NICKSERV_STRATEGY: ${NICKSERV_STRATEGY:-}
+      NICKSERV_SERVICES: ${NICKSERV_SERVICES:-}
+      NICKSERV_RPC_URL: ${NICKSERV_RPC_URL:-}
+      NICKSERV_RPC_TOKEN: ${NICKSERV_RPC_TOKEN:-}
+      NICKSERV_IRC_ADDR: ${NICKSERV_IRC_ADDR:-}
+      NICKSERV_IRC_TLS: ${NICKSERV_IRC_TLS:-true}
+      NICKSERV_TLS_PIN_SHA256: ${NICKSERV_TLS_PIN_SHA256:-}
+      NICKSERV_ALLOW_PLAINTEXT: ${NICKSERV_ALLOW_PLAINTEXT:-false}
+      NICKSERV_SERVICES_SERVER: ${NICKSERV_SERVICES_SERVER:-}
+      NICKSERV_REGISTRATION: ${NICKSERV_REGISTRATION:-true}
     volumes:
       # Read-only: boson.yaml (auth:, network:, branding:) and the branding
       # images in config/branding/, served at /v1/branding/assets/.
@@ -641,7 +745,8 @@ services:
       # Empty ADMIN_DOCKER_PROXY_URL= turns it off.
       DOCKER_PROXY_URL: ${ADMIN_DOCKER_PROXY_URL-http://docker-proxy:2375}
       DOCKER_PROJECT: boson
-      DOCKER_PROTECTED_SERVICES: admin,traefik
+      # evrd-links: restarting it drops every Boson user off IRC.
+      DOCKER_PROTECTED_SERVICES: admin,traefik,evrd-links
       # Users' boson profiles (avatar, handle) from the api
       # profile. Set ADMIN_BOSON_API_URL= (empty) without it.
       BOSON_API_URL: ${ADMIN_BOSON_API_URL-http://api:3000}
@@ -1224,6 +1329,9 @@ volumes:
   certs_irc:
   certs_voice:
   certs_video:
+  certs_bridge:
+  bridge_links:
+  bridge_data:
   ergo_db:
   roleserv_data:
   voice_data:

@@ -13,6 +13,11 @@ import (
 // Answers are the wizard's non-secret choices. They are kept in the setup
 // state file between restarts; secrets never are (see Secrets).
 type Answers struct {
+	// Mode: "" (a new server, Ergo included) or "addon" (next to an IRC
+	// server that exists: Addon says which, and the bridge fronts it).
+	Mode  string       `json:"mode,omitempty"`
+	Addon AddonAnswers `json:"addon"`
+
 	NetworkName string `json:"network_name"`
 	Domain      string `json:"domain"`
 	// Serve https://DOMAIN/.well-known/boson.json from this server (only
@@ -74,6 +79,8 @@ type Secrets struct {
 	S3AccessKey   string `json:"s3_access_key,omitempty"`
 	S3SecretKey   string `json:"s3_secret_key,omitempty"`
 	AdminPassword string `json:"admin_password,omitempty"`
+	// RPCToken: the services RPC token (add-on path; NICKSERV_RPC_TOKEN).
+	RPCToken string `json:"rpc_token,omitempty"`
 }
 
 // Defaults for a new install.
@@ -131,6 +138,22 @@ func (a *Answers) Normalize() {
 	if a.TLS.Email == "" {
 		a.TLS.Email = a.Admin.Email
 	}
+	if a.Mode == ModeAddon {
+		a.Addon.normalize()
+		// The bridge signs everyone in: no guests on this path (yet).
+		a.Guests, a.GuestVoice = false, false
+	} else {
+		a.Mode = ModeFresh
+	}
+}
+
+// Addon: the add-on path (next to an existing IRC server).
+func (a Answers) IsAddon() bool { return a.Mode == ModeAddon }
+
+// NickServAccounts: people sign in with their NickServ accounts (so the
+// admin has no Boson password).
+func (a Answers) NickServAccounts() bool {
+	return a.IsAddon() && a.Addon.Accounts == AccountsNickServ
 }
 
 var (
@@ -195,6 +218,9 @@ func (a Answers) Validate(section string, s Secrets, needPassword bool) []FieldE
 	var errs []FieldError
 	add := func(f, m string) { errs = append(errs, FieldError{f, m}) }
 	all := section == ""
+	if a.IsAddon() && (all || section == "irc") {
+		a.Addon.validate(add, s, AuthNickServ)
+	}
 	if all || section == "domain" {
 		if !networkNameRe.MatchString(a.NetworkName) {
 			// It's also IRC's NETWORK= (ISUPPORT): one token, no spaces.
@@ -225,7 +251,7 @@ func (a Answers) Validate(section string, s Secrets, needPassword bool) []FieldE
 		if !validEmail(a.Admin.Email) {
 			add("admin.email", "Enter a valid email address.")
 		}
-		if needPassword {
+		if needPassword && !a.NickServAccounts() {
 			if len(s.AdminPassword) < 10 {
 				add("admin.password", "Use at least 10 characters.")
 			} else if len(s.AdminPassword) > 256 || strings.ContainsAny(s.AdminPassword, "\r\n") {
@@ -322,8 +348,12 @@ type Host struct {
 // chosen features, in CERT_HOSTS order.
 func (a Answers) NeededHosts() []Host {
 	h := a.HostNames()
+	irc := "IRC (port 6697)"
+	if a.IsAddon() {
+		irc = "IRC for Boson apps (port 6697, the bridge to your server)"
+	}
 	out := []Host{
-		{RoleIRC, h[RoleIRC], "IRC (port 6697)"},
+		{RoleIRC, h[RoleIRC], irc},
 		{RoleAuth, h[RoleAuth], "accounts and sign-in"},
 		{RoleWeb, h[RoleWeb], "the web client"},
 		{RoleAdmin, h[RoleAdmin], "the admin panel"},
@@ -350,6 +380,10 @@ func (a Answers) NeededHosts() []Host {
 // Profiles: COMPOSE_PROFILES for these answers.
 func (a Answers) Profiles() []string {
 	p := []string{"irc", "auth", "api", "web", "admin", "metrics"}
+	if a.IsAddon() {
+		// No Ergo: their IRC server, with the bridge in front for Boson.
+		p = []string{"bridge", "auth", "api", "web", "admin", "metrics"}
+	}
 	if a.Voice {
 		p = append(p, "voice")
 	}

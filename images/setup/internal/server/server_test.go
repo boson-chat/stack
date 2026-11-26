@@ -50,16 +50,21 @@ func setup(t *testing.T) (*httptest.Server, *gate.Gate, *install.FakeCompose, st
 	r.Timeouts = install.Timeouts{Health: time.Second, Certs: time.Second, Verify: time.Second, FailFor: time.Second, Poll: 10 * time.Millisecond}
 	install.DevSkipNetwork(r)
 	g := gate.NewWithCode("ABCD-EFGH")
-	fr, err := fresh.New(fresh.Deps{InstallDir: dir, Runner: r, Redactor: &dockercli.Redactor{},
+	deps := fresh.Deps{InstallDir: dir, Runner: r, Redactor: &dockercli.Redactor{},
 		DNS:   &checks.DNS{Resolver: dnsTo("192.0.2.1"), LocalIPs: func() []net.IP { return []net.IP{net.ParseIP("192.0.2.1")} }},
 		Ports: &checks.Ports{HostIP: func() net.IP { return nil }, Nonce: func() string { return "n" }},
-	})
+	}
+	fr, err := fresh.New(deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ad, err := addon.New(deps)
 	if err != nil {
 		t.Fatal(err)
 	}
 	reg := &flow.Registry{}
 	reg.Add(fr)
-	reg.Add(addon.Flow{})
+	reg.Add(ad)
 	s := &Server{Gate: g, Flows: reg, Static: fstest.MapFS{"index.html": {Data: []byte("hi")}}, Instance: "inst", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	ts := httptest.NewTLSServer(s.Handler())
 	t.Cleanup(ts.Close)

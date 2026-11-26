@@ -3,6 +3,7 @@ package stack
 import (
 	"errors"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -120,6 +121,22 @@ func (ex Existing) Answers() Answers {
 	a.Guests = cfgBool(c, true, "auth", "guest_access")
 	a.GuestVoice = cfgBool(c, false, "auth", "guest_voice")
 	a.DirectoryListing = cfgBool(c, envBool(e, "ADMIN_DIRECTORY_REGISTRATION", true), "admin", "directory_registration")
+	if e["BRIDGE_CERT_HOST"] != "" {
+		// An add-on install (Boson next to an existing IRC server).
+		a.Mode = ModeAddon
+		if host, port, err := net.SplitHostPort(e["BRIDGE_IRC_SERVER"]); err == nil {
+			a.Addon.Host = host
+			a.Addon.Port, _ = strconv.Atoi(port)
+		}
+		a.Addon.TLS, a.Addon.TLSVerify = true, e["NICKSERV_TLS_PIN_SHA256"] == ""
+		a.Addon.Accounts = AccountsBoson
+		if e["ACCOUNT_BACKEND"] == "nickserv" {
+			a.Addon.Accounts = AccountsNickServ
+			a.Addon.Strategy = e["NICKSERV_STRATEGY"]
+		}
+		a.Addon.RPCURL = e["NICKSERV_RPC_URL"]
+		a.Addon.ServicesServer = e["NICKSERV_SERVICES_SERVER"]
+	}
 	a.Normalize()
 	return a
 }

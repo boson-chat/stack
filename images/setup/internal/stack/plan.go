@@ -20,6 +20,9 @@ type Generator struct {
 
 func NewGenerator() *Generator { return &Generator{vals: map[string]string{}} }
 
+// Get is the run's value for key, made with mk the first time.
+func (g *Generator) Get(key string, mk func() string) string { return g.get(key, mk) }
+
 func (g *Generator) get(key string, mk func() string) string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -59,7 +62,11 @@ var secretGen = []struct {
 // SecretKeys: every .env key whose value is a secret (masked, never logged).
 var SecretKeys = func() map[string]bool {
 	m := map[string]bool{"OPER_PASSWORD_HASH": true, "SMTP_PASSWORD": true, "SMTP_USER": true,
-		"FILES_S3_ACCESS_KEY": true, "FILES_S3_SECRET_KEY": true, "NICK_CLAIM_POP3_PASSWORD": true}
+		"FILES_S3_ACCESS_KEY": true, "FILES_S3_SECRET_KEY": true, "NICK_CLAIM_POP3_PASSWORD": true,
+		"WEBIRC_PASSWORDS": true, "NICKSERV_RPC_TOKEN": true}
+	for _, b := range bridgeSecrets {
+		m[b.key] = true
+	}
 	for _, s := range secretGen {
 		m[s.key] = true
 	}
@@ -87,6 +94,15 @@ type Plan struct {
 	// OperPassword: the emergency /OPER password when it was generated now
 	// (shown once on the last page); empty when the existing hash is kept.
 	OperPassword string `json:"-"`
+	// Files: other files the install writes (the bridge's config), relative
+	// to the install dir. Never secrets.
+	Files []PlanFile `json:"files,omitempty"`
+}
+
+// PlanFile is a generated file the install writes.
+type PlanFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
 }
 
 // EnvValue looks a key up in the plan.
@@ -169,7 +185,12 @@ func BuildPlan(a Answers, s Secrets, existing map[string]string, gen *Generator,
 	set("TLS_ISSUER", a.TLS.Email)
 	set("ACME_CA_SERVER", a.ACMEServer())
 	set("OPER_NAME", "admin")
-	if v := existing["OPER_PASSWORD_HASH"]; v != "" {
+	if a.IsAddon() {
+		// No Ergo, so no emergency oper: keep a hash that's there.
+		if v := existing["OPER_PASSWORD_HASH"]; v != "" {
+			setSecret("OPER_PASSWORD_HASH", v, "kept")
+		}
+	} else if v := existing["OPER_PASSWORD_HASH"]; v != "" {
 		setSecret("OPER_PASSWORD_HASH", v, "kept")
 	} else {
 		pw := gen.get("_OPER_PASSWORD", func() string { return secret.Alnum(20) })
@@ -187,6 +208,11 @@ func BuildPlan(a Answers, s Secrets, existing map[string]string, gen *Generator,
 	set("REGISTRATION", a.Registration)
 	set("REQUIRE_EMAIL_VERIFICATION", strconv.FormatBool(a.EmailVerification))
 	for _, sg := range secretGen {
+		if a.IsAddon() && sg.key == "ERGO_API_TOKEN" {
+			// No Ergo: auth and quicvoiced ask nobody for IRC roles.
+			setSecret(sg.key, "", "")
+			continue
+		}
 		keepOr(sg.key, sg.mk)
 	}
 	set("DOCKER_GID", dockerGID)
@@ -256,6 +282,23 @@ func BuildPlan(a Answers, s Secrets, existing map[string]string, gen *Generator,
 		keepOr("FILES_S3_SECRET_KEY", func() string { return secret.Alnum(40) })
 		if a.Files.Storage == "minio" {
 			set("FILES_S3_BUCKET", "boson-files")
+		}
+	}
+
+	if a.IsAddon() {
+		addonEnv(&p, a, s, existing, gen, set, setSecret, keepOr)
+		p.Files = append(p.Files, PlanFile{Path: BridgeConfPath, Content: BridgeConf(a)})
+	} else {
+		// Back from an add-on install: its keys go (compose's defaults are
+		// the fresh path's).
+		for _, k := range bridgeEnvKeys {
+			if _, ok := existing[k]; ok && existing["BRIDGE_CERT_HOST"] != "" {
+				if SecretKeys[k] {
+					setSecret(k, "", "")
+				} else {
+					set(k, "")
+				}
+			}
 		}
 	}
 

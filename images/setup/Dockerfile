@@ -4,6 +4,8 @@
 #   docker build -f images/setup/Dockerfile -t stack-setup .
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 WORKDIR /src
+# The probe module (go.mod: replace => ../../pkg/probe, so /pkg/probe here).
+COPY pkg/probe/ /pkg/probe/
 COPY images/setup/go.mod images/setup/go.sum ./
 RUN --mount=type=cache,target=/root/go/pkg/mod go mod download
 COPY images/setup/ ./
@@ -25,6 +27,7 @@ COPY images/certsync/ /stack/images/certsync/
 COPY images/ergo/ /stack/images/ergo/
 COPY images/webircgateway/ /stack/images/webircgateway/
 COPY images/wellknown/ /stack/images/wellknown/
+COPY images/bridgesync/ /stack/images/bridgesync/
 RUN rm -rf /stack/scripts/__pycache__
 
 FROM alpine:3.22

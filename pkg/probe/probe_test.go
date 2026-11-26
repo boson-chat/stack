@@ -465,3 +465,16 @@ func TestRPCAthemeJSONAndXML(t *testing.T) {
 		t.Errorf("html: %+v", r)
 	}
 }
+
+func TestWelcomeHost(t *testing.T) {
+	for in, want := range map[string]string{
+		"Welcome to the Internet Relay Network bob!~bob@192.0.2.1":  "192.0.2.1",
+		"Welcome to the UnrealNet IRC Network bob!bob@host.example": "host.example",
+		"Welcome bob": "",
+		"":            "",
+	} {
+		if got := welcomeHost(in); got != want {
+			t.Errorf("welcomeHost(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

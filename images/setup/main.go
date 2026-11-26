@@ -37,6 +37,7 @@ import (
 	"github.com/boson-chat/stack/images/setup/internal/install"
 	"github.com/boson-chat/stack/images/setup/internal/secret"
 	"github.com/boson-chat/stack/images/setup/internal/server"
+	"github.com/boson-chat/stack/images/setup/internal/stack"
 	"github.com/boson-chat/stack/images/setup/internal/tlscert"
 	"github.com/boson-chat/stack/images/setup/web"
 )
@@ -68,6 +69,20 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println(strings.TrimSpace(string(b)))
+	case "idle":
+		// The add-on probe's helper container: waits for docker exec.
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+		<-sig
+	case "ircprobe":
+		// The add-on path's IRC probe, run in a container on the stack's
+		// network (addon.ContainerProbe): options on stdin, a report out.
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+		if err := addon.RunWire(ctx, os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "stack-setup ircprobe:", err)
+			os.Exit(1)
+		}
 	case "probe":
 		fs := flag.NewFlagSet("probe", flag.ExitOnError)
 		host := fs.String("host", "", "address to test")
@@ -110,14 +125,6 @@ func serve() error {
 		return err
 	}
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
-		return err
-	}
-	// The code is a secret: never logged, only readable through
-	// `docker exec boson-setup stack-setup code` (install.sh does that).
-	if err := os.WriteFile(filepath.Join(runDir, "code"), []byte(g.Code()+"\n"), 0o600); err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "fingerprint"), []byte(fp+"\n"), 0o600); err != nil {
 		return err
 	}
 
@@ -199,7 +206,7 @@ func serve() error {
 		}()
 	}
 
-	fr, err := fresh.New(fresh.Deps{
+	deps := fresh.Deps{
 		InstallDir: dir,
 		Runner:     runner,
 		DNS: &checks.DNS{
@@ -211,16 +218,47 @@ func serve() error {
 		DockerGID: dockerGID,
 		Redactor:  red,
 		Finish:    finish,
-	})
+	}
+	fr, err := fresh.New(deps)
 	if err != nil {
 		return err
 	}
+	ad, err := addon.New(deps)
+	if err != nil {
+		return err
+	}
+	if probeImage != "" {
+		subnet := "10.203.53.0/24"
+		if ex, err := stack.LoadExisting(dir); err == nil && ex.Env["STACK_SUBNET"] != "" {
+			subnet = ex.Env["STACK_SUBNET"]
+		}
+		ad.Probe = addon.ContainerProbe(cli, probeImage, "boson", subnet)
+		pctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		if err := addon.StartProbeHelper(pctx, cli, probeImage, "boson", subnet); err != nil {
+			log.Warn("add-on probe container", "err", err)
+		} else {
+			// Its interfaces settle before anyone loads the wizard (a
+			// browser on this machine drops requests while they change).
+			time.Sleep(3 * time.Second)
+		}
+		cancel()
+		runner.BeforeUp = func(ctx context.Context) { addon.RemoveProbeHelper(ctx, cli, "boson") }
+	}
 	reg := &flow.Registry{}
 	reg.Add(fr)
-	reg.Add(addon.Flow{})
+	reg.Add(ad)
 
 	srv.Handler = (&server.Server{Gate: g, Flows: reg, Static: web.FS, Instance: instance, Log: log}).Handler()
 
+	// Written last: install.sh prints the address once the code is there.
+	// The code is a secret: never logged, only readable through
+	// `docker exec boson-setup stack-setup code` (install.sh does that).
+	if err := os.WriteFile(filepath.Join(runDir, "code"), []byte(g.Code()+"\n"), 0o600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "fingerprint"), []byte(fp+"\n"), 0o600); err != nil {
+		return err
+	}
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -231,6 +269,9 @@ func serve() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(ctx)
+		if probeImage != "" {
+			addon.RemoveProbeHelper(ctx, cli, "boson")
+		}
 	}()
 	log.Info("Boson setup is listening", "port", port, "install_dir", dir, "certificate_sha256", fp)
 	log.Info("get the one-time code with: docker exec boson-setup stack-setup code")

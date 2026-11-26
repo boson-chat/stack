@@ -3,7 +3,10 @@ package probe
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -20,7 +23,16 @@ var errClosed = errors.New("connection closed by the server")
 // lines into a channel, PINGs are answered, and every line is kept for the
 // transcript.
 type conn struct {
-	nc    net.Conn
+	nc net.Conn
+	// certSHA256 and spkiSHA256 are the server certificate's SHA-256 and
+	// its public key's (SubjectPublicKeyInfo), hex, on TLS.
+	certSHA256, spkiSHA256 string
+	// certTrusted / certError: the chain against the system roots (CheckCert).
+	certTrusted bool
+	certError   string
+	// nick: ours, once registered (001).
+	nick string
+
 	lines chan message
 	errc  chan error
 	done  chan struct{}
@@ -46,7 +58,7 @@ func dial(ctx context.Context, o *Options) (*conn, error) {
 		if host == "" {
 			host, _, _ = net.SplitHostPort(o.Addr)
 		}
-		tc := tls.Client(nc, &tls.Config{ServerName: host, InsecureSkipVerify: o.InsecureSkipVerify, MinVersion: tls.VersionTLS12}) //nolint:gosec // opt-in for self-signed test servers
+		tc := tls.Client(nc, &tls.Config{ServerName: host, InsecureSkipVerify: o.InsecureSkipVerify || o.CheckCert, MinVersion: tls.VersionTLS12}) //nolint:gosec // opt-in for self-signed test servers
 		hctx, cancel := context.WithTimeout(ctx, o.stepTimeout())
 		defer cancel()
 		if err := tc.HandshakeContext(hctx); err != nil {
@@ -74,6 +86,29 @@ func dial(ctx context.Context, o *Options) (*conn, error) {
 		nc = tc
 	}
 	c := &conn{nc: nc, lines: make(chan message, 256), errc: make(chan error, 1), done: make(chan struct{}), maxLines: 2000}
+	if tc, ok := nc.(*tls.Conn); ok {
+		if pc := tc.ConnectionState().PeerCertificates; len(pc) > 0 {
+			sum := sha256.Sum256(pc[0].Raw)
+			c.certSHA256 = hex.EncodeToString(sum[:])
+			spki := sha256.Sum256(pc[0].RawSubjectPublicKeyInfo)
+			c.spkiSHA256 = hex.EncodeToString(spki[:])
+			if o.CheckCert {
+				name := o.ServerName
+				if name == "" {
+					name, _, _ = net.SplitHostPort(o.Addr)
+				}
+				inter := x509.NewCertPool()
+				for _, ic := range pc[1:] {
+					inter.AddCert(ic)
+				}
+				if _, err := pc[0].Verify(x509.VerifyOptions{DNSName: name, Intermediates: inter}); err != nil {
+					c.certError = err.Error()
+				} else {
+					c.certTrusted = true
+				}
+			}
+		}
+	}
 	go c.read()
 	go func() {
 		select {

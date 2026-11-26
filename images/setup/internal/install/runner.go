@@ -54,6 +54,9 @@ type Runner struct {
 	// Logf also gets every progress line (already redacted), for the
 	// container's log.
 	Logf func(step, line string)
+	// BeforeUp runs before the stack starts (the add-on probe's temporary
+	// network goes, so the stack's network can take its subnet).
+	BeforeUp func(ctx context.Context)
 
 	mu      sync.Mutex
 	state   State
@@ -263,6 +266,17 @@ func stepConfig(_ context.Context, r *Runner, j *Job, log func(string)) error {
 	if err != nil {
 		return err
 	}
+	for _, pf := range j.Plan.Files {
+		dst := filepath.Join(r.Dir, filepath.FromSlash(pf.Path))
+		if old, err := os.ReadFile(dst); err == nil && string(old) == pf.Content {
+			log(pf.Path + " unchanged")
+			continue
+		}
+		if err := stack.WriteFileAtomic(dst, []byte(pf.Content), 0o644); err != nil {
+			return err
+		}
+		log(pf.Path + " written")
+	}
 	cfg, changed, err := stack.ApplyConfig(ex.Config, example, j.Plan.Config)
 	if err != nil {
 		return &StepError{Msg: err.Error(), Hint: "Fix config/boson.yaml by hand (or move it away), then retry."}
@@ -306,6 +320,9 @@ func stepStart(ctx context.Context, r *Runner, _ *Job, log func(string)) error {
 				return err
 			}
 		}
+	}
+	if r.BeforeUp != nil {
+		r.BeforeUp(ctx)
 	}
 	if err := r.Compose.Up(ctx, log); err != nil {
 		hint := "Look at the lines above, fix what they point at, then retry."
@@ -474,6 +491,19 @@ func stepAdmin(ctx context.Context, r *Runner, j *Job, log func(string)) error {
 		r.update(func(s *State) { s.AdminCreated = true })
 		return nil
 	}
+	if j.Plan.Answers.NickServAccounts() {
+		// NickServ accounts: no Boson password; the admin's first sign-in
+		// with their NickServ password links this account (auth's
+		// NICKSERV_LINK_EXISTING=unclaimed, the default).
+		out, err := r.Compose.Exec(ctx, "auth", nil,
+			"./auth", "user", "create", "--username", a.Username, "--email", a.Email, "--role", "owner", "--no-password")
+		if err != nil {
+			return fmt.Errorf("creating %s: %w: %s", a.Username, err, out)
+		}
+		log("created " + a.Username + " (signs in with their NickServ password)")
+		r.update(func(s *State) { s.AdminCreated = true })
+		return nil
+	}
 	if j.AdminPassword == "" {
 		return &StepError{Code: "need_admin_password", Msg: "the admin account doesn't exist yet and setup no longer has its password (setup was restarted)",
 			Hint: "Enter the admin password again on the Admin step, then retry."}
@@ -554,10 +584,10 @@ func stepVerify(ctx context.Context, r *Runner, j *Job, log func(string)) error 
 				log("IRC answers on 6697 with " + h[stack.RoleIRC] + "'s certificate")
 				return nil
 			}
-			err = errors.New("Ergo doesn't have its certificate yet")
+			err = errors.New("the IRC server doesn't have its certificate yet")
 		}
 		if time.Now().After(deadline) {
-			return &StepError{Msg: "IRC on port 6697: " + err.Error(), Hint: "certsync hands Ergo its certificate within a minute of Traefik getting it. Retry in a moment."}
+			return &StepError{Msg: "IRC on port 6697: " + err.Error(), Hint: "certsync hands IRC its certificate within a minute of Traefik getting it. Retry in a moment."}
 		}
 		time.Sleep(2 * time.Second)
 	}

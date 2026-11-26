@@ -77,7 +77,7 @@ The image carries this repo's stack files and the docker CLI with compose.
 main.go                  serve | code | fingerprint | probe
 internal/flow            Flow interface + registry: the first screen's choices
 internal/flow/fresh      "New Boson server": its API (/api/flows/fresh/*)
-internal/flow/addon      "Add Boson to my existing IRC server": stub
+internal/flow/addon      "Add Boson to my existing IRC server": probe, snippets, Re-check (docs/bridge.md)
 internal/stack           answers → .env + config/boson.yaml; reads an install back
 internal/checks          DNS, ports (and the probe container), SMTP test
 internal/install         the install steps, state file, progress hub, compose
@@ -87,16 +87,22 @@ web/                     the pages: app.js (code, chooser), flows/<id>.js
 cmd/devserver            -tags dev: the pages against fake docker/DNS
 ```
 
-**Adding a flow** (the add-on path): a package implementing `flow.Flow`
-(`Info()` for its card, `Register()` for its API under
-`/api/flows/<id>/`), one `reg.Add(...)` in `main.go`, and
-`web/flows/<id>.js` exporting `mount(ctx)`. It can reuse `internal/stack`
-for its plan (a profile set without `irc`), `internal/checks`, and
-`install.Runner` for the install with its own steps. The add-on flow will
-read the IRC server with `pkg/probe` (its own module: `replace
-github.com/boson-chat/stack/pkg/probe => ../../pkg/probe` in
-`images/setup/go.mod`) and is tested against the `test/ircds` fixtures;
-`internal/flow/addon` says where each piece goes.
+**Adding a flow**: a package implementing `flow.Flow` (`Info()` for its
+card, `Register()` for its API under `/api/flows/<id>/`), one `reg.Add(...)`
+in `main.go`, and `web/flows/<id>.js` exporting `mount(ctx)`.
+
+**The add-on path** (`internal/flow/addon`, `web/flows/addon.js`,
+[bridge.md](bridge.md)) reuses the fresh flow: `fresh.NewFlow` with its own
+ID and `stack.ModeAddon` answers serves the same API, and `addon.js` reuses
+`fresh.js`'s domain, TLS, admin, features, ports, review, install and done
+pages (`useFlow`). Its own steps: the IRC server (address, TLS, services
+RPC), what Boson gets (the probe's capability table, `pkg/probe`, its own
+module: `replace … => ../../pkg/probe` in `go.mod`), the bridge, accounts
+(auth's decision order: services RPC → NickServ accounts, SASL → NickServ via
+SASL, else Boson accounts; the admin can override), and the config for their
+server: per-software snippets (`internal/stack/snippets.go`) with Copy
+buttons and Re-check, which probes again (WEBIRC with the bridge's password,
+8 connections at once, the RPC, `+draft/react`) until those are green.
 
 ## Developing
 
@@ -115,3 +121,16 @@ stack checked (`smoke-result.py`: admin and a new user over IRC, a channel,
 history after reconnecting, a voice token, an upload; the web client), and
 `install.sh` again (same secrets, same config, one admin). Screenshots of
 every step at desktop and phone width are the job's artifact.
+
+`test/setup/run-addon.sh PAIRING` is the add-on path's: a `test/ircds`
+pairing (published on the runner's address so the stack reaches it), the
+wizard in Playwright (`addon.spec.ts`: a wrong RPC token, the capability
+table equal to `pkg/probe/testdata/golden/<pairing>.json`, Re-check red, the
+snippets applied with `test/ircds/run.sh apply`, Re-check green and the
+`.webirc.json` table, install), then `addon-result.py`: Boson users over the
+bridge, replies/reactions/history, a classic client on the IRC server seeing
+them with their own address, NickServ sign-in in NickServ mode, and nothing
+a Boson user receives saying "evrd". Locally against the dev server:
+`test/ircds/run.sh up ngircd-anope`, then `DEV=1 SETUP_PAIRING=ngircd-anope
+SETUP_RPC_URL=http://127.0.0.1:18080/jsonrpc SETUP_RPC_TOKEN=fixture-rpc-token
+npx playwright test addon.spec.ts` (`SETUP_IRC_PORT` for the others).
