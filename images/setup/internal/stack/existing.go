@@ -121,6 +121,18 @@ func (ex Existing) Answers() Answers {
 	a.Guests = cfgBool(c, true, "auth", "guest_access")
 	a.GuestVoice = cfgBool(c, false, "auth", "guest_voice")
 	a.DirectoryListing = cfgBool(c, envBool(e, "ADMIN_DIRECTORY_REGISTRATION", true), "admin", "directory_registration")
+	a.Federation = cfgString(c, e["FEDERATION_MODE"], "auth", "federation", "mode")
+	if allow, ok := ConfigValue(c, "auth", "federation", "allow").([]any); ok {
+		var list []string
+		for _, d := range allow {
+			if s, ok := d.(string); ok {
+				list = append(list, s)
+			}
+		}
+		a.FederationAllow = strings.Join(list, ",")
+	} else {
+		a.FederationAllow = e["FEDERATION_ALLOW"]
+	}
 	if e["BRIDGE_CERT_HOST"] != "" {
 		// An add-on install (Boson next to an existing IRC server).
 		a.Mode = ModeAddon

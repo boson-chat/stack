@@ -137,6 +137,9 @@ test(`add Boson to ${PAIRING} through the wizard`, async ({ page, context }) => 
   await next(page).click();
   await expect(page.getByRole('heading', { name: 'Features' })).toBeVisible();
   await expect(page.getByRole('switch', { name: /^Guests Not on this path/ })).toBeDisabled();
+  // Federated sign-in stays off on this path (v1 needs Ergo): a note, no choice.
+  await expect(page.getByText('Not on this path yet: signing in with an account from another server')).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Accept accounts from' })).toHaveCount(0);
   await shot(page, 'features', P);
   await next(page).click();
   await expect(page.getByRole('heading', { name: 'Firewall and ports' })).toBeVisible();

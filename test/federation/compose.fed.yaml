@@ -1,0 +1,32 @@
+# Federation e2e only (test/federation/run.sh): one of two installs ("home"
+# and "remote", separate compose projects) on one machine. Nothing is
+# published on the host; both Traefiks sit on a shared network (FED_NETWORK)
+# under their hostnames as network aliases, which is the test's DNS: Pebble
+# (Let's Encrypt's test CA) resolves through it for HTTP-01, and the remote's
+# auth finds https://home.test/.well-known/boson.json through it.
+networks:
+  fed:
+    name: ${FED_NETWORK:-bosonfed}
+    external: true
+
+services:
+  traefik:
+    ports: !reset []
+    environment:
+      LEGO_CA_CERTIFICATES: /pebble-ca/pebble.minica.pem
+    volumes:
+      - ./test/acme/pebble.minica.pem:/pebble-ca/pebble.minica.pem:ro
+    networks:
+      default: {}
+      fed:
+        aliases:
+          - ${DOMAIN}
+          - auth.${DOMAIN}
+          - irc.${DOMAIN}
+          - voice.${DOMAIN}
+          - files.${DOMAIN}
+          - directory.${DOMAIN}
+  ergo:
+    ports: !reset []
+  quicvoiced:
+    ports: !reset []

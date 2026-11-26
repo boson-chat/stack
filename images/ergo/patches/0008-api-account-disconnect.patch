@@ -1,0 +1,165 @@
+From 77418c53759dceaf459ce2bc8da8372f01074d14 Mon Sep 17 00:00:00 2001
+From: James Trotter <james@jamesat.dev>
+Date: Thu, 26 Nov 2026 16:16:28 -0500
+Subject: [PATCH] api: add /v1/account_disconnect
+
+Disconnects every client logged into an account (always-on clients
+included) and turns always-on off for it, so an account disabled in an
+external account system (a banned federated user in the boson stack)
+leaves at once and doesn't come back at a restart. The account and its
+channels are kept.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ docs/API.md               | 14 ++++++++
+ irc/api.go                |  1 +
+ irc/apidisconnect.go      | 70 +++++++++++++++++++++++++++++++++++++++
+ irc/apidisconnect_test.go | 22 ++++++++++++
+ 4 files changed, 107 insertions(+)
+ create mode 100644 irc/apidisconnect.go
+ create mode 100644 irc/apidisconnect_test.go
+
+diff --git a/docs/API.md b/docs/API.md
+index 7adc302..f9eddd2 100644
+--- a/docs/API.md
++++ b/docs/API.md
+@@ -283,6 +283,20 @@ The response is a JSON object with fields:
+ * `success`: whether the account was unregistered
+ * `errorCode`: string, optional, machine-readable description of the error. Possible values include: `ACCOUNT_DOES_NOT_EXIST`, `UNKNOWN_ERROR`.
+ 
++`/v1/account_disconnect`
++------------------------
++
++This endpoint disconnects every client logged into an account (always-on clients included) and turns always-on off for it, so that an account disabled in an external account system leaves at once and doesn't come back at a restart. The account itself is kept. The request is a JSON object with fields:
++
++* `accountName`: string, name of the account
++* `reason`: string, optional: the quit message
++
++The response is a JSON object with fields:
++
++* `success`: whether the request was valid (also when nobody was connected)
++* `clients`: the number of clients disconnected
++* `errorCode`: string, optional, machine-readable description of the error. Possible values include: `ACCOUNT_DOES_NOT_EXIST` (not a valid account name).
++
+ `/v1/rehash`
+ ------------
+ 
+diff --git a/irc/api.go b/irc/api.go
+index 88bf9c9..9b38bc1 100644
+--- a/irc/api.go
++++ b/irc/api.go
+@@ -44,6 +44,7 @@ func newAPIHandler(server *Server) http.Handler {
+ 	api.mux.HandleFunc("POST /v1/ns/saget", api.handleNsSaget)
+ 	api.mux.HandleFunc("POST /v1/ns/saset", api.handleNsSaset)
+ 	api.mux.HandleFunc("POST /v1/ns/unregister", api.handleNsUnregister)
++	api.mux.HandleFunc("POST /v1/account_disconnect", api.handleAccountDisconnect)
+ 
+ 	// account-bound oper status and vhosts from an external system:
+ 	api.mux.HandleFunc("POST /v1/account_grants", api.handleAccountGrants)
+diff --git a/irc/apidisconnect.go b/irc/apidisconnect.go
+new file mode 100644
+index 0000000..5aaeb46
+--- /dev/null
++++ b/irc/apidisconnect.go
+@@ -0,0 +1,70 @@
++// Copyright (c) 2026 James Trotter
++// released under the MIT license
++
++package irc
++
++import (
++	"fmt"
++	"net/http"
++
++	"github.com/ergochat/ergo/irc/sno"
++)
++
++// Disconnecting an account's clients from an external account system (the
++// boson stack drops accounts disabled in its auth service, such as a banned
++// federated user): every client logged into the account quits, always-on
++// ones included, and always-on is switched off for the account so that a
++// restart doesn't bring it back. The account, its channels and settings are
++// otherwise kept; refusing new logins is up to the account system.
++
++type apiAccountDisconnectRequest struct {
++	AccountName string `json:"accountName"`
++	// Reason is the QUIT message (default: "You are no longer authorized
++	// to be on this server").
++	Reason string `json:"reason"`
++}
++
++type apiAccountDisconnectResponse struct {
++	apiGenericResponse
++	// Clients: how many clients were disconnected.
++	Clients int `json:"clients"`
++}
++
++func (a *ergoAPI) handleAccountDisconnect(w http.ResponseWriter, r *http.Request) {
++	var request apiAccountDisconnectRequest
++	if err := a.decodeJSONRequest(&request, w, r); err != nil {
++		return
++	}
++	var response apiAccountDisconnectResponse
++	cfaccount, err := CasefoldName(request.AccountName)
++	if err != nil {
++		response.ErrorCode = "ACCOUNT_DOES_NOT_EXIST"
++		a.writeJSONResponse(response, w, r)
++		return
++	}
++	// a copy: quitting clients edit the account's client list
++	clients := append([]*Client(nil), a.server.accounts.AccountToClients(cfaccount)...)
++	if len(clients) > 0 {
++		// (an always-on client is on the list, connected or not)
++		_, _ = a.server.accounts.ModifyAccountSettings(cfaccount, func(s AccountSettings) (AccountSettings, error) {
++			s.AlwaysOn = PersistentDisabled
++			return s, nil
++		})
++	}
++	for _, client := range clients {
++		reason := request.Reason
++		if reason == "" {
++			reason = client.t("You are no longer authorized to be on this server")
++		}
++		client.Logout()
++		client.Quit(reason, nil, nil)
++		client.destroy(nil)
++	}
++	response.Success = true
++	response.Clients = len(clients)
++	if len(clients) > 0 {
++		a.server.logger.Info("api", "disconnected account", request.AccountName, fmt.Sprintf("(%d clients)", len(clients)))
++		a.server.snomasks.Send(sno.LocalAccounts, fmt.Sprintf("API disconnected account %s (%d clients)", request.AccountName, len(clients)))
++	}
++	a.writeJSONResponse(response, w, r)
++}
+diff --git a/irc/apidisconnect_test.go b/irc/apidisconnect_test.go
+new file mode 100644
+index 0000000..ee7137a
+--- /dev/null
++++ b/irc/apidisconnect_test.go
+@@ -0,0 +1,22 @@
++// Copyright (c) 2026 James Trotter
++// released under the MIT license
++
++package irc
++
++import "testing"
++
++func TestAPIAccountDisconnect(t *testing.T) {
++	server := channelExpiryTestServer(t, 0)
++
++	var resp apiAccountDisconnectResponse
++	apiCall(t, server, "/v1/account_disconnect", apiAccountDisconnectRequest{AccountName: "alice"}, &resp)
++	if !resp.Success || resp.Clients != 0 {
++		t.Fatalf("offline account: %+v", resp)
++	}
++
++	resp = apiAccountDisconnectResponse{}
++	apiCall(t, server, "/v1/account_disconnect", apiAccountDisconnectRequest{AccountName: "bad name"}, &resp)
++	if resp.Success || resp.ErrorCode != "ACCOUNT_DOES_NOT_EXIST" {
++		t.Fatalf("bad account: %+v", resp)
++	}
++}
+-- 
+2.56.1
+

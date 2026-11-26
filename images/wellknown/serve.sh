@@ -13,6 +13,13 @@
 #   VOICE_HOST, VOICE_PORT  voice section ({"addr":"VOICE_HOST:7700","url":"https://VOICE_HOST"})
 #   FILES_HOST          files section ({"url":"https://FILES_HOST"}): uploads
 #                       (docs/files.md)
+#   WELLKNOWN_FEDERATION_URL  with the auth section: auth's federation
+#                       metadata (http://auth:8080/.well-known/boson-federation.json),
+#                       published verbatim as "federation" (docs/federation.md).
+#                       Fetched again every WELLKNOWN_REFRESH_SECONDS (60), since
+#                       its "accepts" follows the admin setting; when auth can't
+#                       be reached the last good copy stays, and until the first
+#                       fetch the section is left out. Empty: no federation section.
 set -eu
 
 root=/run/www
@@ -55,11 +62,50 @@ if has files; then
 	h=$(host FILES_HOST "${FILES_HOST:-}")
 	json="$json,\"files\":{\"url\":\"https://$h\"}"
 fi
-json="$json}"
 
-printf '%s\n' "$json" > "$root/.well-known/boson.json"
+fed_url=""
+if has auth; then fed_url=${WELLKNOWN_FEDERATION_URL:-}; fi
+every=$(port WELLKNOWN_REFRESH_SECONDS "${WELLKNOWN_REFRESH_SECONDS:-60}")
+
+# federation: auth's metadata on one line, or nothing (unreachable, or not a
+# JSON object with an https issuer: an auth older than 1.24 answers 404).
+federation() {
+	body=$(wget -q -T 5 -O - "$fed_url" 2>/dev/null | tr -d '\r\n') || return 1
+	case "$body" in
+	'{'*'"issuer":"https://'*'}') printf '%s' "$body" ;;
+	*) return 1 ;;
+	esac
+}
+
+fed=""
+# write: boson.json with the current federation section, replaced atomically.
+write() {
+	doc=$json
+	[ -z "$fed" ] || doc="$doc,\"federation\":$fed"
+	printf '%s}\n' "$doc" > "$root/.well-known/boson.json.tmp"
+	mv "$root/.well-known/boson.json.tmp" "$root/.well-known/boson.json"
+	echo "wellknown: /.well-known/boson.json = $doc}"
+}
+
+write
 # busybox httpd has no built-in type for .json.
 printf '.json:application/json\n' > /run/httpd.conf
-echo "wellknown: /.well-known/boson.json = $json"
+httpd -f -v -p 8080 -h "$root" -c /run/httpd.conf &
+httpd=$!
+trap 'kill "$httpd" 2>/dev/null; exit 0' TERM INT
 
-exec httpd -f -v -p 8080 -h "$root" -c /run/httpd.conf
+[ -n "$fed_url" ] || { wait "$httpd"; exit $?; }
+# Every few seconds until auth first answers, then every $every seconds.
+while kill -0 "$httpd" 2>/dev/null; do
+	if new=$(federation); then
+		[ "$new" = "$fed" ] || { fed=$new; write; }
+		pause=$every
+	else
+		[ -n "$fed" ] && echo "wellknown: $fed_url didn't answer; keeping the last federation section" >&2
+		pause=5
+		[ -z "$fed" ] || pause=$every
+	fi
+	sleep "$pause" &
+	wait $! || true
+done
+wait "$httpd"

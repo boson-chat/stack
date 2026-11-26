@@ -90,7 +90,20 @@ test('new install through the wizard', async ({ page }) => {
     await page.getByTestId('smtp-test').click();
     await expect(page.getByText('Sent. Check the inbox')).toBeVisible();
   }
+  // Accounts from other servers: verified servers by default; an empty
+  // allowlist is refused.
+  const fed = page.getByRole('group', { name: 'Accept accounts from' });
+  await expect(fed.getByRole('radio', { name: /^Verified servers/ })).toBeChecked();
   await shot(page, 'features');
+  await fed.getByText('Only servers I list').click();
+  await expect(page.getByLabel('Servers to accept')).toBeVisible();
+  await next(page).click();
+  await expect(page.locator('.field .err').filter({ hasText: 'List at least one server' })).toBeVisible();
+  await shot(page, 'features-allowlist-empty');
+  await page.getByLabel('Servers to accept').fill('boson.chat, friends.example.org');
+  await shot(page, 'features-allowlist');
+  await fed.getByText('Verified servers').click();
+  await expect(page.getByLabel('Servers to accept')).toBeHidden();
   await next(page).click();
 
   // ---- ports: the firewall drops 7700/udp ----
@@ -123,6 +136,7 @@ test('new install through the wizard', async ({ page }) => {
   await expect(env).toContainText(`AUTH_HOST=auth.${DOMAIN}`);
   await expect(env).toContainText('COMPOSE_PROFILES=irc,auth,api,web,admin,metrics,voice,files');
   await expect(page.getByTestId('review-config')).toContainText('registration: open');
+  await expect(page.getByTestId('review-config')).toContainText(/federation:\s+mode: directory/);
   await shot(page, 'review');
 
   // ---- install: a service can't start (6697 is taken), then retry ----

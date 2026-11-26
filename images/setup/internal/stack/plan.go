@@ -341,6 +341,12 @@ func BuildPlan(a Answers, s Secrets, existing map[string]string, gen *Generator,
 		}
 	}
 	c(a.DirectoryListing, "admin", "directory_registration")
+	// Federated sign-in (docs/federation.md); the admin panel's Federation
+	// page edits these later.
+	c(a.Federation, "auth", "federation", "mode")
+	if a.Federation == FederationAllowlist {
+		c(a.FederationAllowList(), "auth", "federation", "allow")
+	}
 	return p, nil
 }
 

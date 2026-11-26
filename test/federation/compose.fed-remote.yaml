@@ -1,0 +1,23 @@
+# Federation e2e only: the remote install's extras on top of compose.fed.yaml.
+# Its auth fetches the home's discovery document and JWKS (and its own
+# directory) over HTTPS: on the shared network, trusting Pebble's root, with
+# private addresses allowed (FEDERATION_ALLOW_HTTP, development only). Its
+# Ergo is reachable from the test client as ergo.<domain> (IRC itself has no
+# Traefik in front). Only the remote's auth and Ergo join the shared network,
+# so the names "auth" and "ergo" there are never the other install's.
+services:
+  auth:
+    environment:
+      FEDERATION_ALLOW_HTTP: "true"
+      SSL_CERT_FILE: /fed-ca/roots.pem
+    volumes:
+      - ${FED_CA_DIR:?}:/fed-ca:ro
+    networks:
+      default: {}
+      fed: {}
+  ergo:
+    networks:
+      default: {}
+      fed:
+        aliases:
+          - ergo.${DOMAIN}

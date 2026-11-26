@@ -38,7 +38,23 @@ type Answers struct {
 	EmailVerification bool   `json:"email_verification"`
 	Guests            bool   `json:"guests"`
 	GuestVoice        bool   `json:"guest_voice"`
+	// Federation: who may sign in here with an account from another Boson
+	// server (auth.federation.mode, docs/federation.md): directory (servers
+	// verified in the Boson directory), allowlist, open or off. Off on the
+	// add-on path (federation v1 needs Ergo).
+	Federation string `json:"federation"`
+	// FederationAllow: the home domains allowlist mode accepts,
+	// comma-separated (auth.federation.allow).
+	FederationAllow string `json:"federation_allow"`
 }
+
+// Federation modes (auth.federation.mode).
+const (
+	FederationDirectory = "directory"
+	FederationAllowlist = "allowlist"
+	FederationOpen      = "open"
+	FederationOff       = "off"
+)
 
 type TLSAnswers struct {
 	// Let's Encrypt account email (TLS_ISSUER).
@@ -96,6 +112,7 @@ func Defaults() Answers {
 		Registration:      "open",
 		EmailVerification: false,
 		Guests:            true,
+		Federation:        FederationDirectory,
 	}
 }
 
@@ -138,14 +155,49 @@ func (a *Answers) Normalize() {
 	if a.TLS.Email == "" {
 		a.TLS.Email = a.Admin.Email
 	}
+	a.Federation = strings.ToLower(strings.TrimSpace(a.Federation))
+	if a.Federation == "" {
+		a.Federation = FederationDirectory
+	}
+	a.FederationAllow = strings.Join(federationDomains(a.FederationAllow), ",")
 	if a.Mode == ModeAddon {
 		a.Addon.normalize()
 		// The bridge signs everyone in: no guests on this path (yet).
 		a.Guests, a.GuestVoice = false, false
+		// Federation v1 is for servers that run Ergo.
+		a.Federation = FederationOff
 	} else {
 		a.Mode = ModeFresh
 	}
 }
+
+// federationDomains splits an allowlist typed as domains separated by
+// commas, spaces or new lines (also pasted identities like alice@example.org
+// or URLs): lower-cased, de-duplicated, in order.
+func federationDomains(s string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, f := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\n' || r == '\r' || r == '\t' || r == ';'
+	}) {
+		f = strings.TrimPrefix(strings.TrimPrefix(f, "https://"), "http://")
+		if i := strings.LastIndex(f, "@"); i >= 0 {
+			f = f[i+1:]
+		}
+		if i := strings.IndexAny(f, "/:"); i >= 0 {
+			f = f[:i]
+		}
+		f = strings.TrimSuffix(f, ".")
+		if f != "" && !seen[f] {
+			seen[f] = true
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// FederationAllowList: FederationAllow as a list.
+func (a Answers) FederationAllowList() []string { return federationDomains(a.FederationAllow) }
 
 // Addon: the add-on path (next to an existing IRC server).
 func (a Answers) IsAddon() bool { return a.Mode == ModeAddon }
@@ -303,6 +355,27 @@ func (a Answers) Validate(section string, s Secrets, needPassword bool) []FieldE
 		}
 		if a.EmailVerification && a.SMTP.Host == "" {
 			add("email_verification", "Email verification needs an outgoing mail server (SMTP).")
+		}
+		switch a.Federation {
+		case FederationDirectory, FederationOpen, FederationOff:
+		case FederationAllowlist:
+			list := a.FederationAllowList()
+			if len(list) == 0 {
+				add("federation_allow", "List at least one server (its domain, like boson.chat), or pick another option.")
+			} else if len(list) > 1000 {
+				add("federation_allow", "At most 1000 servers.")
+			}
+			for _, d := range list {
+				if !ValidDomain(strings.TrimPrefix(d, "*.")) {
+					add("federation_allow", fmt.Sprintf("%q isn't a domain. Use domains like boson.chat, or *.example.org for a domain and its subdomains.", d))
+					break
+				}
+			}
+		default:
+			add("federation", "Pick who can sign in with an account from another server.")
+		}
+		if a.IsAddon() && a.Federation != FederationOff {
+			add("federation", "Not on this path yet: federated sign-in needs Boson's own IRC server.")
 		}
 	}
 	return errs

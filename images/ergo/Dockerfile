@@ -7,7 +7,8 @@
 # channels: channel_ensure/channel_drop and sajoin by nick; the channel
 # guard for channels restricted to roles, see docs/irc-channels.md; creator
 # grace: an emptied unregistered channel's creator keeps operator status for
-# a while, see docs/irc-channels.md), plus
+# a while, see docs/irc-channels.md; disconnecting a disabled account's
+# clients, see docs/irc-channels.md and docs/federation.md), plus
 # boson-ergo: renders ircd.yaml from the environment,
 # checks SASL logins against the boson auth service, syncs roles and runs
 # RoleServ.
