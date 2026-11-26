@@ -93,7 +93,7 @@ install() {
 		"STACK_SUBNET=$3" "NODE_EXPORTER_ADDR=${3%.0/24}.1" "COMPOSE_PROFILES=$4" \
 		"REQUIRE_EMAIL_VERIFICATION=false" "FILES_ENABLED=true" \
 		"SETTINGS_POLL_SECONDS=3" "WELLKNOWN_REFRESH_SECONDS=5" \
-		"FED_NETWORK=$NET" "FED_CA_DIR=$TMP/ca"; do
+		"FED_NETWORK=$NET" "FED_CA_DIR=$TMP/ca" "STACK_PROJECT=$name"; do
 		setenv "$env" "${kv%%=*}" "${kv#*=}"
 	done
 }
