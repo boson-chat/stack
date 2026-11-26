@@ -234,7 +234,7 @@ func (f *Flow) probe(w http.ResponseWriter, r *http.Request) {
 // limit).
 func (f *Flow) runProbe(ctx context.Context, o probe.Options) (*probe.Report, error) {
 	rep, err := f.Probe(ctx, o)
-	if err != nil && strings.Contains(err.Error(), "during registration") {
+	if err != nil && strings.Contains(err.Error(), "during registration") || err == nil && transientWebIRC(rep) {
 		select {
 		case <-ctx.Done():
 			return rep, err
@@ -243,6 +243,22 @@ func (f *Flow) runProbe(ctx context.Context, o probe.Options) (*probe.Report, er
 		rep, err = f.Probe(ctx, o)
 	}
 	return rep, err
+}
+
+// transientWebIRC: the WEBIRC attempt's connection broke rather than being
+// refused (a server still busy with the last check's connections, like
+// UnrealIRCd's max-unknown-connections-per-ip): worth one more try.
+func transientWebIRC(r *probe.Report) bool {
+	if r == nil || !r.WebIRC.Tested || r.WebIRC.Accepted {
+		return false
+	}
+	d := strings.ToLower(r.WebIRC.Detail)
+	for _, s := range []string{"reset by peer", "unknown connections", "eof", "closed the connection", "no registration"} {
+		if strings.Contains(d, s) {
+			return true
+		}
+	}
+	return false
 }
 
 func validNetworkName(n string) bool {

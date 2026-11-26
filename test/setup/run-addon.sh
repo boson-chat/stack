@@ -39,6 +39,11 @@ logs() {
 	echo "::group::stack containers"; dc ps -a 2>&1 || true; echo "::endgroup::"
 	for s in evrd evrd-links bridge-sync auth traefik certsync webircgateway; do echo "::group::$s logs"; dc logs --no-log-prefix --tail 80 "$s" 2>&1 || true; echo "::endgroup::"; done
 	echo "::group::IRC server ($PAIRING)"; LOG_TAIL=120 test/ircds/run.sh logs "$PAIRING" 2>&1 || true; echo "::endgroup::"
+	for c in $(sudo docker ps -q --filter label=chat.boson.test=ircds); do
+		echo "::group::$(sudo docker inspect -f '{{.Name}}' "$c") log files"
+		sudo docker exec "$c" sh -c 'tail -n 80 logs/ircd.log ircd.log var/atheme.log 2>/dev/null' || true
+		echo "::endgroup::"
+	done
 }
 cleanup() {
 	set +e
