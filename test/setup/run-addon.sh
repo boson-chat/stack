@@ -14,7 +14,14 @@
 #   3. the result works (addon-result.py): Boson users over the bridge,
 #      replies/reactions/history, a classic client on the IRC server sees
 #      them with their own address, NickServ sign-in where auth has it, and
-#      nothing a Boson user receives says "evrd".
+#      nothing a Boson user receives says "evrd";
+#   4. federated login (FEDERATION=1, the default for ngircd-anope and
+#      insp-atheme): a second, home install (addon-home.sh, home.test) whose
+#      alice signs in here with her home account; the wizard accepts
+#      home.test (allowlist), and addon-federation.py checks she reaches
+#      the IRC server through the bridge under a nick nobody registered
+#      with NickServ (the registered alice and alice-hometest exist), is
+#      never renamed, killed or identified, and is dropped when banned.
 #
 # Needs sudo (install.sh runs as root). Cleans up what it started, by name
 # and label.
@@ -32,6 +39,9 @@ SETUP_ADMIN_PASSWORD="e2e-$(openssl rand -hex 8)"
 export SETUP_ADMIN=alice SETUP_ADMIN_PASSWORD
 export SHOTS_DIR=$ROOT/test/setup/shots
 export IRCDS_BIND=$IP
+case $PAIRING in ngircd-anope | insp-atheme) FED_DEFAULT=1 ;; *) FED_DEFAULT=0 ;; esac
+FEDERATION=${FEDERATION:-$FED_DEFAULT}
+export ADDON_HOME_DIR=$TMP/boson-addon-home ADDON_HOME_PORT=18443 ADDON_FED_NETWORK=bosonaddonfed
 
 dc() { sudo docker compose --project-directory "$DIR" -p boson "$@"; }
 logs() {
@@ -39,6 +49,7 @@ logs() {
 	echo "::group::stack containers"; dc ps -a 2>&1 || true; echo "::endgroup::"
 	for s in evrd evrd-links auth traefik certsync webircgateway; do echo "::group::$s logs"; dc logs --no-log-prefix --tail 80 "$s" 2>&1 || true; echo "::endgroup::"; done
 	echo "::group::IRC server ($PAIRING)"; LOG_TAIL=120 test/ircds/run.sh logs "$PAIRING" 2>&1 || true; echo "::endgroup::"
+	[ "$FEDERATION" = 1 ] && test/setup/addon-home.sh logs
 	for c in $(sudo docker ps -q --filter label=chat.boson.test=ircds); do
 		echo "::group::$(sudo docker inspect -f '{{.Name}}' "$c") log files"
 		sudo docker exec "$c" sh -c 'tail -n 80 logs/ircd.log ircd.log var/atheme.log 2>/dev/null' || true
@@ -50,6 +61,7 @@ cleanup() {
 	[ "${ok:-}" = 1 ] || logs
 	sudo docker rm -f boson-setup >/dev/null 2>&1
 	[ -f "$DIR/compose.yaml" ] && dc down -v --remove-orphans >/dev/null 2>&1
+	[ "$FEDERATION" = 1 ] && test/setup/addon-home.sh down
 	test/ircds/run.sh down "$PAIRING" >/dev/null 2>&1
 	sudo docker network rm boson-setup-irc-probe >/dev/null 2>&1
 	for l in "$LABEL" org.boson.setup=probe; do
@@ -92,6 +104,31 @@ services:
     volumes:
       - ./e2e/pebble.json:/pebble.json:ro
 YAML
+if [ "$FEDERATION" = 1 ]; then
+	# The home install, and this install's auth on its network: it fetches
+	# https://home.test/.well-known/boson.json and the home's keys there,
+	# trusting the home's Pebble (private addresses allowed: test only).
+	test/setup/addon-home.sh up
+	sudo cp -r "$ADDON_HOME_DIR-ca" "$DIR/e2e/home-ca"
+	sudo tee -a "$DIR/compose.override.yaml" >/dev/null <<YAML
+  auth:
+    environment:
+      FEDERATION_ALLOW_HTTP: "true"
+      SSL_CERT_FILE: /home-ca/roots.pem
+    volumes:
+      - ./e2e/home-ca:/home-ca:ro
+    networks:
+      default: {}
+      homefed: {}
+    labels:
+      # two networks: Traefik reaches auth on this one
+      - traefik.docker.network=boson_default
+networks:
+  homefed:
+    name: $ADDON_FED_NETWORK
+    external: true
+YAML
+fi
 
 (cd test/setup && npm ci --no-audit --no-fund >/dev/null && npx playwright install --with-deps chromium >/dev/null)
 
@@ -119,10 +156,16 @@ echo "== the wizard's add-on path (Playwright)"
 	SETUP_PAIRING=$PAIRING SETUP_IRC_HOST=$IRC_HOST SETUP_IRC_PORT=$IRC_TLS_PORT \
 	SETUP_RPC_URL=${SERVICES_RPC_URL:-} SETUP_RPC_TOKEN=${SERVICES_RPC_TOKEN:-} SETUP_NETWORK=$NETWORK \
 	SETUP_WANT_RECOMMENDED=$WANT SETUP_ACCOUNTS=$ACCOUNTS SETUP_REACT=$REACT SETUP_NICKSERV_ADMIN=bosonprobe \
+	SETUP_FEDERATION_ALLOW=$([ "$FEDERATION" = 1 ] && echo home.test) \
 	npx playwright test addon.spec.ts)
 
 echo "== the installed stack works"
 python3 test/setup/addon-result.py --domain "$DOMAIN" --admin "$SETUP_ADMIN" --password "$SETUP_ADMIN_PASSWORD" \
 	--irc "$IRC_HOST:$IRC_TLS_PORT" --pairing "$PAIRING"
+if [ "$FEDERATION" = 1 ]; then
+	echo "== federated login: alice@home.test on the add-on install"
+	python3 test/setup/addon-federation.py --domain "$DOMAIN" --irc "$IRC_HOST:$IRC_TLS_PORT" --pairing "$PAIRING" \
+		--home-port "$ADDON_HOME_PORT"
+fi
 ok=1
 echo "setup add-on e2e ($PAIRING) passed"

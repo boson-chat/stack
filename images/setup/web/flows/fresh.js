@@ -530,16 +530,19 @@ function features(errors = {}) {
 }
 
 // Federated sign-in (docs/federation.md): who may sign in here with an
-// account from another Boson server. Off on the add-on path (v1 needs Ergo).
+// account from another Boson server. On the add-on path remote users reach
+// the IRC server through the bridge (docs/bridge.md), without a services
+// account there.
 function federationSection(section, errors) {
 	const title = 'Accounts from other servers';
-	if (A.mode === 'addon') {
-		return section(
-			title,
-			h('p', { class: 'muted' }, 'People with an account on another Boson server could sign in here without signing up.'),
-			notice('info', 'Not on this path yet: signing in with an account from another server needs Boson’s own IRC server. It stays off here for now; nothing to choose.'),
-		);
-	}
+	const addonNote =
+		A.mode === 'addon'
+			? h(
+					'p',
+					{ class: 'muted', 'data-testid': 'federation-addon-note' },
+					'On your IRC server they join through the bridge, without a services account there. Their nick carries their home server (alice-bosonchat), and the bridge keeps them off nicks registered with your services.',
+				)
+			: null;
 	const allow = field({
 		label: 'Servers to accept',
 		name: 'federation_allow',
@@ -555,6 +558,7 @@ function federationSection(section, errors) {
 	return section(
 		title,
 		h('p', { class: 'muted' }, 'People with an account on another Boson server can join here without signing up, and people from here can do the same elsewhere. No passwords or messages cross servers, only a short-lived signed note of who someone is. They follow this server’s rules, and you can ban them or block their whole server later.'),
+		addonNote,
 		errors.federation ? notice('bad', errors.federation) : null,
 		choices({
 			legend: 'Accept accounts from',

@@ -507,7 +507,7 @@ jobs:
       - run: go test -race -count=1 ./...
       - name: install.sh is POSIX sh
         working-directory: .
-        run: sh -n install.sh && shellcheck install.sh test/setup/run.sh test/setup/run-addon.sh test/setup/hooks.sh test/federation/run.sh && sh -n images/wellknown/serve.sh
+        run: sh -n install.sh && shellcheck install.sh test/setup/run.sh test/setup/run-addon.sh test/setup/addon-home.sh test/setup/hooks.sh test/federation/run.sh && sh -n images/wellknown/serve.sh
 
   setup-e2e:
     name: setup wizard e2e (install.sh → wizard → Pebble ACME → working stack → re-run)
@@ -553,9 +553,11 @@ jobs:
 
   # The add-on path ("Add Boson to my existing IRC server") against each IRC
   # server fixture: test/setup/run-addon.sh. Pull requests run ngircd-anope
-  # (NickServ accounts over Anope's RPC) and unreal-anope (Boson accounts,
-  # the +draft/react module); main, the nightly run and manual runs add
-  # insp-atheme (NickServ over Atheme's RPC) and ngircd (no services).
+  # (NickServ accounts over Anope's RPC), unreal-anope (Boson accounts, the
+  # +draft/react module) and insp-atheme (NickServ over Atheme's RPC);
+  # main, the nightly run and manual runs add ngircd (no services).
+  # ngircd-anope and insp-atheme also run federated login against a second,
+  # home install (addon-home.sh, addon-federation.py).
   setup-addon-e2e:
     name: setup add-on e2e (${{ matrix.pairing }})
     runs-on: ubuntu-latest
@@ -563,10 +565,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pairing: ${{ fromJSON(github.event_name == 'pull_request' && '["ngircd-anope","unreal-anope"]' || '["ngircd-anope","unreal-anope","insp-atheme","ngircd"]') }}
+        pairing: ${{ fromJSON(github.event_name == 'pull_request' && '["ngircd-anope","unreal-anope","insp-atheme"]' || '["ngircd-anope","unreal-anope","insp-atheme","ngircd"]') }}
     steps:
       - uses: actions/checkout@v4
-      - name: IRC server up, install.sh, the add-on path (Playwright), snippets applied, the result over the bridge
+      - name: IRC server up, install.sh, the add-on path (Playwright), snippets applied, the result over the bridge, federated login
         run: test/setup/run-addon.sh "${{ matrix.pairing }}"
       - name: Screenshots of every step (desktop + phone)
         if: always()

@@ -191,12 +191,58 @@ own boson.json as a home (it uses `BOSON_DOMAIN`, which compose sets to
 
 ## Add-on installs
 
-Federation v1 needs Boson's own IRC server (Ergo): a federated account is
-an Ergo account the stack creates. On the add-on path (Boson next to an
-existing IRC server, [bridge.md](bridge.md)) the wizard keeps it **off**
-(`auth.federation.mode: off`). Support for it comes later.
+On the add-on path (Boson next to an existing IRC server through the
+bridge, [bridge.md](bridge.md)) the wizard offers the same choice as on a
+new server, verified servers by default, and writes the same
+`auth.federation` keys. It needs auth ≥ 1.27.0 and evrd ≥ 0.60.0 (the
+stack's defaults). Installs made before stay `off` until you change the
+mode.
+
+Remote users reach your IRC server like every Boson user, through the
+bridge (one connection each, with `WEBIRC`), but **without a services
+account there**: auth gives their bridge account no services login
+(`auth.method: none`), so the bridge never identifies them to NickServ,
+let alone as someone else's account. Their nick is kept off nicks people
+registered with your services:
+
+1. **The handle carries the home domain.** Next to an existing network
+   auth skips the bare home username: `alice@boson.chat` is
+   `alice-bosonchat` here, never `alice`, which may be someone's nick on
+   your network (and, with NickServ accounts, would keep its owner from
+   signing in to Boson). auth's `FEDERATION_HANDLE_SUFFIX` (`auto`: always
+   with the bridge; `always`; `clash`).
+2. **The bridge's nick guard** (evrd `managed_nick_guard`, on by default)
+   covers a suffixed nick someone registered all the same. When your
+   services say the nick is registered (NickServ's notice), rename the
+   user (`SVSNICK` to `Guest…`) or kill them over it, the bridge moves them
+   to `alice-bosonchat_`, then `alice-bosonchat_2`…, remembers the nick so a
+   reconnect doesn't loop, and holds their channel joins until the nick has
+   settled, so a registered nick never shows in a channel. Their own app
+   gets the `NICK` line like any nick change.
+
+Banning an identity disables its account, and auth disables the bridge
+account at once: the bridge drops the user's connection to your server.
+Blocking a home domain refuses its sign-ins; users already connected stay
+until their session ends. Uploads, voice and video work as on a new server.
 
 ## Testing
+
+The add-on path has its own run: `test/setup/run-addon.sh ngircd-anope`
+and `insp-atheme` (CI `setup-addon-e2e`) also bring up a second, home
+install (`test/setup/addon-home.sh`: `home.test`, auth and wellknown only,
+its own Pebble, on a shared Docker network the add-on's auth joins), let
+`home.test` in on the wizard's Features step (only servers I list), and
+`addon-federation.py` checks that alice@home.test signs in on the add-on
+install as `alice-hometest` and gets a bridge account with no services
+login. Someone else has registered `alice` and `alice-hometest` with
+NickServ, with enforcement on (Anope `SET KILL 20`, Atheme `SET ENFORCE
+ON`). The bridge moves her to `alice-hometest_` before she joins. A classic
+client on the IRC server sees her join and talk only under that nick, not
+identified to NickServ. Past the enforcement delay she hasn't been renamed
+or killed (an impostor on `alice` has been). A ban on the add-on install
+drops her, and her next sign-in is refused.
+
+The two-install run below covers fresh installs.
 
 `test/federation/run.sh` (CI job `federation-e2e`) runs two full installs
 on one machine, `home.test` and `remote.test`, each its own compose project
