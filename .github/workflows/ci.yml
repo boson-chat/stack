@@ -478,7 +478,7 @@ jobs:
           cd pkg/probe && PROBE_FIXTURE="$PAIRING" PROBE_WEBIRC_APPLIED=1 go test -count=1 -run TestGolden -v .
       - name: Logs on failure
         if: failure()
-        run: test/ircds/run.sh logs "$PAIRING" | tail -n 300
+        run: test/ircds/run.sh logs "$PAIRING"
       - name: Down
         if: always()
         run: test/ircds/run.sh down "$PAIRING"

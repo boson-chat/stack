@@ -12,7 +12,7 @@
 #                                       server rejects it (the snippet is rolled back)
 #   test/ircds/run.sh reset PAIRING     empty the extra config and rehash
 #   test/ircds/run.sh smoke PAIRING     connect, register a nick with NickServ, identify
-#   test/ircds/run.sh logs PAIRING      logs of the pairing
+#   test/ircds/run.sh logs PAIRING      the last LOG_TAIL (200) log lines of each container
 #   test/ircds/run.sh down PAIRING      stop and remove (containers, volumes)
 #
 # PAIRING: ngircd-anope | unreal-anope | insp-atheme | ngircd
@@ -75,7 +75,7 @@ rehash() {
   esac
   # Still serving after the rehash?
   for i in $(seq 1 30); do
-    compose exec -T "$ircd" nc -z 127.0.0.1 6667 2>/dev/null && return 0
+    compose exec -T "$ircd" grep -Eq ':1A29 [0-9A-F]+:0000 0A' /proc/net/tcp /proc/net/tcp6 2>/dev/null && return 0
     sleep 1
   done
   echo "$ircd stopped listening after the rehash" >&2
@@ -119,7 +119,7 @@ case $cmd in
     python3 "$here/smoke.py" --port "$tls" --services "$svcpkg" ${rpc:+--rpc-url "http://127.0.0.1:$rpc/jsonrpc"} ${SMOKE_ARGS:-}
     ;;
   logs)
-    compose logs --no-color
+    compose logs --no-color --tail "${LOG_TAIL:-200}"
     ;;
   down)
     compose down -v --remove-orphans
