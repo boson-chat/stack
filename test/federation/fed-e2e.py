@@ -336,20 +336,25 @@ def phase_ui():
     home_tok = login(HOME_AUTH, "alice", st["alice_pw"])
     def signin():
         return fed_login(assertion(home_tok))
+    chan = "#fedui" + secrets.token_hex(3)
     def on_irc(name, tok):
+        """alice on IRC with tok, in chan with bob (once bob is there)."""
         c = IRC(handle, "OAUTHBEARER", oauthbearer(handle, tok))
         must(name, c.outcome() == "welcome", c.lines[-5:])
+        if bob_in.is_set():
+            c.send(f"JOIN {chan}")
+            check(f"bob sees her join {chan}", bob.wait(rf":{re.escape(handle)}!\S+ JOIN :?{re.escape(chan)}") is not None, bob.lines[-5:])
         return c
+    bob_in = threading.Event()
     s, r = signin()
     must("alice signs in on the remote", s == 200 and isinstance(r, dict) and r.get("access_token"), s if s == 200 else f"{s} {r}")
     tok = r["access_token"]
     bob = IRC(bob_name, "PLAIN", f"\0{bob_name}\0{bob_pw}")
     must("bob on the remote's Ergo", bob.outcome() == "welcome", bob.lines[-5:])
+    bob.send(f"JOIN {chan}")
+    must(f"bob joins {chan}", bob.wait(rf"JOIN :?{re.escape(chan)}") is not None, bob.lines[-5:])
+    bob_in.set()
     alice = on_irc("alice on the remote's Ergo", tok)
-    chan = "#fedui" + secrets.token_hex(3)
-    bob.send(f"JOIN {chan}"); bob.wait(rf"JOIN :?{re.escape(chan)}")
-    alice.send(f"JOIN {chan}")
-    check(f"alice and bob in {chan}", bob.wait(rf":{re.escape(handle)}!\S+ JOIN :?{re.escape(chan)}") is not None, bob.lines[-5:])
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
