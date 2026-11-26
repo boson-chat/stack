@@ -27,6 +27,9 @@ const WANT_RECOMMENDED = process.env['SETUP_WANT_RECOMMENDED'] ?? '';
 const NICKSERV_ADMIN = process.env['SETUP_NICKSERV_ADMIN'] ?? '';
 const ACME_URL = process.env['SETUP_ACME_URL'] ?? '';
 const REACT = process.env['SETUP_REACT'] === '1';
+// Accept accounts only from these servers ("" = keep the default, verified
+// servers): the federation e2e lets home.test in (addon-federation.py).
+const FED_ALLOW = process.env['SETUP_FEDERATION_ALLOW'] ?? '';
 const ROOT = path.join(__dirname, '..', '..');
 const P = `addon-${PAIRING}-`;
 
@@ -137,10 +140,18 @@ test(`add Boson to ${PAIRING} through the wizard`, async ({ page, context }) => 
   await next(page).click();
   await expect(page.getByRole('heading', { name: 'Features' })).toBeVisible();
   await expect(page.getByRole('switch', { name: /^Guests Not on this path/ })).toBeDisabled();
-  // Federated sign-in stays off on this path (v1 needs Ergo): a note, no choice.
-  await expect(page.getByText('Not on this path yet: signing in with an account from another server')).toBeVisible();
-  await expect(page.getByRole('group', { name: 'Accept accounts from' })).toHaveCount(0);
+  // Federated sign-in: the same choice as on a new server, verified servers
+  // by default, with a note on how remote users reach the IRC server.
+  const fed = page.getByRole('group', { name: 'Accept accounts from' });
+  await expect(fed).toBeVisible();
+  await expect(fed.getByRole('radio', { name: /^Verified servers/ })).toBeChecked();
+  await expect(page.getByTestId('federation-addon-note')).toContainText('through the bridge, without a services account there');
   await shot(page, 'features', P);
+  if (FED_ALLOW) {
+    await fed.getByText('Only servers I list').click();
+    await page.getByLabel('Servers to accept').fill(FED_ALLOW);
+    await shot(page, 'features-federation', P);
+  }
   await next(page).click();
   await expect(page.getByRole('heading', { name: 'Firewall and ports' })).toBeVisible();
   await next(page).click();
@@ -208,6 +219,13 @@ test(`add Boson to ${PAIRING} through the wizard`, async ({ page, context }) => 
   await expect(env).toContainText('BRIDGE_TOKEN=••••••••');
   await expect(env).toContainText(`ACCOUNT_BACKEND=${mode === 'nickserv' ? 'nickserv' : 'local'}`);
   await expect(page.locator('[data-path="bridge/evrd.conf"]')).toContainText(`managed_server ${IRC_HOST} +${IRC_PORT}`);
+  const conf = page.getByTestId('review-config');
+  if (FED_ALLOW) {
+    await expect(conf).toContainText(/federation:\s+mode: allowlist/);
+    for (const d of FED_ALLOW.split(',')) await expect(conf).toContainText(d.trim());
+  } else {
+    await expect(conf).toContainText(/federation:\s+mode: directory/);
+  }
   await shot(page, 'review', P);
 
   // ---- install ----

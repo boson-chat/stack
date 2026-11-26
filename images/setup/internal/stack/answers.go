@@ -40,8 +40,9 @@ type Answers struct {
 	GuestVoice        bool   `json:"guest_voice"`
 	// Federation: who may sign in here with an account from another Boson
 	// server (auth.federation.mode, docs/federation.md): directory (servers
-	// verified in the Boson directory), allowlist, open or off. Off on the
-	// add-on path (federation v1 needs Ergo).
+	// verified in the Boson directory), allowlist, open or off. On the
+	// add-on path too: remote users reach the IRC server through the
+	// bridge, under a nick that carries their home domain (docs/bridge.md).
 	Federation string `json:"federation"`
 	// FederationAllow: the home domains allowlist mode accepts,
 	// comma-separated (auth.federation.allow).
@@ -164,8 +165,6 @@ func (a *Answers) Normalize() {
 		a.Addon.normalize()
 		// The bridge signs everyone in: no guests on this path (yet).
 		a.Guests, a.GuestVoice = false, false
-		// Federation v1 is for servers that run Ergo.
-		a.Federation = FederationOff
 	} else {
 		a.Mode = ModeFresh
 	}
@@ -373,9 +372,6 @@ func (a Answers) Validate(section string, s Secrets, needPassword bool) []FieldE
 			}
 		default:
 			add("federation", "Pick who can sign in with an account from another server.")
-		}
-		if a.IsAddon() && a.Federation != FederationOff {
-			add("federation", "Not on this path yet: federated sign-in needs Boson's own IRC server.")
 		}
 	}
 	return errs

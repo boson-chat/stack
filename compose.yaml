@@ -287,7 +287,7 @@ services:
   evrd-links:
     <<: *restart
     profiles: [bridge]
-    image: ${EVRD_LINKS_IMAGE:-ghcr.io/4evrd/evrd:0.59.0}
+    image: ${EVRD_LINKS_IMAGE:-ghcr.io/4evrd/evrd:0.60.0}
     entrypoint: ["evrd-links", "-socket", "/run/evrd-links/links.sock"]
     command: []
     ports:
@@ -297,7 +297,7 @@ services:
   evrd:
     <<: *restart
     profiles: [bridge]
-    image: ${EVRD_IMAGE:-ghcr.io/4evrd/evrd:0.59.0}
+    image: ${EVRD_IMAGE:-ghcr.io/4evrd/evrd:0.60.0}
     network_mode: "service:evrd-links"
     # Waits for its certificate (certsync copies IRC_HOST's from Traefik);
     # evrd re-reads it when it changes.
@@ -456,6 +456,9 @@ services:
       FEDERATION_BLOCK: ${FEDERATION_BLOCK:-}
       FEDERATION_DIRECTORY_URL: ${FEDERATION_DIRECTORY_URL:-https://directory.boson.chat}
       FEDERATION_REMOTE_ROLE: ${FEDERATION_REMOTE_ROLE:-Remote}
+      # Handles always carry the home domain (alice-bosonchat) where the
+      # bridge fronts an existing IRC server (auto), docs/bridge.md.
+      FEDERATION_HANDLE_SUFFIX: ${FEDERATION_HANDLE_SUFFIX:-auto}
       FEDERATION_REMOTE_UPLOAD_QUOTA: ${FEDERATION_REMOTE_UPLOAD_QUOTA:-}
       FEDERATION_REMOTE_MAX_FILE: ${FEDERATION_REMOTE_MAX_FILE:-}
       FEDERATION_REMOTE_VOICE: ${FEDERATION_REMOTE_VOICE:-true}

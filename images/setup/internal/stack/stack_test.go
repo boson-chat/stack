@@ -293,12 +293,23 @@ func TestFederationAnswers(t *testing.T) {
 		}
 	}
 
-	// The add-on path: off (federation v1 needs Ergo).
+	// The add-on path: the same choice (remote users join the IRC server
+	// through the bridge), verified servers by default, written the same way.
 	b := answers()
 	b.Mode = ModeAddon
-	b.Federation = FederationOpen
+	b.Federation = ""
 	b.Normalize()
-	if b.Federation != FederationOff {
+	if b.Federation != FederationDirectory {
+		t.Fatalf("add-on default: %q", b.Federation)
+	}
+	b.Federation, b.FederationAllow = FederationAllowlist, "home.example"
+	b.Normalize()
+	if b.Federation != FederationAllowlist {
 		t.Fatalf("add-on: %q", b.Federation)
+	}
+	for _, e := range b.Validate("features", Secrets{}, false) {
+		if strings.HasPrefix(e.Field, "federation") {
+			t.Fatalf("add-on refused: %v", e)
+		}
 	}
 }

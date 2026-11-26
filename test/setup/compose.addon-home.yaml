@@ -1,0 +1,24 @@
+# Add-on federation e2e only (test/setup/addon-home.sh): the "home" install.
+# Its Traefik is on the shared network (ADDON_FED_NETWORK) under its
+# hostnames, which is the test's DNS there: Pebble resolves through it for
+# HTTP-01, and the add-on install's auth finds https://home.test through it.
+# On the host only 127.0.0.1:ADDON_HOME_PORT (443), for the test client.
+networks:
+  fed:
+    name: ${ADDON_FED_NETWORK:-bosonaddonfed}
+    external: true
+
+services:
+  traefik:
+    ports: !override
+      - "127.0.0.1:${ADDON_HOME_PORT:-18443}:443"
+    environment:
+      LEGO_CA_CERTIFICATES: /pebble-ca/pebble.minica.pem
+    volumes:
+      - ./test/acme/pebble.minica.pem:/pebble-ca/pebble.minica.pem:ro
+    networks:
+      default: {}
+      fed:
+        aliases:
+          - ${DOMAIN}
+          - auth.${DOMAIN}
