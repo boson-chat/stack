@@ -81,7 +81,10 @@ out = subprocess.run(["sudo", "docker", "compose", "--project-directory", args.d
                       "./auth", "user", "list", args.admin], capture_output=True, text=True).stdout
 rows = [l.split() for l in out.splitlines()[1:] if len(l.split()) >= 5 and l.split()[1] == args.admin]
 check("exactly one admin account", len(rows) == 1, out.strip().splitlines()[-1] if out.strip() else "no output")
-check("the admin is the Owner", bool(rows) and rows[0][-2] == "owner", rows)
+admin_tok = r.get("access_token") if isinstance(r, dict) else None
+st, me = https(AUTH, "GET", "/v1/me", token=admin_tok)
+names = [x.get("name") for x in (me.get("roles") or [])] if isinstance(me, dict) else []
+check("the admin has the Owner role", st == 200 and "Owner" in names, (st, names))
 
 # 3. a new user (or the one from the first run)
 if args.user_file and os.path.exists(args.user_file):
@@ -100,7 +103,8 @@ check("new user logs in to auth", st == 200 and access, st)
 class IRCConn:
     def __init__(self, login, password, nick):
         self.s = ctx.wrap_socket(socket.create_connection((args.addr, 6697), timeout=30), server_hostname=IRC)
-        self.f = self.s.makefile("rb")
+        self.s.settimeout(1)
+        self.buf = b""
         self.lines = []
         self.send("CAP LS 302"); self.send(f"NICK {nick}"); self.send(f"USER {nick} 0 * :e2e")
         # the last line of a multi-line CAP LS: ":srv CAP * LS :..." (not "LS * :")
@@ -114,16 +118,25 @@ class IRCConn:
         self.send("CAP END")
         self.welcome = self.wait(lambda l: " 001 " in l)
     def send(self, l): self.s.sendall((l + "\r\n").encode())
+    def readline(self, end):
+        # Own buffer: a read timeout must not break the connection.
+        while b"\n" not in self.buf:
+            if time.time() > end: return None
+            try: chunk = self.s.recv(65536)
+            except (socket.timeout, TimeoutError, ssl.SSLWantReadError): continue
+            if not chunk: return ""
+            self.buf += chunk
+        line, _, self.buf = self.buf.partition(b"\n")
+        return line.decode(errors="replace").rstrip("\r")
     def wait(self, pred, timeout=25):
         end = time.time() + timeout
-        while time.time() < end:
-            try: line = self.f.readline().decode(errors="replace").rstrip("\r\n")
-            except (socket.timeout, TimeoutError): return False
+        while True:
+            line = self.readline(end)
             if not line: return False
             self.lines.append(line)
-            if line.startswith("PING"): self.send("PONG " + line.split(" ", 1)[1]); continue
+            bare = line.split(" ", 1)[1] if line.startswith("@") else line
+            if bare.startswith("PING"): self.send("PONG " + bare.split(" ", 1)[1]); continue
             if pred(line): return True
-        return False
     def close(self):
         try: self.send("QUIT :bye"); self.s.close()
         except OSError: pass
@@ -135,7 +148,7 @@ u = IRCConn(user, pw, user)
 check("new user: IRC SASL login + welcome", u.ok and u.welcome, " | ".join(u.lines[-3:]))
 a.send(f"JOIN {chan}"); check("admin joins " + chan, a.wait(lambda l: " JOIN " in l and chan in l))
 u.send(f"JOIN {chan}"); check("new user joins " + chan, u.wait(lambda l: " JOIN " in l and chan in l))
-a.wait(lambda l: " JOIN " in l and l.startswith(f":{user}!"), 10)
+a.wait(lambda l: " JOIN " in l and f":{user}!" in l, 10)
 text = "hello from the setup e2e " + secrets.token_hex(4)
 a.send(f"PRIVMSG {chan} :{text}")
 check("new user receives the admin's message", u.wait(lambda l: "PRIVMSG" in l and text in l))

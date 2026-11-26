@@ -464,14 +464,13 @@ func stepAdmin(ctx context.Context, r *Runner, j *Job, log func(string)) error {
 			Hint: "Pick another admin username on the Admin step, then retry."}
 	}
 	if exists {
-		if role == "owner" {
-			log(a.Username + " exists and is the Owner already: nothing to do")
-		} else {
-			if _, err := r.Compose.Exec(ctx, "auth", nil, "./auth", "user", "set-role", a.Username, "owner"); err != nil {
-				return fmt.Errorf("making %s the Owner: %w", a.Username, err)
-			}
-			log(a.Username + " exists: given the Owner role")
+		// The ROLE column is auth's 1.x role (admin); the Owner network role
+		// is what set-role owner adds, and adding it again changes nothing.
+		_ = role
+		if _, err := r.Compose.Exec(ctx, "auth", nil, "./auth", "user", "set-role", a.Username, "owner"); err != nil {
+			return fmt.Errorf("making %s the Owner: %w", a.Username, err)
 		}
+		log(a.Username + " exists: has the Owner role")
 		r.update(func(s *State) { s.AdminCreated = true })
 		return nil
 	}
