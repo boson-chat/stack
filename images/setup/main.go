@@ -236,6 +236,12 @@ func serve() error {
 			subnet = ex.Env["STACK_SUBNET"]
 		}
 		ad.Probe = addon.ContainerProbe(cli, probeImage, "boson", subnet)
+		pctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		if err := addon.PrepareProbeNetwork(pctx, cli, "boson", subnet); err != nil {
+			log.Warn("add-on probe network", "err", err)
+		}
+		cancel()
+		runner.BeforeUp = func(ctx context.Context) { addon.RemoveProbeNetwork(ctx, cli, "boson") }
 	}
 	reg := &flow.Registry{}
 	reg.Add(fr)

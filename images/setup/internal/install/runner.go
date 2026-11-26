@@ -54,6 +54,9 @@ type Runner struct {
 	// Logf also gets every progress line (already redacted), for the
 	// container's log.
 	Logf func(step, line string)
+	// BeforeUp runs before the stack starts (the add-on probe's temporary
+	// network goes, so the stack's network can take its subnet).
+	BeforeUp func(ctx context.Context)
 
 	mu      sync.Mutex
 	state   State
@@ -317,6 +320,9 @@ func stepStart(ctx context.Context, r *Runner, _ *Job, log func(string)) error {
 				return err
 			}
 		}
+	}
+	if r.BeforeUp != nil {
+		r.BeforeUp(ctx)
 	}
 	if err := r.Compose.Up(ctx, log); err != nil {
 		hint := "Look at the lines above, fix what they point at, then retry."

@@ -46,6 +46,7 @@ cleanup() {
 	sudo docker rm -f boson-setup >/dev/null 2>&1
 	[ -f "$DIR/compose.yaml" ] && dc down -v --remove-orphans >/dev/null 2>&1
 	test/ircds/run.sh down "$PAIRING" >/dev/null 2>&1
+	sudo docker network rm boson-setup-irc-probe >/dev/null 2>&1
 	for l in "$LABEL" org.boson.setup=probe; do
 		sudo docker ps -aq --filter "label=$l" | xargs -r sudo docker rm -f >/dev/null
 	done
