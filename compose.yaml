@@ -393,7 +393,7 @@ services:
     profiles: [auth]
     # Releases: harbor.floret.dev/boson/auth:<version>. To run an unreleased
     # checkout instead, add compose.auth-src.yaml (see README).
-    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.30.0}
+    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.31.0}
     environment:
       ENV: production
       LOG_LEVEL: ${AUTH_LOG_LEVEL:-info}
@@ -1204,7 +1204,7 @@ services:
     <<: *restart
     profiles: [pushrelay]
     # Placeholder version until the first release is on Harbor.
-    image: ${PUSHRELAY_IMAGE:-harbor.floret.dev/boson/pushrelay:1.0.0}
+    image: ${PUSHRELAY_IMAGE:-harbor.floret.dev/boson/pushrelay:1.1.0}
     environment:
       LOG_LEVEL: ${PUSHRELAY_LOG_LEVEL:-info}
       HTTP_ADDR: ":8080"
