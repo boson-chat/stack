@@ -312,9 +312,11 @@ version: 1
 #   max_datagrams_per_sec: 0
 #   max_datagram_payload: 0
 #   # restart: browser pages allowed to open voice over WebTransport and
-#   # call the room API (CORS). [] = any page (the voice token still authorizes).
-#   # Default: VOICE_WEBTRANSPORT_ORIGINS (*).
-#   web_origins: [https://chat.example.com]
+#   # call the room API (CORS). [] = any page (the voice token still
+#   # authorizes); "directory" = the web clients of the Boson servers verified
+#   # in the directory (auth's /v1/web-origins), mixable with origins.
+#   # Default: VOICE_WEBTRANSPORT_ORIGINS (directory,https://WEB_HOST).
+#   web_origins: [directory, https://chat.example.com]
 #   # `rooms` also accepts bare ids: rooms: [general, gaming]
 
 # ---- directory: the stack's own directory (directory profile) --------------------

@@ -154,16 +154,31 @@ curl -fsS -X POST https://VOICE_HOST/v1/rooms -H "Authorization: Bearer $VOICE" 
   -H 'Content-Type: application/json' -d '{"name":"Game Night","parent":"#boson"}'
 ```
 
-## Browsers: any page by default
+## Browsers: which pages
 
-Browsers join voice over WebTransport (`https://VOICE_HOST:7700/wt`,
-quicvoice 1.15+) and call the rooms API cross-origin. By default quicvoiced
-accepts **any page** (`VOICE_WEBTRANSPORT_ORIGINS=*`), so a Boson web client
-served from another install (a self-hosted web client joining this
-network's voice, or a federated user's home client) works the same as
-yours at `WEB_HOST`.
+Browsers join voice over WebTransport (`https://VOICE_HOST:7700/wt`) and
+call the rooms API cross-origin. By default (`VOICE_WEBTRANSPORT_ORIGINS`
+unset = `directory,https://WEB_HOST`) quicvoiced accepts:
 
-That's safe because the origin check isn't what protects voice:
+- this stack's web client (`https://WEB_HOST`), always, and
+- the web clients of the **Boson servers verified in the directories this
+  install follows**: auth builds that list (`GET http://auth:8080/v1/web-origins`,
+  quicvoiced's `ORIGINS_URL`) from every verified listing in its directory
+  (`auth.federation.directory_url`, default `https://directory.boson.chat`,
+  which also carries what it imports from the directories it follows) and
+  the `web.url` in that server's `/.well-known/boson.json` (the stack
+  publishes it from `WEB_HOST`, [below](#discovery-well-knownbosonjson)).
+  Servers without a `web` section add nothing.
+
+So a web client on another install (someone using their home server's web
+client to join a call here, or a federated user) works as soon as that
+server is verified in the directory: auth rebuilds its list every 10 min
+and quicvoiced fetches it every 5 (`ORIGINS_REFRESH`), so within about
+15 minutes. If auth can't be reached quicvoiced keeps the last list it got,
+and until the first one only `WEB_HOST` is accepted. Other pages get `403`
+on `/wt` and no CORS headers from the API.
+
+The origin check is defence in depth, not what protects voice:
 
 - Every rooms API call and every WebTransport session needs a voice token
   (`Authorization: Bearer` on the API; WebTransport sessions present one too), which only
@@ -171,21 +186,24 @@ That's safe because the origin check isn't what protects voice:
   user (or a guest, when guest voice is on). The token's claims decide who
   joins which room.
 - quicvoiced never uses cookies or other ambient credentials, and its CORS
-  answers never allow credentials. A page that has no token gets `401`
-  whatever its origin; a page that has one could use it from anywhere
-  anyway (curl, the desktop app).
+  answers never allow credentials.
 
-To restrict it anyway, list the pages (comma-separated) and restart
-quicvoiced (`docker compose up -d quicvoiced`):
+Other settings (restart quicvoiced to apply, `docker compose up -d quicvoiced`):
 
 ```sh
-VOICE_WEBTRANSPORT_ORIGINS=https://chat.example.com,https://chat.friend.example
+VOICE_WEBTRANSPORT_ORIGINS=*                                  # any page (the old default)
+VOICE_WEBTRANSPORT_ORIGINS=https://chat.example.com,https://chat.friend.example  # only these
+VOICE_WEBTRANSPORT_ORIGINS=directory,https://chat.example.com,https://chat.friend.example  # the directory's, plus these
 ```
 
-or `voice.web_origins: [https://chat.example.com]` in config/boson.yaml
-(which wins; `[]` = any page; restart to apply). Other pages then get `403`
-on `/wt` and no CORS headers from the API. Video has its own list,
-`VIDEO_WEBTRANSPORT_ORIGINS` (also `*` by default; [video.md](video.md)).
+or `voice.web_origins: [directory, https://chat.example.com]` in
+config/boson.yaml (which wins; `[]` = any page; restart to apply). Video
+and uploads have their own lists with the same default,
+`VIDEO_WEBTRANSPORT_ORIGINS` ([video.md](video.md)) and
+`FILES_CORS_ALLOWED_ORIGINS` ([files.md](files.md)). Directory mode needs
+quicvoice, quicvideo and files releases that understand `directory`, and an
+auth with `/v1/web-origins`; older images take `directory` as an origin that
+never matches (only `WEB_HOST` gets in; files: any page).
 
 ## Discovery: `/.well-known/boson.json`
 
@@ -197,11 +215,14 @@ The boson client asks for a domain (e.g. `boson.chat`) and reads
  "irc":{"host":"irc.boson.chat","port":6697,"tls":true},
  "auth":{"url":"https://auth.boson.chat"},
  "voice":{"addr":"voice.boson.chat:7700","url":"https://voice.boson.chat"},
- "files":{"url":"https://files.boson.chat"}}
+ "files":{"url":"https://files.boson.chat"},
+ "web":{"url":"https://chat.boson.chat"}}
 ```
 
 Any section may be missing (no `voice` key = no voice on this network; no
-`files` key = no uploads, see [files.md](files.md)).
+`files` key = no uploads, see [files.md](files.md); no `web` key = no web
+client, so other installs don't accept calls from one for this server, see
+[above](#browsers-which-pages)).
 Served as `application/json` with `Access-Control-Allow-Origin: *`. When the
 file isn't there, the client falls back to `irc.`/`auth.`/`voice.<domain>`
 (QUIC to `voice.<domain>:7700` with ALPN `quicvoice/1`), so the standard
@@ -214,12 +235,13 @@ For installs where `DOMAIN` itself points at this server:
 ```sh
 COMPOSE_PROFILES=irc,voice,auth,wellknown
 CERT_HOSTS=irc.example.com,voice.example.com,auth.example.com,example.com
-# Optional. Default: the irc/auth/voice/files profiles that are on.
-#WELLKNOWN_SECTIONS=irc,auth,voice,files
+# Optional. Default: the irc/auth/voice/files/web profiles that are on.
+#WELLKNOWN_SECTIONS=irc,auth,voice,files,web
 ```
 
 The `wellknown` service (busybox httpd, read-only, as `nobody`) writes the
-file from `IRC_HOST`, `AUTH_HOST`, `VOICE_HOST`, `FILES_HOST` and `WELLKNOWN_SECTIONS` at
+file from `IRC_HOST`, `AUTH_HOST`, `VOICE_HOST`, `FILES_HOST`, `WEB_HOST` (the `web`
+section, only when `WEB_HOST` is set) and `WELLKNOWN_SECTIONS` at
 every start (`images/wellknown/serve.sh`), and Traefik routes only
 `https://DOMAIN/.well-known/boson.json` to it, adding
 `Access-Control-Allow-Origin: *` and `Cache-Control: public, max-age=300`.

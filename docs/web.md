@@ -46,14 +46,19 @@ browser origins follow by default (each has its own override):
 | api | `API_ALLOWED_ORIGINS` | calls from the page |
 | directory | `DIRECTORY_CORS_ALLOWED_ORIGINS` | owner edits from the page |
 
-Voice and video accept any page by default, so Boson web clients on other
-installs can join this stack's calls too (the voice token decides who gets
-in; see [voice.md](voice.md#browsers-any-page-by-default)):
+Voice, video and uploads accept this web client and, by default
+(`directory`), the web clients of the Boson servers verified in the
+directories this install follows, so Boson web clients on other installs
+can join this stack's calls and upload here too (the token still decides
+who gets in; see [voice.md](voice.md#browsers-which-pages)). The other way
+round, boson.json names this web client (`"web": {"url": "https://WEB_HOST"}`,
+`wellknown` profile), which is how other installs learn its origin:
 
 | Service | Setting | Why |
 |---|---|---|
-| quicvoiced | `VOICE_WEBTRANSPORT_ORIGINS` (or `voice.web_origins`), default `*` | voice over WebTransport at `https://VOICE_HOST:7700/wt`, and its room API |
-| quicvideod | `VIDEO_WEBTRANSPORT_ORIGINS`, default `*` | video over WebTransport at `https://VIDEO_HOST:7710/wt` |
+| quicvoiced | `VOICE_WEBTRANSPORT_ORIGINS` (or `voice.web_origins`), default `directory,https://WEB_HOST` | voice over WebTransport at `https://VOICE_HOST:7700/wt`, and its room API |
+| quicvideod | `VIDEO_WEBTRANSPORT_ORIGINS`, default `directory,https://WEB_HOST` | video over WebTransport at `https://VIDEO_HOST:7710/wt` |
+| files | `FILES_CORS_ALLOWED_ORIGINS`, default `directory,https://WEB_HOST` | uploads (federated users upload to the server they are on); downloads stay open to any page |
 
 Link previews and Spotify cards come from the Boson API (`GET /v1/unfurl`,
 backend 0.57.0 or later, the `api` profile; see [api.md](api.md#link-previews)), so

@@ -208,7 +208,7 @@ Settings (`.env`; compose passes the same names to the relay unless noted):
 
 | Variable | Default | |
 |---|---|---|
-| `PUSHRELAY_IMAGE` | `harbor.floret.dev/boson/pushrelay:0.1.0` | placeholder until the first release |
+| `PUSHRELAY_IMAGE` | `harbor.floret.dev/boson/pushrelay:1.0.0` | |
 | `PUSH_HOST` | `push.$DOMAIN` | public hostname; the relay gets `PUSHRELAY_PUBLIC_URL=https://PUSH_HOST` (the VAPID `aud` it checks, the base of mailbox endpoints) |
 | `PUSHRELAY_DB_PASSWORD`, `_USER`, `_NAME` | –, `pushrelay`, `pushrelay` | the relay gets `DATABASE_URL` |
 | `PUSHRELAY_INTERNAL_TOKEN` | – | operator API on `:3001`: block an install domain, delete a mailbox, per-install counts |

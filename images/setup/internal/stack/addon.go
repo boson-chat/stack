@@ -208,6 +208,9 @@ func addonEnv(p *Plan, a Answers, s Secrets, existing map[string]string, gen *Ge
 	if a.Files.Enabled {
 		sections = append(sections, "files")
 	}
+	// The web client is always on here: boson.json names it, so other
+	// installs' voice, video and files accept its calls (directory mode).
+	sections = append(sections, "web")
 	set("WELLKNOWN_SECTIONS", strings.Join(sections, ","))
 	set("ADMIN_IRC_CHECK", "ircs://evrd-links:6697")
 	set("ADMIN_CONFIG_STATUS_TARGETS", statusTargetsNoErgo)
