@@ -33,6 +33,8 @@ Content-Security-Policy and caching headers. Its endpoints are set at start
 | `WEB_API_URL` | `https://API_HOST` | the Boson API (`api` profile) |
 | `WEB_DIRECTORY_URL` | `https://directory.boson.chat` | the directory the app browses |
 | `WEB_GATEWAY_URL` | this host's `/webirc/websocket/` | another gateway |
+| `NETWORK_NAME` (as `BOSON_NETWORK_NAME`) | empty: the name the auth service gives | the network's name the app shows for this stack (e.g. "IRCForever") instead of its domain. Read from `.env` only: if you set `network.name` in config/boson.yaml, set `NETWORK_NAME` to match |
+| `WEB_NETWORK_DOMAIN` (as `BOSON_NETWORK_DOMAIN`) | empty: from `AUTH_HOST` (`auth.example.com` → `example.com`) | the domain of the network this client is the home of; set it when that guess is wrong |
 
 The app's sign-in goes to `https://AUTH_HOST`. With `WEB_HOST` set, these
 browser origins follow by default (each has its own override):
@@ -43,8 +45,15 @@ browser origins follow by default (each has its own override):
 | auth | `AUTH_WEB_CLIENT_URL` (default `https://WEB_HOST/`) | where users land after verifying their email (auth with boson-chat/auth#26; older auth ignores it) |
 | api | `API_ALLOWED_ORIGINS` | calls from the page |
 | directory | `DIRECTORY_CORS_ALLOWED_ORIGINS` | owner edits from the page |
-| quicvoiced | `VOICE_WEBTRANSPORT_ORIGINS` (or `voice.web_origins`) | voice over WebTransport at `https://VOICE_HOST:7700/wt`, and its room API |
-| quicvideod | `VIDEO_WEBTRANSPORT_ORIGINS` (default any) | video over WebTransport at `https://VIDEO_HOST:7710/wt` |
+
+Voice and video accept any page by default, so Boson web clients on other
+installs can join this stack's calls too (the voice token decides who gets
+in; see [voice.md](voice.md#browsers-any-page-by-default)):
+
+| Service | Setting | Why |
+|---|---|---|
+| quicvoiced | `VOICE_WEBTRANSPORT_ORIGINS` (or `voice.web_origins`), default `*` | voice over WebTransport at `https://VOICE_HOST:7700/wt`, and its room API |
+| quicvideod | `VIDEO_WEBTRANSPORT_ORIGINS`, default `*` | video over WebTransport at `https://VIDEO_HOST:7710/wt` |
 
 Link previews and Spotify cards come from the Boson API (`GET /v1/unfurl`,
 backend 0.57.0 or later, the `api` profile; see [api.md](api.md#link-previews)), so

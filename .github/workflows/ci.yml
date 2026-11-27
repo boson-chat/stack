@@ -99,6 +99,9 @@ jobs:
           [ "$code" = 401 ] || { echo "no token: $code, want 401"; exit 1; }
           c -f -H "Authorization: Bearer $(cat voice-token)" https://voice.localhost/v1/rooms |
             python3 -c 'import sys,json; r=json.load(sys.stdin)["rooms"]; assert r[0]["id"]=="general", r; print("rooms:", [x["id"] for x in r])'
+          # Any page may call it (VOICE_WEBTRANSPORT_ORIGINS default *), not only WEB_HOST.
+          c -fsD cors -o /dev/null -H 'Origin: https://chat.other.example' -H "Authorization: Bearer $(cat voice-token)" https://voice.localhost/v1/rooms
+          grep -Eqi '^access-control-allow-origin: (\*|https://chat\.other\.example)' cors || { echo "no CORS for another install's page:"; cat cors; exit 1; }
           code=$(c -o /dev/null -w '%{http_code}' https://voice.localhost/metrics)
           [ "$code" = 404 ] || { echo "/metrics on the voice host: $code, want 404"; exit 1; }
           c -fD headers https://localhost/.well-known/boson.json |
