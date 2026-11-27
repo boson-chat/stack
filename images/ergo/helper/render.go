@@ -51,6 +51,11 @@ type renderData struct {
 	// channel's creator keeps operator status (IRC_CHANNEL_CREATOR_GRACE /
 	// irc.channel_creator_grace, default 10m; 0 = off).
 	ChannelCreatorGrace string
+	// accounts.multiclient.always-on / auto-away (IRC_ALWAYS_ON /
+	// irc.always_on): disabled | opt-in | opt-out | mandatory. Default
+	// opt-out: signed-in users stay connected (in their channels, history
+	// kept, marked away) with no device open, unless they turn it off.
+	AlwaysOn string
 	// Ergo HTTP API (internal network only), for quicvoiced's founder/role
 	// lookups. Empty token = API off.
 	APIToken    string
@@ -237,6 +242,12 @@ func render(get func(string) string, tmplPath, dir string, st netSettings, class
 	d.ChannelCreatorGrace = strEnv(get, "IRC_CHANNEL_CREATOR_GRACE", "10m")
 	if !ergoDurRe.MatchString(d.ChannelCreatorGrace) {
 		return false, fmt.Errorf("IRC_CHANNEL_CREATOR_GRACE must be a duration like 10m, 1h or 0, got %q", d.ChannelCreatorGrace)
+	}
+	d.AlwaysOn = strings.ToLower(strEnv(get, "IRC_ALWAYS_ON", "opt-out"))
+	switch d.AlwaysOn {
+	case "disabled", "opt-in", "opt-out", "mandatory":
+	default:
+		return false, fmt.Errorf("IRC_ALWAYS_ON must be disabled, opt-in, opt-out or mandatory, got %q", d.AlwaysOn)
 	}
 	src := defaultTemplate
 	if tmplPath != "" {

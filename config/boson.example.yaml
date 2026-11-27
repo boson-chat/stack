@@ -219,6 +219,11 @@ version: 1
 #   # "Creator grace"). Guests aren't remembered. 0 = off.
 #   # Default: IRC_CHANNEL_CREATOR_GRACE (10m).
 #   channel_creator_grace: 10m
+#   # Always-on: signed-in users stay connected (in their channels, marked
+#   # away, history kept) with no device open. opt-out = on unless a user
+#   # turns it off (/msg NickServ SET always-on false); opt-in; mandatory;
+#   # disabled. Default: IRC_ALWAYS_ON (opt-out).
+#   always_on: opt-out
 #   # Ergo's log level: debug, info, warn, error.
 #   log_level: info
 #
