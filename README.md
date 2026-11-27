@@ -24,7 +24,7 @@ voice, and automatic TLS, wired together for your own domain.
 | `webroot` | `webroot` | Optional: serves a host directory at `http://WEBROOT_HOST/.well-known/acme-challenge/` for a certbot outside the stack | via Traefik |
 | `web` | `web` | Boson in the browser ([boson-chat/boson](https://github.com/boson-chat/boson) `infra/web`): the same app as the desktop one, its IRC through `webircgateway`, calls over WebTransport to quicvoiced/quicvideod ([docs/web.md](docs/web.md)) | via Traefik at `https://WEB_HOST` |
 | `webircgateway` | `web` | The browser client's IRC connections ([webircgateway](https://github.com/kiwiirc/webircgateway) with Boson's guards): WebSocket in, TCP/TLS out to any IRC network on IRC ports, never to internal addresses, per-IP caps, WEBIRC to this network's Ergo ([docs/web.md](docs/web.md)) | via Traefik at `wss://WEB_HOST/webirc/websocket/` |
-| `wellknown` | `wellknown` | Optional: serves `https://DOMAIN/.well-known/boson.json` (client discovery: IRC, auth and voice endpoints, and the network's branding), generated from `.env`. Only when `DOMAIN` points at this server | via Traefik |
+| `wellknown` | `wellknown` | Serves `https://DOMAIN/.well-known/boson.json` (client discovery: IRC, auth and voice endpoints, and the network's branding), generated from `.env`. Only when `DOMAIN` points at this server; the setup wizard turns it on by default (the app needs it to find anything beyond IRC) | via Traefik |
 
 Planned: SSO (OIDC/SAML) in the auth service, video, the admin panel, and the
 desktop client configured from your domain.

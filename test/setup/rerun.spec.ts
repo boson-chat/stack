@@ -25,6 +25,8 @@ test('re-run on an existing install is idempotent', async ({ page, request }) =>
   await next(page).click();
   await expect(page.getByRole('heading', { name: 'Features' })).toBeVisible();
   await expect(page.getByRole('switch', { name: /^Voice/ })).toBeChecked();
+  // Read back from .env (the updates profile + the proxy URL).
+  await expect(page.getByRole('switch', { name: /^Let the admin panel apply updates/ })).toBeChecked();
   await next(page).click();
   await expect(page.getByRole('heading', { name: 'Firewall and ports' })).toBeVisible();
   // Ports the stack holds now count as fine.
@@ -34,6 +36,12 @@ test('re-run on an existing install is idempotent', async ({ page, request }) =>
   await expect(page.getByRole('heading', { name: 'Review' })).toBeVisible();
   await expect(page.getByTestId('review-env')).toContainText('POSTGRES_PASSWORD=••••••••  # kept from your .env');
   await expect(page.getByTestId('review-env')).not.toContainText('new, random');
+  // A re-run never upgrades: every version is the one in .env (updates
+  // are the admin panel's job), and applying updates stays on.
+  const versions = page.getByTestId('review-versions').locator('li');
+  await expect(versions.first()).toBeVisible();
+  for (const src of await versions.evaluateAll((els) => els.map((e) => e.getAttribute('data-source')))) expect(src).toBe('kept');
+  await expect(page.getByTestId('review-updates')).toContainText('The admin panel applies updates');
   await expect(page.getByText('config/boson.yaml (unchanged)')).toBeVisible();
   await shot(page, 'rerun-review', 'rerun-');
   await page.getByTestId('install').click();

@@ -49,6 +49,11 @@ type Answers struct {
 	// FederationAllow: the home domains allowlist mode accepts,
 	// comma-separated (auth.federation.allow).
 	FederationAllow string `json:"federation_allow"`
+	// ApplyUpdates: the admin panel may apply updates (the updates profile
+	// and ADMIN_UPDATES_DOCKER_PROXY_URL; docs/updates.md). That gives the
+	// panel root-equivalent access to this host, for the people with
+	// services.manage + settings.manage. On by default.
+	ApplyUpdates bool `json:"apply_updates"`
 }
 
 // Federation modes (auth.federation.mode).
@@ -116,6 +121,12 @@ func Defaults() Answers {
 		EmailVerification: false,
 		Guests:            true,
 		Federation:        FederationDirectory,
+		ApplyUpdates:      true,
+		// App discovery: the Boson app finds auth, voice, uploads and
+		// federation through https://DOMAIN/.well-known/boson.json (the
+		// domain of irc.DOMAIN without its first label); without it the
+		// server is plain IRC to the app.
+		Wellknown: true,
 	}
 }
 
@@ -476,6 +487,9 @@ func (a Answers) Profiles() []string {
 	}
 	if a.Wellknown {
 		p = append(p, "wellknown")
+	}
+	if a.ApplyUpdates {
+		p = append(p, "updates")
 	}
 	return p
 }

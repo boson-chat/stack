@@ -82,7 +82,7 @@ if [ "$(id -u)" != 0 ]; then
 		if ! $PULL; then flags="$flags --no-pull"; fi
 		# shellcheck disable=SC2086 # two fixed words
 		exec sudo BOSON_SETUP_IMAGE="$IMAGE" BOSON_INSTALL_DIR="$DIR" BOSON_SETUP_PORT="$PORT" \
-			BOSON_SETUP_DNS_SERVER="${BOSON_SETUP_DNS_SERVER:-}" sh "$0" $flags
+			BOSON_SETUP_DNS_SERVER="${BOSON_SETUP_DNS_SERVER:-}" BOSON_SETUP_GITHUB_TOKEN="${BOSON_SETUP_GITHUB_TOKEN:-}" sh "$0" $flags
 	fi
 	die "run it as root: curl -fsSL https://get.boson.chat | sudo sh"
 fi
@@ -129,6 +129,9 @@ set -- docker run -d --name "$NAME" --restart no --network host \
 	-e BOSON_INSTALL_DIR="$DIR" -e BOSON_SETUP_PORT="$PORT" -e BOSON_SETUP_IMAGE="$IMAGE"
 # Test hooks (CI): another DNS server for the wizard's checks.
 [ -z "${BOSON_SETUP_DNS_SERVER:-}" ] || set -- "$@" -e BOSON_SETUP_DNS_SERVER="$BOSON_SETUP_DNS_SERVER"
+# Optional: a GitHub token (no scopes) for the wizard's release checks (the
+# newest version of each component); without one GitHub allows 60 an hour.
+[ -z "${BOSON_SETUP_GITHUB_TOKEN:-}" ] || set -- "$@" -e BOSON_SETUP_GITHUB_TOKEN
 "$@" "$IMAGE" >/dev/null
 
 code=

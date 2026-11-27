@@ -939,6 +939,12 @@ fieldset.group .hint {
 	font-size: var(--text-xs);
 	font-family: var(--font-mono);
 }
+.checks.versions .what {
+	overflow-wrap: anywhere;
+}
+.checks.versions .name strong {
+	font-weight: 600;
+}
 
 pre.code {
 	margin: 0;

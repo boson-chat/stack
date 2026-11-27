@@ -113,8 +113,9 @@ test(`add Boson to ${PAIRING} through the wizard`, async ({ page, context }) => 
   if (NETWORK) await expect(page.getByLabel('Network name')).toHaveValue(NETWORK);
   await page.getByLabel('Domain', { exact: true }).fill(DOMAIN);
   await expect(page.locator(`[data-host="irc.${DOMAIN}"]`)).toHaveAttribute('data-status', 'ok');
-  // boson.json from the bare domain: it names the bridge as the IRC server.
-  await page.getByRole('switch', { name: /^Also serve app discovery/ }).check({ force: true });
+  // boson.json from the bare domain (on by default): it names the bridge
+  // as the IRC server.
+  await expect(page.getByRole('switch', { name: /^App discovery/ })).toBeChecked();
   await expect(page.locator(`[data-host="${DOMAIN}"]`)).toHaveAttribute('data-status', 'ok');
   await expect(page.locator(`[data-host="irc.${DOMAIN}"]`)).toContainText('the bridge');
   await next(page).click();
@@ -217,6 +218,14 @@ test(`add Boson to ${PAIRING} through the wizard`, async ({ page, context }) => 
   await expect(env).toContainText(/COMPOSE_PROFILES=bridge,auth,api,web,admin,metrics/);
   await expect(env).not.toContainText('COMPOSE_PROFILES=irc');
   await expect(env).toContainText('BRIDGE_TOKEN=••••••••');
+  // Applying updates (on by default here too) and the bridge's versions:
+  // evrd and its links holder pinned in .env, at the newest release.
+  await expect(env).toContainText('ADMIN_UPDATES_DOCKER_PROXY_URL=http://docker-proxy-updates:2375');
+  for (const v of ['EVRD_IMAGE', 'EVRD_LINKS_IMAGE', 'AUTH_IMAGE', 'WEB_IMAGE']) {
+    const row = page.getByTestId('review-versions').locator(`li[data-env="${v}"]`);
+    await expect(row).toHaveAttribute('data-source', /^(newest|default)$/);
+    await expect(env).toContainText(`${v}=${(await row.locator('.what').textContent()) ?? ''}`);
+  }
   await expect(env).toContainText(`ACCOUNT_BACKEND=${mode === 'nickserv' ? 'nickserv' : 'local'}`);
   await expect(page.locator('[data-path="bridge/evrd.conf"]')).toContainText(`managed_server ${IRC_HOST} +${IRC_PORT}`);
   const conf = page.getByTestId('review-config');

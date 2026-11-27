@@ -91,7 +91,7 @@ YAML
 (cd test/setup && npm ci --no-audit --no-fund >/dev/null && npx playwright install --with-deps chromium >/dev/null)
 pw() { (cd test/setup && npx playwright test "$@"); }
 start_wizard() { # start_wizard OUTFILE: install.sh, then CODE and URL from what it printed
-	sudo BOSON_SETUP_DNS_SERVER=127.0.0.1:8053 ./install.sh --yes --image "$IMAGE" --no-pull | tee "$1"
+	sudo BOSON_SETUP_DNS_SERVER=127.0.0.1:8053 BOSON_SETUP_GITHUB_TOKEN="${BOSON_SETUP_GITHUB_TOKEN:-}" ./install.sh --yes --image "$IMAGE" --no-pull | tee "$1"
 	CODE=$(sed -n 's/.*enter code \([A-Z0-9-]*\).*/\1/p' "$1")
 	URL=$(sed -n 's/.*Open \(https:[^ ]*\) and.*/\1/p' "$1")
 	[ -n "$CODE" ] && [ -n "$URL" ] || { echo "install.sh printed no code/URL"; exit 1; }
@@ -134,17 +134,47 @@ for v in vals:
 print(f"PASS {len(vals)} secrets: none in state.json or the wizard's logs")
 PY
 
+echo "== image versions and applying updates in .env"
+python3 - "$DIR" "$ROOT/compose.yaml" <<'PY'
+import re, subprocess, sys
+d, compose = sys.argv[1], open(sys.argv[2]).read()
+env = dict(re.findall(r"^([A-Z0-9_]+)=(.*)$", subprocess.run(["sudo", "cat", f"{d}/.env"], capture_output=True, text=True).stdout, re.M))
+defaults = dict(re.findall(r"\$\{([A-Z0-9_]+_IMAGE):-([^}\s]+)\}", compose))
+def ver(ref):
+    return tuple(int(x) for x in ref.rsplit(":", 1)[1].split("-")[0].split("."))
+# Every component this install runs is pinned in .env, at its compose
+# default or newer (the wizard picks the newest release on the registry).
+for k in ("AUTH_IMAGE", "API_IMAGE", "WEB_IMAGE", "ADMIN_IMAGE", "QUICVOICE_IMAGE", "FILES_IMAGE"):
+    assert k in env, f"{k} not in .env"
+    assert env[k].rsplit(":", 1)[0] == defaults[k].rsplit(":", 1)[0], (k, env[k])
+    assert ver(env[k]) >= ver(defaults[k]), (k, env[k], defaults[k])
+    print(f"PASS {k}={env[k]} (compose default {defaults[k].rsplit(':', 1)[1]})")
+assert "updates" in env["COMPOSE_PROFILES"].split(","), env["COMPOSE_PROFILES"]
+assert env.get("ADMIN_UPDATES_DOCKER_PROXY_URL") == "http://docker-proxy-updates:2375"
+print("PASS applying updates is on (updates profile + ADMIN_UPDATES_DOCKER_PROXY_URL)")
+PY
+[ "$(sudo docker inspect -f '{{.State.Running}}' boson-docker-proxy-updates-1)" = true ] || { echo "docker-proxy-updates isn't running"; exit 1; }
+
+echo "== app discovery: https://$DOMAIN/.well-known/boson.json"
+curl -fsSk --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/.well-known/boson.json" | python3 -c '
+import json, sys
+d, dom = json.load(sys.stdin), sys.argv[1]
+assert d["irc"]["host"] == "irc." + dom, d
+assert d["auth"]["url"] == "https://auth." + dom, d
+assert d.get("federation", {}).get("issuer") == "https://auth." + dom, d
+print("PASS boson.json names irc, auth and federation")' "$DOMAIN"
+
 echo "== 3. the installed stack works"
 python3 test/setup/smoke-result.py --domain "$DOMAIN" --admin "$SETUP_ADMIN" --password "$SETUP_ADMIN_PASSWORD" --user-file "$TMP/user"
 SETUP_DOMAIN=$DOMAIN pw webclient.spec.ts
 
 echo "== 4. install.sh again: idempotent"
-secrets() { sudo grep -E '^(POSTGRES_PASSWORD|AUTH_KEY_ENCRYPTION_KEY|INTERNAL_API_TOKEN|ERGO_API_TOKEN|OPER_PASSWORD_HASH|ADMIN_SESSION_KEY|FILES_DB_PASSWORD|VOICE_JWT_SECRET|WEBIRC_PASSWORD)=' "$DIR/.env" | sha256sum; }
+secrets() { sudo grep -E '^([A-Z]+_IMAGE|ADMIN_UPDATES_DOCKER_PROXY_URL|COMPOSE_PROFILES|POSTGRES_PASSWORD|AUTH_KEY_ENCRYPTION_KEY|INTERNAL_API_TOKEN|ERGO_API_TOKEN|OPER_PASSWORD_HASH|ADMIN_SESSION_KEY|FILES_DB_PASSWORD|VOICE_JWT_SECRET|WEBIRC_PASSWORD)=' "$DIR/.env" | sha256sum; }
 before=$(secrets)
 cfg_before=$(sudo sha256sum "$DIR/config/boson.yaml")
 start_wizard "$TMP/install2.out"
 SETUP_URL=$URL SETUP_CODE=$CODE SETUP_DOMAIN=$DOMAIN pw rerun.spec.ts
-[ "$(secrets)" = "$before" ] || { echo "re-run changed secrets in .env"; exit 1; }
+[ "$(secrets)" = "$before" ] || { echo "re-run changed secrets, image versions or profiles in .env"; exit 1; }
 [ "$(sudo sha256sum "$DIR/config/boson.yaml")" = "$cfg_before" ] || { echo "re-run changed config/boson.yaml"; exit 1; }
 echo "PASS re-run kept .env secrets and config/boson.yaml"
 python3 test/setup/smoke-result.py --domain "$DOMAIN" --admin "$SETUP_ADMIN" --password "$SETUP_ADMIN_PASSWORD" --user-file "$TMP/user"

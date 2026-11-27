@@ -42,21 +42,25 @@ test('a guest connects to this network\'s Ergo through the gateway and joins a c
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Server Directory' })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Advanced', exact: true }).click();
-  await page.getByRole('button', { name: '+ Add server manually' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Add a server manually' });
+  // web >= 0.102: "Add by address", TLS under "More options".
+  await page.getByRole('button', { name: 'Add by address' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add a server by address' });
   await field(dialog, 'Hostname').fill(IRC_HOST);
-  await field(dialog, 'Port').fill('6697');
   await field(dialog, 'Display name').fill('Local stack');
+  await dialog.getByRole('button', { name: /More options/ }).click();
   const tls = dialog.getByRole('checkbox', { name: 'Use TLS (recommended)' });
   if (!(await tls.isChecked())) await dialog.getByText('Use TLS (recommended)').click();
+  await expect(tls).toBeChecked();
+  // TLS on/off moves a default port: set it after.
+  await field(dialog, 'Port').fill('6697');
   await dialog.getByRole('button', { name: /^Add/ }).click();
+  await expect(dialog).toBeHidden();
   await page.locator('article.directory-card').filter({ hasText: 'Local stack' }).getByRole('button', { name: 'Connect' }).click();
   await expect(page.locator('.sidebar-status-dot')).toHaveAttribute('data-state', 'connected', { timeout: 30_000 });
 
   const channel = `#web-${Math.random().toString(36).slice(2, 8)}`;
   await page.getByRole('button', { name: 'Add channel' }).click();
-  const input = page.getByPlaceholder('Search channels by name or topic — or type #channel to join directly');
+  const input = page.getByRole('textbox', { name: 'Channel name' });
   await input.fill(channel);
   await input.press('Enter');
   await expect(page.getByPlaceholder(new RegExp(`^Message #?${channel.slice(1)}$`))).toBeVisible();

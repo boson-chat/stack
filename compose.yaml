@@ -513,7 +513,7 @@ services:
   quicvoiced:
     <<: *restart
     profiles: [voice]
-    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.15.0}
+    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.15.1}
     ports:
       - "7700:7700/udp"
     environment:
@@ -601,7 +601,7 @@ services:
   quicvideod:
     <<: *restart
     profiles: [video]
-    image: ${QUICVIDEO_IMAGE:-harbor.floret.dev/boson/quicvideo:1.14.1}
+    image: ${QUICVIDEO_IMAGE:-harbor.floret.dev/boson/quicvideo:1.14.3}
     ports:
       # QUIC for the apps and WebTransport (HTTP/3, /wt) for browsers.
       - "7710:7710/udp"
@@ -716,7 +716,7 @@ services:
   admin:
     <<: *restart
     profiles: [admin]
-    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.29.0}
+    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.29.1}
     environment:
       ENV: production
       # The stack config file: the panel edits it (Settings pages, Config
@@ -916,7 +916,7 @@ services:
   api:
     <<: *restart
     profiles: [api]
-    image: ${API_IMAGE:-harbor.floret.dev/boson/backend:0.57.0}
+    image: ${API_IMAGE:-harbor.floret.dev/boson/backend:0.57.3}
     command: ["serve"]
     environment: &api-env
       PORT: "3000"
@@ -985,7 +985,7 @@ services:
   # Applies the API's database migrations before it starts (exits when done).
   api-migrate:
     profiles: [api]
-    image: ${API_IMAGE:-harbor.floret.dev/boson/backend:0.57.0}
+    image: ${API_IMAGE:-harbor.floret.dev/boson/backend:0.57.3}
     command: ["migrate", "up"]
     environment: *api-env
     restart: "no"
@@ -1011,7 +1011,7 @@ services:
   directory:
     <<: *restart
     profiles: [directory]
-    image: ${DIRECTORY_IMAGE:-harbor.floret.dev/boson/directory:1.7.0}
+    image: ${DIRECTORY_IMAGE:-harbor.floret.dev/boson/directory:1.9.1}
     environment:
       ENV: ${DIRECTORY_ENV:-production}
       LOG_LEVEL: ${DIRECTORY_LOG_LEVEL:-info}
@@ -1299,7 +1299,7 @@ services:
   web:
     <<: *restart
     profiles: [web]
-    image: ${WEB_IMAGE:-harbor.floret.dev/boson/web:0.89.0}
+    image: ${WEB_IMAGE:-harbor.floret.dev/boson/web:0.102.0}
     environment:
       BOSON_AUTH_URL: https://${AUTH_HOST:-auth.invalid}
       BOSON_API_URL: ${WEB_API_URL:-https://${API_HOST:-api.${DOMAIN:-localhost}}}

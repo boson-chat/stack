@@ -88,6 +88,9 @@ func (ex Existing) Answers() Answers {
 	a.Wellknown = prof["wellknown"]
 	a.OwnDirectory = prof["directory"]
 	a.Files.Enabled = prof["files"]
+	// Both halves, as docs/updates.md sets them: the profile alone (or the
+	// URL alone) doesn't let the panel apply anything.
+	a.ApplyUpdates = prof["updates"] && e["ADMIN_UPDATES_DOCKER_PROXY_URL"] != ""
 	switch {
 	case cfgString(c, "local", "files", "storage", "driver") != "s3":
 		a.Files.Storage = "local"

@@ -73,6 +73,10 @@ var SecretKeys = func() map[string]bool {
 	return m
 }()
 
+// UpdatesProxyURL: ADMIN_UPDATES_DOCKER_PROXY_URL with the updates profile
+// (compose.yaml's docker-proxy-updates).
+const UpdatesProxyURL = "http://docker-proxy-updates:2375"
+
 // ConfigKey is one config/boson.yaml key the wizard sets.
 type ConfigKey struct {
 	Path  []string `json:"path"`
@@ -263,6 +267,14 @@ func BuildPlan(a Answers, s Secrets, existing map[string]string, gen *Generator,
 		set("ADMIN_DIRECTORY_LOCAL_URL", "")
 	}
 	set("AUTH_CORS_ALLOWED_ORIGINS", strings.Join(origins, ","))
+
+	// Applying updates from the admin panel (docs/updates.md): the updates
+	// profile (in Profiles) and the panel's socket proxy for it.
+	if a.ApplyUpdates {
+		set("ADMIN_UPDATES_DOCKER_PROXY_URL", UpdatesProxyURL)
+	} else {
+		set("ADMIN_UPDATES_DOCKER_PROXY_URL", "")
+	}
 
 	// Files.
 	set("FILES_ENABLED", strconv.FormatBool(a.Files.Enabled))

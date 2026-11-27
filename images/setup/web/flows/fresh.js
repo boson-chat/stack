@@ -229,6 +229,8 @@ function domain(errors = {}) {
 	let debounce;
 	const onDomain = (e) => {
 		A.domain = e.target.value.trim().toLowerCase();
+		discT.querySelector('.label').textContent = `App discovery at https://${A.domain || 'your-domain'}`;
+		if (!A.wellknown) put(elsewhere, discoveryElsewhere());
 		clearTimeout(debounce);
 		clearTimers();
 		dnsOK = false;
@@ -247,6 +249,22 @@ function domain(errors = {}) {
 		}, 600);
 	};
 
+	const elsewhere = h('div', { 'aria-live': 'polite' }, A.wellknown ? null : discoveryElsewhere());
+	const discT = toggle({
+		label: `App discovery at https://${A.domain || 'your-domain'}`,
+		name: 'wellknown',
+		detail: 'The Boson app finds this server’s accounts, voice, uploads and federation through /.well-known/boson.json on this domain; without it, the app sees plain IRC. Turn it off only if the domain itself is your website on another server.',
+		checked: A.wellknown,
+		onchange: async (v) => {
+			A.wellknown = v;
+			put(elsewhere, v ? null : discoveryElsewhere());
+			await save('').catch(() => {});
+			lastDNS = null;
+			put(list, dnsList(null));
+			clearTimers();
+			check();
+		},
+	});
 	frame(
 		'domain',
 		card(
@@ -260,24 +278,30 @@ function domain(errors = {}) {
 				field({ label: 'Network name', name: 'network_name', value: A.network_name, errors, hint: 'One word (no spaces): the IRC network name, also shown on sign-in pages and in emails.', oninput: (e) => (A.network_name = e.target.value) }),
 				field({ label: 'Domain', name: 'domain', value: A.domain, errors, placeholder: 'chat.example.com', inputmode: 'url', hint: 'No https://. A subdomain works too.', oninput: onDomain }),
 			),
-			toggle({
-				label: `Also serve app discovery at https://${A.domain || 'your-domain'}`,
-				detail: 'Lets the Boson app find this server from the bare domain (/.well-known/boson.json). Only if the domain itself points here, not at your website.',
-				checked: A.wellknown,
-				onchange: async (v) => {
-					A.wellknown = v;
-					await save('').catch(() => {});
-					lastDNS = null;
-					put(list, dnsList(null));
-					clearTimers();
-					check();
-				},
-			}),
+			discT,
+			elsewhere,
 			h('div', { class: 'stack' }, h('h2', {}, 'DNS check'), list, advice),
 			nav(prevOf('domain'), () => saveAndGo('domain', nextOf('domain'), domain), { disabled: !dnsOK, busy }),
 		),
 	);
 	if (A.domain) check();
+}
+
+// App discovery served elsewhere: what the file there must say.
+function discoveryElsewhere() {
+	const d = A.domain || 'your-domain';
+	const doc = { version: 1, irc: { host: `irc.${d}`, port: 6697, tls: true }, auth: { url: `https://auth.${d}` }, branding: `https://auth.${d}/v1/branding` };
+	if (A.voice) doc.voice = { addr: `voice.${d}:7700`, url: `https://voice.${d}` };
+	if (A.files && A.files.enabled) doc.files = { url: `https://files.${d}` };
+	return notice(
+		'warn',
+		h('strong', {}, `Publish https://${d}/.well-known/boson.json yourself, `),
+		'with Access-Control-Allow-Origin: *, or Boson apps treat this server as plain IRC. It must contain:',
+		h('pre', { class: 'code', 'data-testid': 'boson-json', tabindex: '0' }, JSON.stringify(doc, null, 2)),
+		'For accounts from other servers, add "federation": the JSON at ',
+		h('code', {}, `https://auth.${d}/.well-known/boson-federation.json`),
+		', kept current. Details: docs/federation.md in the stack repository.',
+	);
 }
 
 // ---- tls -------------------------------------------------------------------
@@ -426,6 +450,12 @@ function features(errors = {}) {
 	};
 
 	const federation = federationSection(section, errors);
+	const updatesNote = notice(
+		'warn',
+		h('strong', {}, 'This gives the admin panel root-equivalent access to this server. '),
+		'Anyone with the panel’s services.manage and settings.manage permissions could take over the machine, so only leave it on if you trust them with that.',
+	);
+	updatesNote.hidden = !A.apply_updates;
 
 	const smtpResult = h('div', { 'aria-live': 'polite' });
 	const smtpTLS = select({
@@ -536,6 +566,20 @@ function features(errors = {}) {
 				'Directory',
 				toggle({ label: 'List this network in the Boson directory', detail: 'So people can find it in the app. You finish the listing in the admin panel (a DNS TXT record proves the domain is yours).', checked: A.directory_listing, onchange: (v) => (A.directory_listing = v) }),
 				toggle({ label: 'Run a directory of my own', detail: `A network directory at directory.${A.domain || 'your-domain'}, federated with directory.boson.chat (advanced).`, checked: A.own_directory, onchange: (v) => (A.own_directory = v) }),
+			),
+			section(
+				'Updates',
+				toggle({
+					label: 'Let the admin panel apply updates',
+					name: 'apply_updates',
+					detail: 'On by default. The panel’s Updates page then backs up, updates and restarts components for you; off, it only lists updates and you apply them on the server.',
+					checked: A.apply_updates,
+					onchange: (v) => {
+						A.apply_updates = v;
+						updatesNote.hidden = !v;
+					},
+				}),
+				updatesNote,
 			),
 			federation,
 			smtp,
@@ -831,8 +875,12 @@ function review(error) {
 						h('li', {}, tag('accent', 'parts'), h('span', { class: 'name' }, r.profiles.join(', '))),
 						h('li', {}, tag('accent', 'names'), h('span', { class: 'name' }, r.hosts.map((x) => x.name).join(', '))),
 						r.existing ? h('li', {}, tag('ok', 'kept'), h('span', { class: 'name' }, `${r.kept_secrets} secrets kept from your .env; other lines in it stay as they are`)) : null,
+						A.apply_updates
+							? h('li', { 'data-testid': 'review-updates' }, tag('warn', 'updates'), h('span', { class: 'name' }, 'The admin panel applies updates (root-equivalent access to this server)'))
+							: h('li', { 'data-testid': 'review-updates' }, tag('accent', 'updates'), h('span', { class: 'name' }, 'The admin panel lists updates; you apply them on the server')),
 					),
 				),
+				versions(r.images || []),
 				h('details', { open: true }, h('summary', {}, '.env (secrets masked)'), h('pre', { class: 'code', 'data-testid': 'review-env', tabindex: '0' }, r.env)),
 				(r.files || []).map((f) => h('details', { open: true }, h('summary', {}, f.path), h('pre', { class: 'code', 'data-testid': 'review-file', 'data-path': f.path, tabindex: '0' }, f.content))),
 				h(
@@ -847,6 +895,49 @@ function review(error) {
 			installBtn.disabled = true;
 		}
 	})();
+}
+
+// The image version of each component (internal/releases): the newest
+// release for a new install, what's there for an existing one.
+function versions(images) {
+	if (!images.length) return null;
+	const TAG = {
+		newest: ['ok', 'newest'],
+		default: ['warn', 'pinned'],
+		kept: ['accent', 'kept'],
+		compose: ['accent', 'as is'],
+	};
+	const failed = images.filter((p) => p.source === 'default' && p.note);
+	const reasons = [...new Set(failed.map((p) => p.note))];
+	const held = images.some((p) => p.source === 'kept' || p.source === 'compose');
+	return h(
+		'div',
+		{ class: 'panel' },
+		h('h2', {}, 'Versions'),
+		failed.length
+			? notice(
+					'warn',
+					h('strong', {}, `Couldn’t check for newer releases of ${failed.map((p) => p.name).join(', ')}. `),
+					'These get the versions this setup was built with; after the install, the admin panel’s Updates page offers anything newer. ',
+					h('span', { class: 'muted' }, reasons.join('; ')),
+				)
+			: null,
+		held ? h('p', { class: 'muted' }, 'Components already on this server keep their version: updates are applied from the admin panel.') : null,
+		h(
+			'ul',
+			{ class: 'checks versions', 'data-testid': 'review-versions' },
+			images.map((p) => {
+				const [tone, label] = TAG[p.source] || ['accent', p.source];
+				return h(
+					'li',
+					{ 'data-env': p.env, 'data-source': p.source },
+					tag(tone, label),
+					h('span', { class: 'name' }, `${p.name} `, h('strong', {}, p.version)),
+					h('span', { class: 'msg' }, h('span', { class: 'what' }, p.image), p.source === 'newest' && p.note ? ' · ' + p.note : null),
+				);
+			}),
+		),
+	);
 }
 
 // ---- install ---------------------------------------------------------------

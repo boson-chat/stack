@@ -26,6 +26,7 @@ import (
 	"github.com/boson-chat/stack/images/setup/internal/flow/fresh"
 	"github.com/boson-chat/stack/images/setup/internal/gate"
 	"github.com/boson-chat/stack/images/setup/internal/install"
+	"github.com/boson-chat/stack/images/setup/internal/releases"
 	"github.com/boson-chat/stack/images/setup/internal/server"
 	"github.com/boson-chat/stack/images/setup/internal/stack"
 	"github.com/boson-chat/stack/images/setup/internal/tlscert"
@@ -47,11 +48,18 @@ func (fakeDNS) LookupIP(_ context.Context, network, host string) ([]net.IP, erro
 	return []net.IP{net.ParseIP("192.0.2.10")}, nil
 }
 
+type failingTags struct{}
+
+func (failingTags) Tags(context.Context, string) ([]string, error) {
+	return nil, fmt.Errorf("GitHub unreachable: dial tcp: lookup api.github.com: no such host")
+}
+
 func main() {
 	dir := flag.String("dir", "/tmp/boson-dev", "install dir")
 	addr := flag.String("addr", "127.0.0.1:8443", "listen")
 	src := flag.String("stack", "../..", "stack files")
 	admin := flag.String("admin", "", "an existing auth user (re-run)")
+	rel := flag.String("releases", "live", "image versions on the review: live (GitHub + registries), fail (GitHub unreachable: the fallback note), off (no lookups)")
 	slow := flag.Duration("slow", 20*time.Second, "ergo stays \"starting\" this long, with Traefik logging an ACME error (0: off)")
 	flag.Parse()
 	os.MkdirAll(*dir, 0o755)
@@ -108,6 +116,12 @@ func main() {
 		// The reverse proxy on 80/443 (ports step): a Traefik container on
 		// the "proxy" network.
 		Docker: fakeDocker,
+	}
+	switch *rel {
+	case "live":
+		deps.Releases = releases.NewResolver(os.Getenv("BOSON_SETUP_GITHUB_TOKEN"))
+	case "fail":
+		deps.Releases = &releases.Resolver{Tags: failingTags{}, Registry: releases.NewRegistry(time.Second)}
 	}
 	fr, err := fresh.New(deps)
 	if err != nil {
