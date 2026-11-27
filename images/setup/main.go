@@ -233,9 +233,34 @@ func serve() error {
 		return err
 	}
 	if probeImage != "" {
-		subnet := "10.203.53.0/24"
-		if ex, err := stack.LoadExisting(dir); err == nil && ex.Env["STACK_SUBNET"] != "" {
-			subnet = ex.Env["STACK_SUBNET"]
+		subnet, nodeAddr := "10.203.53.0/24", ""
+		if ex, err := stack.LoadExisting(dir); err == nil {
+			if ex.Env["STACK_SUBNET"] != "" {
+				subnet = ex.Env["STACK_SUBNET"]
+			}
+			nodeAddr = ex.Env["NODE_EXPORTER_ADDR"]
+		}
+		if nodeAddr == "" {
+			// compose.yaml's default (not derived from STACK_SUBNET).
+			nodeAddr = "10.203.53.1"
+		}
+		// Ports step: node-exporter's path, from the probe helper (on the
+		// stack network, or a network with its subnet).
+		ports.Node = func() (string, string) { return nodeAddr, subnet }
+		ports.RunNodeProbe = func(ctx context.Context, addr string, port int) (bool, error) {
+			if err := addon.StartProbeHelper(ctx, cli, probeImage, "boson", subnet); err != nil {
+				return false, err
+			}
+			out, err := cli.Output(ctx, "exec", addon.ProbeHelper("boson"), "/usr/local/bin/stack-setup", "probe",
+				"--host", addr, "--tcp", strconv.Itoa(port))
+			if err != nil {
+				return false, err
+			}
+			res, err := checks.ParseProbeOutput(out)
+			if err != nil {
+				return false, err
+			}
+			return res.TCP[strconv.Itoa(port)], nil
 		}
 		ad.Probe = addon.ContainerProbe(cli, probeImage, "boson", subnet)
 		pctx, cancel := context.WithTimeout(context.Background(), time.Minute)

@@ -897,6 +897,7 @@ function ports(errors = {}) {
 							'span',
 							{ class: 'msg' },
 							p.message,
+							p.command ? h('pre', { class: 'code cmd', 'data-testid': 'port-command', tabindex: '0' }, p.command) : null,
 							p.level !== 'ok' && (p.feature === 'voice' || p.feature === 'video') ? h('span', {}, ' ', button(`Turn ${p.feature} off`, () => off(p.feature), { kind: 'small', testid: `off-${p.feature}` })) : null,
 						),
 					),

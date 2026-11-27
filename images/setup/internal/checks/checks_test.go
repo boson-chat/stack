@@ -3,6 +3,7 @@ package checks
 import (
 	"bufio"
 	"context"
+	"errors"
 	"net"
 	"strings"
 	"testing"
@@ -215,5 +216,57 @@ func TestSendTestMail(t *testing.T) {
 	err = SendTestMail(context.Background(), stack.SMTPAnswers{Host: host, Port: port, From: "no@x.test", TLS: "starttls"}, "", "a@x.test", "Net")
 	if err == nil || !strings.Contains(err.Error(), "STARTTLS") {
 		t.Fatal(err)
+	}
+}
+
+func TestPortsNodeExporter(t *testing.T) {
+	check := func(addr string, reached bool, perr error) (PortResult, int) {
+		calls := 0
+		p := &Ports{
+			HostIP: func() net.IP { return nil },
+			Nonce:  func() string { return "n" },
+			Node:   func() (string, string) { return addr, "10.203.53.0/24" },
+			RunNodeProbe: func(ctx context.Context, a string, port int) (bool, error) {
+				calls++
+				if a != addr || port != 9100 {
+					t.Errorf("probe %s:%d", a, port)
+				}
+				return reached, perr
+			},
+		}
+		r := p.Check(context.Background(), nil)
+		for _, x := range r.Ports {
+			if x.Internal {
+				return x, calls
+			}
+		}
+		t.Fatalf("no node-exporter row: %+v", r.Ports)
+		return PortResult{}, calls
+	}
+	rule := "sudo ufw allow from 10.203.53.0/24 to 127.0.0.1 port 9100 proto tcp comment 'boson: metrics -> node-exporter'"
+
+	// 127.0.0.1:9100 stands in for the stack bridge's gateway (free, or
+	// node-exporter's already: probed either way).
+	r, calls := check("127.0.0.1", false, nil)
+	if calls != 1 || r.Reach != "blocked" || r.Level != "warn" || r.Command != rule || r.Feature != "metrics" ||
+		!strings.Contains(r.Message, "job node") || r.Name() != "127.0.0.1:9100/tcp" {
+		t.Errorf("dropped: %d %+v", calls, r)
+	}
+	r, _ = check("127.0.0.1", true, nil)
+	if r.Reach != "ok" || r.Level != "ok" || r.Command != "" {
+		t.Errorf("reached: %+v", r)
+	}
+	r, _ = check("127.0.0.1", false, errors.New("no docker"))
+	if r.Reach != "unknown" || r.Level != "ok" || !strings.Contains(r.Message, rule) {
+		t.Errorf("probe failed: %+v", r)
+	}
+	// An address this host doesn't have (the stack network isn't up): not probed.
+	r, calls = check("192.0.2.77", false, nil)
+	if calls != 0 || r.Local != "no_address" || r.Reach != "unknown" {
+		t.Errorf("no address: %d %+v", calls, r)
+	}
+	// Not configured: no row.
+	if rep := (&Ports{HostIP: func() net.IP { return nil }, Nonce: func() string { return "n" }}).Check(context.Background(), nil); len(rep.Ports) != 0 {
+		t.Errorf("unconfigured: %+v", rep.Ports)
 	}
 }

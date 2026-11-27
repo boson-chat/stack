@@ -302,8 +302,14 @@ keys in the database).
   `NODE_EXPORTER_ADDR:9100` (default `10.203.53.1`, the gateway of the
   default `STACK_SUBNET`; change both together), an address only containers
   on the stack network route to. Host firewalls that drop incoming traffic
-  by default (ufw) also drop it from the stack bridge, so allow it once:
-  `sudo ufw allow from 10.203.53.0/24 to 10.203.53.1 port 9100 proto tcp`.
+  by default (ufw) also drop it from the stack bridge. The installer
+  (`install.sh`, get.boson.chat) adds the one rule needed when ufw is
+  active, from `STACK_SUBNET` to `NODE_EXPORTER_ADDR` port 9100/tcp only
+  (comment `boson: metrics -> node-exporter`); for an install that already
+  runs, `curl -fsSL https://get.boson.chat | sudo sh -s -- --firewall` does
+  just that step. The setup wizard's Firewall step tests the path and shows
+  the command when it's dropped. By hand (another firewall, or the fallback):
+  `sudo ufw allow from 10.203.53.0/24 to 10.203.53.1 port 9100 proto tcp comment 'boson: metrics -> node-exporter'`.
   Until then the `node` target shows as down; nothing else is affected.
   Per-container CPU/memory (cAdvisor) is not included: too heavy for a small
   VPS; the admin panel's services page already shows `docker stats`.
