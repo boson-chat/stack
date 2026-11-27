@@ -4,7 +4,7 @@
 #   docker compose up -d --build
 # Which parts run is chosen by COMPOSE_PROFILES in .env
 # (irc, voice, video, auth, api, directory, files, minio, metrics, admin,
-# updates, webroot, wellknown, web, bridge). traefik and
+# updates, webroot, wellknown, web, bridge, pushrelay). traefik and
 # certsync always run.
 # Install-specific additions: traefik/dynamic/*.yml and compose.override.yaml.
 name: boson
@@ -186,6 +186,12 @@ services:
       # opt-in | opt-out | mandatory). Default; config/boson.yaml
       # irc.always_on wins.
       IRC_ALWAYS_ON: ${IRC_ALWAYS_ON:-opt-out}
+      # Push notifications (draft/webpush, docs/push.md): Ergo POSTs
+      # encrypted pushes to browser push services and the push relay over
+      # the internet (HTTPS, public IPs only). Defaults; config/boson.yaml
+      # irc.push / irc.push_delay win.
+      IRC_PUSH: ${IRC_PUSH:-true}
+      IRC_PUSH_DELAY: ${IRC_PUSH_DELAY:-20s}
       STACK_SUBNET: ${STACK_SUBNET:-10.203.53.0/24}
       # auth-script → auth service (internal listener, never published)
       AUTH_VERIFY_URL: http://auth:8081/internal/v1/verify-password
@@ -369,6 +375,10 @@ services:
       FILES_DB_PASSWORD: ${FILES_DB_PASSWORD:-}
       FILES_DB_USER: ${FILES_DB_USER:-files}
       FILES_DB_NAME: ${FILES_DB_NAME:-files}
+      # ... and the push relay's (pushrelay profile).
+      PUSHRELAY_DB_PASSWORD: ${PUSHRELAY_DB_PASSWORD:-}
+      PUSHRELAY_DB_USER: ${PUSHRELAY_DB_USER:-pushrelay}
+      PUSHRELAY_DB_NAME: ${PUSHRELAY_DB_NAME:-pushrelay}
     volumes:
       - pg_data:/var/lib/postgresql
       - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
@@ -1155,6 +1165,83 @@ services:
       - traefik.http.services.files.loadbalancer.server.port=8080
     # Note: FILES_HOST must be in CERT_HOSTS so Traefik gets its certificate.
 
+  # ---- pushrelay (optional; boson.chat only): phone push ----------------------
+  # github.com/boson-chat/pushrelay (docs/push.md §2, "Running the relay"): a
+  # Web Push endpoint for the official Boson apps. Installs' Ergo POSTs
+  # encrypted, VAPID-signed pushes to https://PUSH_HOST/v1/push/<mailbox>; the
+  # relay forwards them to APNs / FCM with the app's keys. Every install uses
+  # boson.chat's (boson.json "push.relay"), so only boson.chat (or a
+  # third-party app build) runs this. Needs the auth profile (Postgres: one
+  # table of mailboxes). Public API at PUSH_HOST (add it to CERT_HOSTS);
+  # operator API and /metrics on :3001, never routed.
+  # Secrets (APNs .p8 key, Firebase service account) are files in
+  # PUSHRELAY_SECRETS_DIR, mounted read-only; never put them in .env.
+  pushrelay:
+    <<: *restart
+    profiles: [pushrelay]
+    # Placeholder version until the first release is on Harbor.
+    image: ${PUSHRELAY_IMAGE:-harbor.floret.dev/boson/pushrelay:0.1.0}
+    environment:
+      LOG_LEVEL: ${PUSHRELAY_LOG_LEVEL:-info}
+      HTTP_ADDR: ":8080"
+      INTERNAL_ADDR: ":3001"
+      # The relay's origin: the VAPID JWT "aud" installs must sign for, and
+      # the base of the mailbox endpoints it hands out.
+      PUSHRELAY_PUBLIC_URL: https://${PUSH_HOST:-push.${DOMAIN:-localhost}}
+      DATABASE_URL: postgres://${PUSHRELAY_DB_USER:-pushrelay}:${PUSHRELAY_DB_PASSWORD:-}@postgres:5432/${PUSHRELAY_DB_NAME:-pushrelay}?sslmode=disable
+      # Operator API (X-Internal-Token on :3001): block an install, delete a
+      # mailbox, per-install counts.
+      PUSHRELAY_INTERNAL_TOKEN: ${PUSHRELAY_INTERNAL_TOKEN:-}
+      # Client IPs (per-IP mailbox creation limit) from Traefik's X-Forwarded-For.
+      TRUSTED_PROXIES: ${STACK_SUBNET:-10.203.53.0/24}
+      # APNs (token auth): the .p8 key file, its key id, the Apple team id and
+      # the app's bundle id (apns-topic).
+      PUSHRELAY_APNS_KEY_FILE: ${PUSHRELAY_APNS_KEY_FILE:-/run/secrets/pushrelay/apns.p8}
+      PUSHRELAY_APNS_KEY_ID: ${PUSHRELAY_APNS_KEY_ID:-}
+      PUSHRELAY_APNS_TEAM_ID: ${PUSHRELAY_APNS_TEAM_ID:-}
+      PUSHRELAY_APNS_TOPIC: ${PUSHRELAY_APNS_TOPIC:-chat.boson.app}
+      # FCM HTTP v1: the Firebase project's service account JSON.
+      PUSHRELAY_FCM_CREDENTIALS_FILE: ${PUSHRELAY_FCM_CREDENTIALS_FILE:-/run/secrets/pushrelay/fcm.json}
+      # App Attest (iOS): the app id (TEAMID.bundle id; empty = derived from
+      # the two above) and which attestations count: production, or
+      # development for dev-signed builds.
+      PUSHRELAY_APP_ATTEST_APP_ID: ${PUSHRELAY_APP_ATTEST_APP_ID:-}
+      PUSHRELAY_APP_ATTEST_ENV: ${PUSHRELAY_APP_ATTEST_ENV:-production}
+      # Play Integrity (Android): package name, release signing certificate
+      # SHA-256 digests (comma-separated) and a service account allowed to
+      # decode integrity tokens (empty = the FCM one).
+      PUSHRELAY_PLAY_INTEGRITY_PACKAGE: ${PUSHRELAY_PLAY_INTEGRITY_PACKAGE:-chat.boson.app}
+      PUSHRELAY_PLAY_INTEGRITY_CERT_SHA256: ${PUSHRELAY_PLAY_INTEGRITY_CERT_SHA256:-}
+      PUSHRELAY_PLAY_INTEGRITY_CREDENTIALS_FILE: ${PUSHRELAY_PLAY_INTEGRITY_CREDENTIALS_FILE:-}
+      # Development builds (apns-sandbox): allowed without attestation only
+      # if listed in this file. Empty = sandbox mailboxes are refused.
+      PUSHRELAY_DEV_ALLOWLIST_FILE: ${PUSHRELAY_DEV_ALLOWLIST_FILE:-}
+      # Abuse limits (docs/push.md §2.4). Per mailbox: a burst, then one push
+      # per interval, and a daily cap; per install domain: an hourly ceiling
+      # (429 above it); per IP: mailboxes created per hour.
+      PUSHRELAY_MAILBOX_BURST: ${PUSHRELAY_MAILBOX_BURST:-10}
+      PUSHRELAY_MAILBOX_INTERVAL: ${PUSHRELAY_MAILBOX_INTERVAL:-6s}
+      PUSHRELAY_MAILBOX_PER_DAY: ${PUSHRELAY_MAILBOX_PER_DAY:-300}
+      PUSHRELAY_INSTALL_PER_HOUR: ${PUSHRELAY_INSTALL_PER_HOUR:-10000}
+      PUSHRELAY_CREATE_PER_IP_PER_HOUR: ${PUSHRELAY_CREATE_PER_IP_PER_HOUR:-20}
+      # Mailboxes unused this long are deleted.
+      PUSHRELAY_MAILBOX_IDLE_DAYS: ${PUSHRELAY_MAILBOX_IDLE_DAYS:-60}
+    volumes:
+      # apns.p8, fcm.json (and the optional files above). Readable by the
+      # relay's user (uid 65532): docs/push.md "Running the relay".
+      - ${PUSHRELAY_SECRETS_DIR:-./secrets/pushrelay}:/run/secrets/pushrelay:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.pushrelay.rule=Host(`${PUSH_HOST:-push.${DOMAIN:-localhost}}`)
+      - traefik.http.routers.pushrelay.entrypoints=websecure
+      - traefik.http.routers.pushrelay.tls=true
+      # Public listener only; :3001 (operator API, /metrics) is never routed.
+      - traefik.http.services.pushrelay.loadbalancer.server.port=8080
+    # Note: PUSH_HOST must be in CERT_HOSTS so Traefik gets its certificate.
+
   # ---- minio (optional): an S3-compatible bucket for files ---------------------
   # For files with storage.driver: s3 on this host. Internal only: the S3 API
   # (9000) isn't published or routed and the web console is off; files
@@ -1275,6 +1362,10 @@ services:
       AUTH_HOST: ${AUTH_HOST}
       VOICE_HOST: ${VOICE_HOST}
       FILES_HOST: ${FILES_HOST:-files.${DOMAIN:-localhost}}
+      # With the irc section: "push": {"version": 1, "relay": PUSH_RELAY_URL},
+      # the relay the phone apps use for this install (docs/push.md). Empty =
+      # no relay (phone push off; browser push still works).
+      PUSH_RELAY_URL: ${PUSH_RELAY_URL-https://push.boson.chat}
       # The "federation" section (docs/federation.md): auth's metadata,
       # fetched inside the network and refreshed every
       # WELLKNOWN_REFRESH_SECONDS ("accepts" follows the admin setting).

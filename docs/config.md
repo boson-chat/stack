@@ -86,6 +86,8 @@ admin needs to change it in the panel.
 | `irc.persistent_history` | bool | `IRC_PERSISTENT_HISTORY` | **restart** | ergo | `services.manage` |
 | `irc.history_expire` | Ergo duration (`7d`) | built-in | live (rehash) | ergo | `services.manage` |
 | `irc.channel_creator_grace` | Ergo duration (`10m`; `0` = off) | `IRC_CHANNEL_CREATOR_GRACE` (`10m`) | live (rehash) | ergo | hand edit ([irc-channels.md](irc-channels.md#creator-grace-ops-in-unregistered-channels)) |
+| `irc.push` | bool | `IRC_PUSH` (`true`) | live (rehash) | ergo | hand edit ([push.md](push.md#settings)); off while always-on is `disabled` |
+| `irc.push_delay` | Go duration (`20s`; `s`/`m`/`h`, at most `1h`; `0` = at once) | `IRC_PUSH_DELAY` (`20s`) | live (rehash) | ergo | hand edit ([push.md](push.md#settings)) |
 | `irc.log_level` | `debug`/`info`/`warn`/`error` | built-in | live (rehash) | ergo | `services.manage` |
 | `voice.rooms` | list of `{id, name, max_kbps}` (`max_kbps` optional, quicvoiced ≥ 1.13) | `VOICE_ROOMS` | live | quicvoiced | `settings.manage` |
 | `voice.rooms_strict` | bool | `VOICE_ROOMS_STRICT` | live | quicvoiced | `settings.manage` |

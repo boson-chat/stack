@@ -26,3 +26,7 @@ test-results/
 test/setup/shots/
 test/federation/shots/
 __pycache__/
+
+# Push relay secrets (pushrelay profile, docs/push.md): APNs key, Firebase
+# service account
+/secrets/

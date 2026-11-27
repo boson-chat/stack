@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/boson-chat/stack/images/ergo/helper/internal/roles"
 )
@@ -56,6 +57,13 @@ type renderData struct {
 	// opt-out: signed-in users stay connected (in their channels, history
 	// kept, marked away) with no device open, unless they turn it off.
 	AlwaysOn string
+	// webpush (docs/push.md): IRC_PUSH / irc.push (default true; forced off
+	// when IRC_ALWAYS_ON is disabled, which Ergo refuses), the delay
+	// (IRC_PUSH_DELAY / irc.push_delay, a Go duration, default 20s) and the
+	// VAPID subscriber (https://DOMAIN/).
+	Push           bool
+	PushDelay      string
+	PushSubscriber string
 	// Ergo HTTP API (internal network only), for quicvoiced's founder/role
 	// lookups. Empty token = API off.
 	APIToken    string
@@ -249,6 +257,9 @@ func render(get func(string) string, tmplPath, dir string, st netSettings, class
 	default:
 		return false, fmt.Errorf("IRC_ALWAYS_ON must be disabled, opt-in, opt-out or mandatory, got %q", d.AlwaysOn)
 	}
+	if d.Push, d.PushDelay, d.PushSubscriber, err = webPush(get, d.AlwaysOn); err != nil {
+		return false, err
+	}
 	src := defaultTemplate
 	if tmplPath != "" {
 		b, err := os.ReadFile(tmplPath)
@@ -304,4 +315,22 @@ func writeFileAtomic(path string, b []byte, mode os.FileMode) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// webPush: the webpush block's settings. Ergo refuses to start with webpush
+// on and always-on disabled, so IRC_ALWAYS_ON=disabled turns push off.
+func webPush(get func(string) string, alwaysOn string) (on bool, delay, subscriber string, err error) {
+	on = boolEnv(get, "IRC_PUSH", true) && alwaysOn != "disabled"
+	delay = strEnv(get, "IRC_PUSH_DELAY", "20s")
+	if !validDelay(delay) {
+		return false, "", "", fmt.Errorf("IRC_PUSH_DELAY must be a duration like 20s, 1m or 0, got %q", delay)
+	}
+	host := strEnv(get, "DOMAIN", strEnv(get, "IRC_HOST", ""))
+	return on, delay, "https://" + host + "/", nil
+}
+
+// validDelay: webpush.delay is a Go duration in Ergo (no d/w units), 0..1h.
+func validDelay(s string) bool {
+	d, err := time.ParseDuration(s)
+	return err == nil && d >= 0 && d <= time.Hour
 }

@@ -50,7 +50,7 @@ local_ca() {
 			extendedKeyUsage=serverAuth
 			subjectKeyIdentifier=hash
 			authorityKeyIdentifier=keyid,issuer
-			subjectAltName=DNS:localhost,DNS:*.localhost,DNS:irc.localhost,DNS:voice.localhost,DNS:auth.localhost,DNS:admin.localhost,DNS:api.localhost,DNS:directory.localhost,DNS:files.localhost,DNS:video.localhost,DNS:chat.localhost,IP:127.0.0.1,IP:::1
+			subjectAltName=DNS:localhost,DNS:*.localhost,DNS:irc.localhost,DNS:voice.localhost,DNS:auth.localhost,DNS:admin.localhost,DNS:api.localhost,DNS:directory.localhost,DNS:files.localhost,DNS:video.localhost,DNS:chat.localhost,DNS:push.localhost,IP:127.0.0.1,IP:::1
 		EXT
 		openssl x509 -req -in cert.csr -CA ca.pem -CAkey ca.key -CAcreateserial -days 825 \
 			-extfile cert.ext -out cert.pem 2>/dev/null
@@ -107,6 +107,7 @@ if [ "${1:-}" = "--local" ]; then
 	DIRECTORY_HOST=directory.localhost
 	FILES_HOST=files.localhost
 	VIDEO_HOST=video.localhost
+	PUSH_HOST=push.localhost
 	ADMIN_EMAIL=admin@localhost
 	TLS_ISSUER=local
 	ACME_CA_SERVER=
@@ -127,6 +128,7 @@ else
 	DIRECTORY_HOST="directory.$DOMAIN"
 	FILES_HOST="files.$DOMAIN"
 	VIDEO_HOST="video.$DOMAIN"
+	PUSH_HOST="push.$DOMAIN"
 	ask ADMIN_EMAIL "Admin email (also used for Let's Encrypt)" "admin@$DOMAIN"
 	ask TLS_ISSUER "TLS: Let's Encrypt email, or 'local' for a self-made local CA" "$ADMIN_EMAIL"
 	ACME_CA_SERVER=
@@ -188,6 +190,11 @@ case ",$PROFILES," in *,video,*)
 	CERT_LIST="$CERT_LIST,$VIDEO_HOST"
 	DNS_LIST="$VIDEO_HOST, $DNS_LIST" ;;
 esac
+# pushrelay: boson.chat's phone push relay (not offered above; docs/push.md).
+case ",$PROFILES," in *,pushrelay,*)
+	CERT_LIST="$CERT_LIST,$PUSH_HOST"
+	DNS_LIST="$PUSH_HOST, $DNS_LIST" ;;
+esac
 case ",$PROFILES," in *,wellknown,*)
 	CERT_LIST="$CERT_LIST,$DOMAIN"
 	DNS_LIST="$DOMAIN, $DNS_LIST" ;;
@@ -209,6 +216,7 @@ umask 077
 	echo "FILES_HOST=$FILES_HOST"
 	# VIDEO_HOST set = video in voice channels is on (docs/video.md).
 	case ",$PROFILES," in *,video,*) echo "VIDEO_HOST=$VIDEO_HOST" ;; esac
+	case ",$PROFILES," in *,pushrelay,*) echo "PUSH_HOST=$PUSH_HOST" ;; esac
 	echo "CERT_HOSTS=$CERT_LIST"
 	echo "ADMIN_EMAIL=$ADMIN_EMAIL"
 	echo "TLS_ISSUER=$TLS_ISSUER"
@@ -255,6 +263,10 @@ umask 077
 		# No files profile: the admin panel's Uploads page says so.
 		echo "ADMIN_FILES_INTERNAL_URL=" ;;
 	esac
+	# The push relay (pushrelay profile, docs/push.md): its database and the
+	# operator API token. Its APNs/FCM keys are files, never in .env.
+	echo "PUSHRELAY_DB_PASSWORD=$(rand 40)"
+	echo "PUSHRELAY_INTERNAL_TOKEN=$(openssl rand -hex 32)"
 	echo "VOICE_JWT_SECRET=$(rand 64)"
 	# Ergo trusts the web gateway's WEBIRC with it (web profile, docs/web.md).
 	echo "WEBIRC_PASSWORD=$(openssl rand -hex 24)"

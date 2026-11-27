@@ -13,6 +13,12 @@
 #   VOICE_HOST, VOICE_PORT  voice section ({"addr":"VOICE_HOST:7700","url":"https://VOICE_HOST"})
 #   FILES_HOST          files section ({"url":"https://FILES_HOST"}): uploads
 #                       (docs/files.md)
+#   PUSH_RELAY_URL      with the irc section: push notifications
+#                       ({"version":1,"relay":"PUSH_RELAY_URL"}, docs/push.md):
+#                       the relay the phone apps should use with this install
+#                       (compose default https://push.boson.chat). Empty: the
+#                       block has no relay (phone push off; browser push still
+#                       works, straight from Ergo).
 #   WELLKNOWN_FEDERATION_URL  with the auth section: auth's federation
 #                       metadata (http://auth:8080/.well-known/boson-federation.json),
 #                       published verbatim as "federation" (docs/federation.md).
@@ -42,12 +48,32 @@ port() {
 	printf '%s' "$2"
 }
 
+# An https URL with nothing JSON would need escaped.
+url() {
+	case "$2" in
+	https://?*) ;;
+	*) echo "wellknown: $1=\"$2\" is not an https:// URL" >&2; exit 1 ;;
+	esac
+	case "$2" in
+	*[!A-Za-z0-9.:/_~%-]*) echo "wellknown: $1=\"$2\" is not an https:// URL" >&2; exit 1 ;;
+	esac
+	printf '%s' "$2"
+}
+
 # One substitution per assignment, so set -e sees a failed check.
 json='{"version":1'
 if has irc; then
 	h=$(host IRC_HOST "${IRC_HOST:-}")
 	p=$(port IRC_PORT "${IRC_PORT:-6697}")
 	json="$json,\"irc\":{\"host\":\"$h\",\"port\":$p,\"tls\":true}"
+	# Push goes with the IRC server (Ergo sends it); clients still check
+	# that it advertises draft/webpush.
+	if [ -n "${PUSH_RELAY_URL:-}" ]; then
+		r=$(url PUSH_RELAY_URL "$PUSH_RELAY_URL")
+		json="$json,\"push\":{\"version\":1,\"relay\":\"$r\"}"
+	else
+		json="$json,\"push\":{\"version\":1}"
+	fi
 fi
 if has auth; then
 	h=$(host AUTH_HOST "${AUTH_HOST:-}")

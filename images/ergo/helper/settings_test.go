@@ -267,6 +267,54 @@ func TestRenderAlwaysOn(t *testing.T) {
 	}
 }
 
+func TestRenderPush(t *testing.T) {
+	for _, c := range []struct {
+		env     map[string]string
+		enabled string
+		delay   string
+	}{
+		{nil, "true", `"20s"`},
+		{map[string]string{"IRC_PUSH": "false"}, "false", `"20s"`},
+		{map[string]string{"IRC_PUSH_DELAY": "1m30s"}, "true", `"1m30s"`},
+		{map[string]string{"IRC_PUSH_DELAY": "0"}, "true", `"0"`},
+		// Ergo won't start with webpush on and always-on disabled.
+		{map[string]string{"IRC_ALWAYS_ON": "Disabled"}, "false", `"20s"`},
+	} {
+		dir := t.TempDir()
+		if _, err := render(testEnv(c.env), "", dir, netSettings{ChannelCreation: policyRegistered}, nil); err != nil {
+			t.Fatalf("%v: %v", c.env, err)
+		}
+		conf := readConf(t, dir)
+		var y struct {
+			WebPush map[string]any `yaml:"webpush"`
+		}
+		if err := yaml.Unmarshal([]byte(conf), &y); err != nil {
+			t.Fatal(err)
+		}
+		for k, want := range map[string]string{
+			"enabled": c.enabled, "delay": c.delay, "subscriber": `"https://example.com/"`,
+			"max-subscriptions": "8", "expiration": "30d",
+		} {
+			if !strings.Contains(conf, "\n    "+k+": "+want+"\n") {
+				t.Errorf("%v: ircd.yaml lacks webpush %s: %s (%v)", c.env, k, want, y.WebPush)
+			}
+		}
+	}
+	// No DOMAIN: the IRC host is the subscriber.
+	dir := t.TempDir()
+	if _, err := render(testEnv(map[string]string{"DOMAIN": ""}), "", dir, netSettings{ChannelCreation: policyRegistered}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(readConf(t, dir), `subscriber: "https://irc.example.com/"`) {
+		t.Error("subscriber without DOMAIN")
+	}
+	for _, bad := range []string{"1d", "20", "-1s", "2h", "soon"} {
+		if _, err := render(testEnv(map[string]string{"IRC_PUSH_DELAY": bad}), "", t.TempDir(), netSettings{ChannelCreation: policyRegistered}, nil); err == nil {
+			t.Errorf("IRC_PUSH_DELAY=%s accepted", bad)
+		}
+	}
+}
+
 func TestParseSettings(t *testing.T) {
 	st, err := parseSettings([]byte(`{"channel_creation":"admins","channel_auto_register":false,"channel_expiry_days":365}`))
 	if err != nil || st.ChannelCreation != policyAdmins || st.AutoRegister == nil || *st.AutoRegister || st.ExpiryDays == nil || *st.ExpiryDays != 365 {

@@ -224,6 +224,13 @@ version: 1
 #   # turns it off (/msg NickServ SET always-on false); opt-in; mandatory;
 #   # disabled. Default: IRC_ALWAYS_ON (opt-out).
 #   always_on: opt-out
+#   # Push notifications (draft/webpush, docs/push.md): signed-in users'
+#   # devices get DMs and mentions while none is connected (needs
+#   # always-on). Default: IRC_PUSH (true).
+#   push: true
+#   # Skip the push if the message is read on another device within this
+#   # long (s/m/h, at most 1h; 0 = at once). Default: IRC_PUSH_DELAY (20s).
+#   push_delay: 20s
 #   # Ergo's log level: debug, info, warn, error.
 #   log_level: info
 #
