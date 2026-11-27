@@ -403,6 +403,15 @@ jobs:
         run: |
           docker compose up -d --wait --wait-timeout 300
           docker compose -f compose.yaml -f test/nickclaim/compose.mailpit.yaml up -d --no-deps --wait mailpit
+      - name: API CORS (API_ALLOWED_ORIGINS default directory,https://DOMAIN; an unlisted page gets none)
+        run: |
+          c() { curl -sS --cacert local-certs/ca.pem "$@"; }
+          # https://DOMAIN is a fixed entry: allowed whatever the directory says.
+          c -fsD cors -o /dev/null -H 'Origin: https://localhost' https://api.localhost/health
+          grep -qi '^access-control-allow-origin: https://localhost' cors || { echo "no CORS for https://DOMAIN:"; cat cors; exit 1; }
+          # A page that is neither fixed nor a verified server's web client.
+          c -fsD cors -o /dev/null -H 'Origin: https://chat.other.example' https://api.localhost/health
+          if grep -qi '^access-control-allow-origin:' cors; then echo "CORS for an unlisted page:"; cat cors; exit 1; fi
       - name: Disabled by default (403 / status), enable in config/boson.yaml, worker polls Mailpit (skipped on an api without nick_claim)
         run: |
           set -o pipefail

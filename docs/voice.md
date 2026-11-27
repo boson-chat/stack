@@ -197,13 +197,15 @@ VOICE_WEBTRANSPORT_ORIGINS=directory,https://chat.example.com,https://chat.frien
 ```
 
 or `voice.web_origins: [directory, https://chat.example.com]` in
-config/boson.yaml (which wins; `[]` = any page; restart to apply). Video
-and uploads have their own lists with the same default,
-`VIDEO_WEBTRANSPORT_ORIGINS` ([video.md](video.md)) and
-`FILES_CORS_ALLOWED_ORIGINS` ([files.md](files.md)). Directory mode needs
-quicvoice, quicvideo and files releases that understand `directory`, and an
-auth with `/v1/web-origins`; older images take `directory` as an origin that
-never matches (only `WEB_HOST` gets in; files: any page).
+config/boson.yaml (which wins; `[]` = any page; restart to apply). Video,
+uploads and the api have their own lists with the same default,
+`VIDEO_WEBTRANSPORT_ORIGINS` ([video.md](video.md)),
+`FILES_CORS_ALLOWED_ORIGINS` ([files.md](files.md)) and
+`API_ALLOWED_ORIGINS` ([api.md](api.md); also `https://DOMAIN`, and no `*`).
+Directory mode needs quicvoice, quicvideo, files and backend releases that
+understand `directory`, and an auth with `/v1/web-origins`; older images
+take `directory` as an origin that never matches (only the fixed origins
+get in; files: any page).
 
 ## Discovery: `/.well-known/boson.json`
 

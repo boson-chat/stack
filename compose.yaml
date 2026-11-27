@@ -962,7 +962,15 @@ services:
     environment: &api-env
       PORT: "3000"
       ENV: production
-      ALLOWED_ORIGINS: ${API_ALLOWED_ORIGINS:-https://${DOMAIN:-localhost}${WEB_HOST:+,https://${WEB_HOST}}}
+      # Pages allowed to call the API from a browser (CORS). Default
+      # "directory" (the web clients of the Boson servers verified in the
+      # directory auth follows, from auth's /v1/web-origins: federated
+      # sessions on those call their home API here with its bearer token)
+      # plus https://DOMAIN and https://WEB_HOST, which stay allowed when
+      # auth is down. Or comma-separated origins. backend images before the
+      # directory mode ignore the "directory" entry (fixed origins only).
+      ALLOWED_ORIGINS: ${API_ALLOWED_ORIGINS:-directory,https://${DOMAIN:-localhost}${WEB_HOST:+,https://${WEB_HOST}}}
+      ORIGINS_URL: ${API_ORIGINS_URL:-http://auth:8080/v1/web-origins}
       AUTH_JWKS_URL: http://auth:8080/.well-known/jwks.json
       AUTH_ISSUER: https://${AUTH_HOST}
       AUTH_AUDIENCE: boson
