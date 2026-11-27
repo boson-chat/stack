@@ -321,7 +321,7 @@ services:
   evrd:
     <<: *restart
     profiles: [bridge]
-    image: ${EVRD_IMAGE:-ghcr.io/4evrd/evrd:0.61.0}
+    image: ${EVRD_IMAGE:-ghcr.io/4evrd/evrd:0.62.0}
     network_mode: "service:evrd-links"
     # Waits for its certificate (certsync copies IRC_HOST's from Traefik);
     # evrd re-reads it when it changes.
@@ -751,7 +751,7 @@ services:
   admin:
     <<: *restart
     profiles: [admin]
-    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.29.1}
+    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.31.0}
     environment:
       ENV: production
       # The stack config file: the panel edits it (Settings pages, Config
@@ -1046,7 +1046,7 @@ services:
   directory:
     <<: *restart
     profiles: [directory]
-    image: ${DIRECTORY_IMAGE:-harbor.floret.dev/boson/directory:1.9.1}
+    image: ${DIRECTORY_IMAGE:-harbor.floret.dev/boson/directory:1.10.0}
     environment:
       ENV: ${DIRECTORY_ENV:-production}
       LOG_LEVEL: ${DIRECTORY_LOG_LEVEL:-info}
@@ -1436,7 +1436,7 @@ services:
   web:
     <<: *restart
     profiles: [web]
-    image: ${WEB_IMAGE:-harbor.floret.dev/boson/web:0.102.0}
+    image: ${WEB_IMAGE:-harbor.floret.dev/boson/web:0.104.0}
     environment:
       BOSON_AUTH_URL: https://${AUTH_HOST:-auth.invalid}
       BOSON_API_URL: ${WEB_API_URL:-https://${API_HOST:-api.${DOMAIN:-localhost}}}

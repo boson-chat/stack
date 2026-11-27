@@ -138,7 +138,7 @@ gateway's, and guests are limited per address.
 An install made by an earlier wizard has evrd 0.60 or older, a
 `bridge/evrd.conf` without the grace, no `BRIDGE_CLIENT_WEBIRC_PASSWORD`
 and guests forced off. First update evrd to 0.61 or later (the admin
-panel's Updates page, or `EVRD_IMAGE=ghcr.io/4evrd/evrd:0.61.0` in `.env`
+panel's Updates page, or `EVRD_IMAGE=ghcr.io/4evrd/evrd:0.62.0` in `.env`
 and `docker compose up -d --no-deps evrd`; a re-run of setup keeps the
 pinned version). Leave `EVRD_LINKS_IMAGE` alone: changing it drops every
 Boson user. Then either run setup again (`install.sh`; it writes the rest
