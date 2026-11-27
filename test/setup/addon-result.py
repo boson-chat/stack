@@ -411,6 +411,13 @@ def whois_ips(nick):
     w = []
     c.wait(lambda l: (w.append(l) or False) or " 318 " in l, 15)
     return set(re.findall(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", " ".join(x for x in w if " 311 " in x or " 378 " in x or " 338 " in x))), w
+def wait_no_guests(timeout=90):
+    """Wait until the bridge has no guests (their upstreams linger
+    managed_guest_linger seconds after the client goes)."""
+    for _ in range(timeout):
+        if not ((bridge_api("/api/managed/health") or {}).get("guests") or {}).get("active"): return True
+        time.sleep(1)
+    return False
 gw_ip = container_ip("webircgateway")
 not_ours = {x for x in (src, gw_ip) if x}
 auth_guests = bool(cfg.get("guest_access")) if isinstance(cfg, dict) else False
@@ -428,6 +435,15 @@ else:
     except OSError as e: settings = str(e)
     check("guests set on the bridge through the managed API", isinstance(settings, dict) and settings.get("guests") == auth_guests, settings)
 check("evrd.conf leaves managed_guests to auth", "managed_guests " not in subprocess.run(["sudo", "cat", f"{args.dir}/bridge/evrd.conf"], capture_output=True, text=True).stdout)
+# With guests on from the start (auth 1.30+ drives them), the bad-token
+# connection above got in as a guest ("guest signed in ... nick=e2ebad") and
+# its upstream lingers (managed_guest_linger) after it closed: on this
+# host's address, next to alice, the second user and the classic client.
+# The IRC servers cap connections per address (UnrealIRCd maxperip 3,
+# InspIRCd's connect class), so let it go before the gateway's guest.
+if auth_guests:
+    left = wait_no_guests()
+    check("the bad-token guest has left the bridge (managed_guest_linger)", left)
 gnick = "e2eguest" + secrets.token_hex(2)
 g, gwel = web_irc(gnick)
 check("the web gateway's socket opens (wss://chat.DOMAIN/webirc/websocket/)", g.status == 101, g.status)
@@ -463,9 +479,7 @@ wu.close()
 # (managed_guest_linger), so the federation test has room.
 try: bridge_put(f"/api/managed/users/{third.lower()}", None, method="DELETE")
 except OSError as e: print(f"note: removing {third}'s bridge account: {e}")
-for _ in range(60):
-    if not ((bridge_api("/api/managed/health") or {}).get("guests") or {}).get("active"): break
-    time.sleep(1)
+wait_no_guests()
 for x in (a, b2, c): x.close()
 
 # 5/6. nothing Boson users see says evrd
