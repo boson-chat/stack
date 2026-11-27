@@ -152,6 +152,15 @@ test(`add Boson to ${PAIRING} through the wizard`, async ({ page, context }) => 
   await expect(fed).toBeVisible();
   await expect(fed.getByRole('radio', { name: /^Verified servers/ })).toBeChecked();
   await expect(page.getByTestId('federation-addon-note')).toContainText('through the bridge, without a services account there');
+  // Outgoing email isn't needed with NickServ accounts (the services mail);
+  // the choice whether Boson sign-up registers NickServ accounts is there.
+  if (mode === 'nickserv') {
+    await expect(page.getByTestId('smtp-need')).toHaveText('not needed');
+    await expect(page.getByTestId('smtp-skip-warning')).toBeHidden();
+    await expect(page.getByRole('switch', { name: /^Register NickServ accounts when people sign up on Boson/ })).toBeVisible();
+  } else {
+    await expect(page.getByTestId('nickserv-signup')).toBeHidden();
+  }
   await shot(page, 'features', P);
   if (FED_ALLOW) {
     await fed.getByText('Only servers I list').click();
@@ -232,6 +241,7 @@ test(`add Boson to ${PAIRING} through the wizard`, async ({ page, context }) => 
     await expect(env).toContainText(`${v}=${(await row.locator('.what').textContent()) ?? ''}`);
   }
   await expect(env).toContainText(`ACCOUNT_BACKEND=${mode === 'nickserv' ? 'nickserv' : 'local'}`);
+  if (mode === 'nickserv') await expect(env).toContainText('NICKSERV_REGISTRATION=true');
   await expect(page.locator('[data-path="bridge/evrd.conf"]')).toContainText(`managed_server ${IRC_HOST} +${IRC_PORT}`);
   const conf = page.getByTestId('review-config');
   if (FED_ALLOW) {

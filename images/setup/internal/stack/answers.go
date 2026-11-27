@@ -38,8 +38,17 @@ type Answers struct {
 	// open | invite | closed (auth.registration)
 	Registration      string `json:"registration"`
 	EmailVerification bool   `json:"email_verification"`
-	Guests            bool   `json:"guests"`
-	GuestVoice        bool   `json:"guest_voice"`
+	// NickServRegistration: with NickServ accounts (add-on path), Boson
+	// sign-up registers a NickServ account (auth.nickserv.registration /
+	// NICKSERV_REGISTRATION; only the Atheme RPC strategies can). nil = on
+	// (the default; state files from before this setting).
+	NickServRegistration *bool `json:"nickserv_registration,omitempty"`
+	// NickServSignupMessage: what Boson's sign-up shows instead when it
+	// doesn't register NickServ accounts (auth.nickserv.signup_message /
+	// NICKSERV_SIGNUP_MESSAGE); "" = auth's default (register on IRC).
+	NickServSignupMessage string `json:"nickserv_signup_message"`
+	Guests                bool   `json:"guests"`
+	GuestVoice            bool   `json:"guest_voice"`
 	// Federation: who may sign in here with an account from another Boson
 	// server (auth.federation.mode, docs/federation.md): directory (servers
 	// verified in the Boson directory), allowlist, open or off. On the
@@ -142,6 +151,7 @@ func (a *Answers) Normalize() {
 	a.SMTP.Host = strings.TrimSpace(a.SMTP.Host)
 	a.SMTP.From = strings.TrimSpace(a.SMTP.From)
 	a.SMTP.User = strings.TrimSpace(a.SMTP.User)
+	a.NickServSignupMessage = strings.TrimSpace(a.NickServSignupMessage)
 	if a.TLS.CA == "" {
 		a.TLS.CA = "production"
 	}
@@ -258,6 +268,16 @@ func (e FieldError) Error() string { return e.Field + ": " + e.Message }
 
 // safeText: no quotes, backslashes or control characters (it goes into
 // .env and YAML).
+// singleLine: no line breaks or other control characters.
+func singleLine(s string) bool {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 func safeText(s string) bool {
 	for _, r := range s {
 		if r < 0x20 || r == 0x7f || r == '\'' || r == '"' || r == '\\' || r == '`' || r == '$' {
@@ -371,6 +391,13 @@ func (a Answers) Validate(section string, s Secrets, needPassword bool) []FieldE
 				add("smtp.user", "The user name and password can't contain quotes, $, backslashes or line breaks.")
 			}
 		}
+		if a.NickServAccounts() {
+			if n := len([]rune(a.NickServSignupMessage)); n > MaxSignupMessageLen {
+				add("nickserv_signup_message", fmt.Sprintf("At most %d characters (you have %d).", MaxSignupMessageLen, n))
+			} else if !singleLine(a.NickServSignupMessage) {
+				add("nickserv_signup_message", "One line of text, without control characters.")
+			}
+		}
 		if a.EmailVerification && a.SMTP.Host == "" {
 			add("email_verification", "Email verification needs an outgoing mail server (SMTP).")
 		}
@@ -394,6 +421,42 @@ func (a Answers) Validate(section string, s Secrets, needPassword bool) []FieldE
 		}
 	}
 	return errs
+}
+
+// MaxSignupMessageLen bounds NickServSignupMessage.
+const MaxSignupMessageLen = 300
+
+// RegistersNickServ: Boson sign-up is set to register NickServ accounts
+// (whether the strategy can is NickServCanRegister).
+func (a Answers) RegistersNickServ() bool {
+	return a.NickServRegistration == nil || *a.NickServRegistration
+}
+
+// NickServCanRegister: the chosen strategy can register NickServ accounts
+// (auth registers through Atheme's RPC only; docs/nickserv.md in auth).
+func (a Answers) NickServCanRegister() bool {
+	return a.NickServAccounts() && strings.HasPrefix(a.Addon.Strategy, "atheme")
+}
+
+// SMTP needs (SMTPNeed).
+const (
+	// SMTPRecommended: people sign up here (open or invite registration
+	// with Boson accounts): without email there's no verification, no
+	// password reset by email and no emailed invites.
+	SMTPRecommended = "recommended"
+	// SMTPNotNeeded: nobody signs up here (registration closed), or the
+	// accounts are NickServ's (the services send their own email).
+	SMTPNotNeeded = "not_needed"
+)
+
+// SMTPNeed says whether this install needs outgoing email. Skipping it is
+// never an error: auth then turns email verification off and the admin
+// panel hands out set-up / reset links instead of emailing them.
+func (a Answers) SMTPNeed() string {
+	if a.NickServAccounts() || a.Registration == "closed" {
+		return SMTPNotNeeded
+	}
+	return SMTPRecommended
 }
 
 func isIP(s string) bool {

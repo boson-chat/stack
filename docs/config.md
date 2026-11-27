@@ -70,6 +70,7 @@ admin needs to change it in the panel.
 | `auth.federation.allow` / `.block` | lists of domains (`*.example.org` too) | `FEDERATION_ALLOW` / `FEDERATION_BLOCK` | live | auth | `settings.manage` |
 | `auth.federation.directory_url` | https URL | `FEDERATION_DIRECTORY_URL` / `https://directory.boson.chat` | live | auth | `settings.manage` |
 | `auth.federation.remote_upload_quota` / `.remote_voice` | size (`1GB`, `""` = account quota) / bool | `FEDERATION_REMOTE_UPLOAD_QUOTA` / `FEDERATION_REMOTE_VOICE` (`true`) | live (quota: at each sign-in) | auth → files | `settings.manage` |
+| `auth.nickserv.registration` / `.signup_message` | bool / string | `NICKSERV_REGISTRATION` (`true`) / `NICKSERV_SIGNUP_MESSAGE` | live | auth | `settings.manage` |
 | `auth.smtp.host` / `.port` / `.from` / `.tls` | string / int / string / `starttls` \| `tls` \| `none` | `SMTP_HOST` / `SMTP_PORT` / `SMTP_FROM` / `SMTP_TLS` | live | auth | `settings.manage` |
 | `auth.email.sender_name` / `.accent` / `.footer` / `.logo` | string / `#rrggbb` / string / bool | the `auth.smtp.from` name / `#3b5bdb` / none / `true` | live | auth | `settings.manage` (Emails page) |
 | `auth.email.templates.<verification\|password_reset\|account_setup\|invite>.subject` / `.body` | string with `{{variables}}` | Boson's wording | live | auth | `settings.manage` (Emails page) |

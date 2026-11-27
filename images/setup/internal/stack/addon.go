@@ -302,9 +302,11 @@ func addonEnv(p *Plan, a Answers, s Secrets, existing map[string]string, gen *Ge
 	} else {
 		set("NICKSERV_SERVICES_SERVER", "")
 	}
-	// Sign-up registers NickServ accounts where the services allow it
-	// (Atheme); auth turns it off by itself elsewhere.
-	set("NICKSERV_REGISTRATION", strconv.FormatBool(a.Registration == "open"))
+	// Sign-up registers NickServ accounts when chosen and the services
+	// allow it (Atheme); auth turns it off by itself elsewhere. The config
+	// file's auth.nickserv.registration says the same (what the admin
+	// panel edits); the env is for an auth without that key.
+	set("NICKSERV_REGISTRATION", strconv.FormatBool(a.RegistersNickServ()))
 	switch {
 	case s.RPCToken != "":
 		setSecret("NICKSERV_RPC_TOKEN", s.RPCToken, "entered")

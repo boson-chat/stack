@@ -461,7 +461,13 @@ services:
       NICKSERV_TLS_PIN_SHA256: ${NICKSERV_TLS_PIN_SHA256:-}
       NICKSERV_ALLOW_PLAINTEXT: ${NICKSERV_ALLOW_PLAINTEXT:-false}
       NICKSERV_SERVICES_SERVER: ${NICKSERV_SERVICES_SERVER:-}
+      # Boson sign-up registers NickServ accounts (Atheme RPC only); off, or
+      # with another strategy, sign-up shows NICKSERV_SIGNUP_MESSAGE (empty =
+      # "register on IRC with /msg NickServ REGISTER"). config/boson.yaml
+      # auth.nickserv.registration / signup_message win (auth >= the release
+      # with those keys).
       NICKSERV_REGISTRATION: ${NICKSERV_REGISTRATION:-true}
+      NICKSERV_SIGNUP_MESSAGE: ${NICKSERV_SIGNUP_MESSAGE:-}
       # Bridge accounts (bridge profile, auth >= 1.25.0, auth docs/bridge.md):
       # auth gives every Boson account its account on the bridge through
       # evrd's managed API on the compose network, and hands it the NickServ

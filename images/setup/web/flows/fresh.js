@@ -493,13 +493,62 @@ function features(errors = {}) {
 		},
 		{ testid: 'smtp-test' },
 	);
+	// Whether this install needs outgoing email (stack.Answers.SMTPNeed):
+	// not when nobody signs up here (closed) or the accounts are NickServ's.
+	const nickservAccounts = A.mode === 'addon' && A.addon && A.addon.accounts === 'nickserv';
+	const smtpNeed = () => (nickservAccounts || A.registration === 'closed' ? 'not_needed' : 'recommended');
+	const smtpTag = h('span', { 'data-testid': 'smtp-need' });
+	const smtpNote = h('div', { 'aria-live': 'polite' });
+	const refreshSMTP = () => {
+		const need = smtpNeed();
+		put(smtpTag, need === 'not_needed' ? tag('ok', 'not needed') : tag('accent', 'recommended'));
+		const host = (A.smtp.host || '').trim();
+		if (need === 'not_needed') {
+			put(
+				smtpNote,
+				h(
+					'p',
+					{ class: 'muted', 'data-testid': 'smtp-not-needed' },
+					nickservAccounts
+						? 'Not needed here: accounts are your NickServ accounts, so your services send any registration and password emails. You can still add a mail server for admin test emails later.'
+						: 'Not needed while sign-up is closed: nobody waits for a verification email, and the admin panel gives you set-up and password reset links to copy and send yourself. Leave it empty to skip it.',
+				),
+			);
+		} else if (!host) {
+			put(
+				smtpNote,
+				h(
+					'div',
+					{ 'data-testid': 'smtp-skip-warning' },
+					notice(
+						'warn',
+						h('strong', {}, 'Recommended while people can sign up. '),
+						'Skipping it means no email verification (new accounts can sign in right away), no password reset by email, and no emailed invites: the admin panel gives you set-up and reset links to copy instead. You can add a mail server later in the admin panel.',
+					),
+				),
+			);
+		} else {
+			put(smtpNote);
+		}
+	};
 	const smtp = section(
-		'Outgoing email (SMTP)',
-		h('p', { class: 'muted' }, 'For sign-up verification, password resets and invites. Leave the server empty to skip it for now; you can add it later in the admin panel.'),
+		h('span', {}, 'Outgoing email (SMTP) ', smtpTag),
+		h('p', { class: 'muted' }, 'For sign-up verification, password resets and emailed invites. Leave the mail server empty to skip it; you can add it later in the admin panel.'),
+		smtpNote,
 		h(
 			'div',
 			{ class: 'grid2' },
-			field({ label: 'Mail server', name: 'smtp.host', value: A.smtp.host, errors, placeholder: 'smtp.example.com', oninput: (e) => (A.smtp.host = e.target.value) }),
+			field({
+				label: 'Mail server',
+				name: 'smtp.host',
+				value: A.smtp.host,
+				errors,
+				placeholder: 'smtp.example.com',
+				oninput: (e) => {
+					A.smtp.host = e.target.value;
+					refreshSMTP();
+				},
+			}),
 			field({ label: 'Port', name: 'smtp.port', value: String(A.smtp.port || 587), errors, inputmode: 'numeric', oninput: (e) => (A.smtp.port = parseInt(e.target.value, 10) || 0) }),
 			field({ label: 'Sender', name: 'smtp.from', value: A.smtp.from, errors, placeholder: `${A.network_name} <noreply@${A.domain}>`, oninput: (e) => (A.smtp.from = e.target.value) }),
 			smtpTLS,
@@ -510,6 +559,7 @@ function features(errors = {}) {
 		smtpResult,
 	);
 
+	refreshSMTP();
 	frame(
 		'features',
 		card(
@@ -554,8 +604,12 @@ function features(errors = {}) {
 						{ value: 'invite', label: 'Invite only', detail: 'People need an invite from an admin.' },
 						{ value: 'closed', label: 'Closed', detail: 'No new accounts; admins create them.' },
 					],
-					onchange: (v) => (A.registration = v),
+					onchange: (v) => {
+						A.registration = v;
+						refreshSMTP();
+					},
 				}),
+				nickservSignup(errors),
 				toggle({
 					label: 'Guests',
 					detail: A.mode === 'addon' ? 'People can chat in Boson without an account, under a nick: the bridge brings them to your IRC server with their own address.' : 'People can chat on IRC without an account, under a nick.',
@@ -566,7 +620,14 @@ function features(errors = {}) {
 					},
 				}),
 				guestVoiceT,
-				toggle({ label: 'Require email verification', detail: 'New accounts confirm their email before signing in. Needs outgoing email.', checked: A.email_verification, onchange: (v) => (A.email_verification = v) }),
+				nickservAccounts
+					? null
+					: toggle({
+							label: 'Require email verification',
+							detail: 'New accounts confirm their email before signing in. Needs outgoing email (below); without a mail server it stays off.',
+							checked: A.email_verification,
+							onchange: (v) => (A.email_verification = v),
+						}),
 			),
 			section(
 				'Directory',
@@ -591,6 +652,44 @@ function features(errors = {}) {
 			smtp,
 			nav(prevOf('features'), () => saveAndGo('features', nextOf('features'), features)),
 		),
+	);
+}
+
+// NickServ accounts (add-on path): does Boson sign-up register a NickServ
+// account (auth.nickserv.registration; Atheme's RPC only), and what sign-up
+// shows instead (auth.nickserv.signup_message). auth docs/nickserv.md.
+function nickservSignup(errors) {
+	if (!(A.mode === 'addon' && A.addon && A.addon.accounts === 'nickserv')) return null;
+	const canRegister = (A.addon.strategy || '').startsWith('atheme');
+	const on = () => A.nickserv_registration !== false;
+	const msg = field({
+		label: 'Message for people who want an account (optional)',
+		name: 'nickserv_signup_message',
+		value: A.nickserv_signup_message || '',
+		errors,
+		placeholder: 'Register on IRC with /msg NickServ REGISTER, then sign in here.',
+		hint: 'Shown on Boson’s sign-up screen, for example to link your own registration page. Empty: Boson tells them to register with NickServ on IRC.',
+		oninput: (e) => (A.nickserv_signup_message = e.target.value),
+	});
+	const msgBox = h('div', { class: 'stack', 'data-testid': 'nickserv-signup-message' }, msg);
+	msgBox.hidden = canRegister && on();
+	return h(
+		'div',
+		{ class: 'stack', 'data-testid': 'nickserv-signup' },
+		toggle({
+			label: 'Register NickServ accounts when people sign up on Boson',
+			name: 'nickserv_registration',
+			detail: canRegister
+				? 'Sign-up in Boson creates the NickServ account on your network (through Atheme’s RPC), following the sign-up choice above. Off: Boson has no sign-up; people register on IRC and sign in with that account.'
+				: 'Only possible with Atheme’s RPC. With how Boson checks passwords here, sign-up in Boson is off: people register on IRC, then sign in with that account.',
+			checked: canRegister && on(),
+			disabled: !canRegister,
+			onchange: (v) => {
+				A.nickserv_registration = v;
+				msgBox.hidden = v;
+			},
+		}),
+		msgBox,
 	);
 }
 

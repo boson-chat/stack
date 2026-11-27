@@ -73,7 +73,18 @@ version: 1
 #   # SSO return_to targets (e.g. the directory web UI).
 #   # Default: AUTH_CORS_ALLOWED_ORIGINS.
 #   cors_allowed_origins: [https://directory.example.com]
-#   # Outgoing email. SMTP_USER / SMTP_PASSWORD stay in .env.
+#   # NickServ accounts only (ACCOUNT_BACKEND=nickserv, the setup wizard's
+#   # add-on path): whether Boson sign-up registers a NickServ account
+#   # (Atheme RPC strategies only), and what sign-up shows when it doesn't.
+#   # Defaults: NICKSERV_REGISTRATION (true) / NICKSERV_SIGNUP_MESSAGE
+#   # ("register on IRC with /msg NickServ REGISTER ...").
+#   nickserv:
+#     registration: true
+#     signup_message: "Register on IRC with /msg NickServ REGISTER, then sign in here."
+#   # Outgoing email. SMTP_USER / SMTP_PASSWORD stay in .env. Without it
+#   # (no host), auth turns email verification off, offers no password
+#   # reset by email, and the admin panel gives you set-up / reset links to
+#   # copy instead of emailing them.
 #   # Defaults: SMTP_HOST, SMTP_PORT, SMTP_FROM, SMTP_TLS (starttls | tls | none).
 #   smtp:
 #     host: smtp.example.com

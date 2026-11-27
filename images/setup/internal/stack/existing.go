@@ -153,6 +153,11 @@ func (ex Existing) Answers() Answers {
 		a.Addon.RPCURL = e["NICKSERV_RPC_URL"]
 		a.Addon.ServicesServer = e["NICKSERV_SERVICES_SERVER"]
 		a.Addon.NoSASL = e["BRIDGE_NICKSERV_METHOD"] == "nickserv"
+		if a.Addon.Accounts == AccountsNickServ {
+			reg := cfgBool(c, envBool(e, "NICKSERV_REGISTRATION", true), "auth", "nickserv", "registration")
+			a.NickServRegistration = &reg
+			a.NickServSignupMessage = cfgString(c, e["NICKSERV_SIGNUP_MESSAGE"], "auth", "nickserv", "signup_message")
+		}
 	}
 	a.Normalize()
 	return a
