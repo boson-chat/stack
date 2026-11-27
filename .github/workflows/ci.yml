@@ -627,7 +627,7 @@ jobs:
       - name: The bundle's compose files parse with every profile
         run: |
           scripts/release/bundle.sh --out "$RUNNER_TEMP/b" --version 9.9.9 --release
-          (cd "$RUNNER_TEMP/b" && sh scripts/setup.sh --local)
+          (cd "$RUNNER_TEMP/b" && bash scripts/setup.sh --local)
           for p in "" irc,voice,video,auth,api,directory,files,minio,metrics,admin,updates,webroot,wellknown,web,bridge,pushrelay; do
             COMPOSE_PROFILES=$p docker compose --project-directory "$RUNNER_TEMP/b" --env-file "$RUNNER_TEMP/b/.env" config -q
           done
