@@ -393,7 +393,7 @@ services:
     profiles: [auth]
     # Releases: harbor.floret.dev/boson/auth:<version>. To run an unreleased
     # checkout instead, add compose.auth-src.yaml (see README).
-    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.30.0}
+    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.31.0}
     environment:
       ENV: production
       LOG_LEVEL: ${AUTH_LOG_LEVEL:-info}
@@ -498,6 +498,15 @@ services:
       # profile the pushes fail quietly and are retried at the next sign-in.
       FILES_INTERNAL_URL: ${AUTH_FILES_INTERNAL_URL-http://files:3001}
       FILES_INTERNAL_TOKEN: ${FILES_INTERNAL_TOKEN:-}
+      # Workload issuer (auth >= the release with boson-chat/auth workload
+      # identity; older auth ignores these): short-lived ES256 tokens for the
+      # stack's own services at https://AUTH_HOST/workload, e.g. the push
+      # relay's keyless FCM access through Google Workload Identity
+      # Federation (docs/push.md "FCM without a Google key"). name:audience
+      # pairs; empty (default) = off, /workload/* is 404. Each name needs
+      # its own secret; the relay's is PUSHRELAY_WORKLOAD_TOKEN.
+      WORKLOAD_IDENTITIES: ${WORKLOAD_IDENTITIES:-}
+      WORKLOAD_TOKEN_PUSHRELAY: ${PUSHRELAY_WORKLOAD_TOKEN:-}
     volumes:
       # Read-only: boson.yaml (auth:, network:, branding:) and the branding
       # images in config/branding/, served at /v1/branding/assets/.
@@ -1195,7 +1204,7 @@ services:
     <<: *restart
     profiles: [pushrelay]
     # Placeholder version until the first release is on Harbor.
-    image: ${PUSHRELAY_IMAGE:-harbor.floret.dev/boson/pushrelay:1.0.0}
+    image: ${PUSHRELAY_IMAGE:-harbor.floret.dev/boson/pushrelay:1.1.0}
     environment:
       LOG_LEVEL: ${PUSHRELAY_LOG_LEVEL:-info}
       HTTP_ADDR: ":8080"
@@ -1215,8 +1224,18 @@ services:
       PUSHRELAY_APNS_KEY_ID: ${PUSHRELAY_APNS_KEY_ID:-}
       PUSHRELAY_APNS_TEAM_ID: ${PUSHRELAY_APNS_TEAM_ID:-}
       PUSHRELAY_APNS_TOPIC: ${PUSHRELAY_APNS_TOPIC:-chat.boson.app}
-      # FCM HTTP v1: the Firebase project's service account JSON.
+      # FCM HTTP v1: Google credentials JSON, a service-account key or (no
+      # key, pushrelay >= the release with external_account support) a
+      # Workload Identity Federation credential configuration whose token
+      # url is auth's internal http://auth:8081/internal/v1/workload/token
+      # (docs/push.md "FCM without a Google key"). The project id comes
+      # from the key file, else PUSHRELAY_FCM_PROJECT_ID (required for the
+      # keyless file). PUSHRELAY_WORKLOAD_TOKEN_FILE: the secret the relay
+      # sends to auth's workload endpoint (= PUSHRELAY_WORKLOAD_TOKEN), used
+      # when the file exists.
       PUSHRELAY_FCM_CREDENTIALS_FILE: ${PUSHRELAY_FCM_CREDENTIALS_FILE:-/run/secrets/pushrelay/fcm.json}
+      PUSHRELAY_FCM_PROJECT_ID: ${PUSHRELAY_FCM_PROJECT_ID:-}
+      PUSHRELAY_WORKLOAD_TOKEN_FILE: ${PUSHRELAY_WORKLOAD_TOKEN_FILE:-/run/secrets/pushrelay/workload-token}
       # App Attest (iOS): the app id (TEAMID.bundle id; empty = derived from
       # the two above) and which attestations count: production, or
       # development for dev-signed builds.
@@ -1242,7 +1261,7 @@ services:
       # Mailboxes unused this long are deleted.
       PUSHRELAY_MAILBOX_IDLE_DAYS: ${PUSHRELAY_MAILBOX_IDLE_DAYS:-60}
     volumes:
-      # apns.p8, fcm.json (and the optional files above). Readable by the
+      # apns.p8, fcm.json, workload-token (and the optional files above). Readable by the
       # relay's user (uid 65532): docs/push.md "Running the relay".
       - ${PUSHRELAY_SECRETS_DIR:-./secrets/pushrelay}:/run/secrets/pushrelay:ro
     depends_on:
