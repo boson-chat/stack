@@ -244,12 +244,10 @@ func firstLine(s string) string {
 
 // ---- steps ----------------------------------------------------------------
 
-func stepConfig(_ context.Context, r *Runner, j *Job, log func(string)) error {
-	n, err := stack.InstallFiles(r.StackSrc, r.Dir)
-	if err != nil {
-		return fmt.Errorf("copying the stack files to %s: %w", r.Dir, err)
+func stepConfig(ctx context.Context, r *Runner, j *Job, log func(string)) error {
+	if err := installStackFiles(ctx, r, log); err != nil {
+		return err
 	}
-	log(fmt.Sprintf("stack files in %s (%d updated)", r.Dir, n))
 	ex, err := stack.LoadExisting(r.Dir)
 	if err != nil {
 		return err
@@ -295,7 +293,10 @@ func stepConfig(_ context.Context, r *Runner, j *Job, log func(string)) error {
 	} else {
 		log("config/boson.yaml unchanged")
 	}
-	return os.MkdirAll(filepath.Join(r.Dir, "config", "branding"), 0o755)
+	if err := os.MkdirAll(filepath.Join(r.Dir, "config", "branding"), 0o755); err != nil {
+		return err
+	}
+	return runMigrations(ctx, r, log)
 }
 
 func stepPull(ctx context.Context, r *Runner, _ *Job, log func(string)) error {

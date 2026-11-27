@@ -113,6 +113,13 @@ user off IRC). Ergo, RoleServ, the web IRC gateway, certsync and the setup
 image are built from this repository and published by its CI, so they are
 always the stack's own.
 
+The stack files themselves come from the newest **stack release** (the
+setup image carries its bundle; `install.sh --edge` runs `main`'s): the
+wizard writes them with the bundle's `scripts/stack-apply.sh` (a file you
+changed since the last install is replaced and kept as `<file>.local`),
+records the release (`VERSION`, `.boson/`) and runs its migrations
+([updates.md](updates.md#stack-releases)).
+
 ### Re-running
 
 Run `install.sh` again any time: it replaces the wizard container, with a
