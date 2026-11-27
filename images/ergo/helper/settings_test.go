@@ -245,6 +245,28 @@ func TestRenderCreatorGrace(t *testing.T) {
 	}
 }
 
+func TestRenderAlwaysOn(t *testing.T) {
+	for env, want := range map[string]string{"": `"opt-out"`, "opt-in": `"opt-in"`, "Mandatory": `"mandatory"`, "disabled": `"disabled"`} {
+		dir := t.TempDir()
+		e := map[string]string{}
+		if env != "" {
+			e["IRC_ALWAYS_ON"] = env
+		}
+		if _, err := render(testEnv(e), "", dir, netSettings{ChannelCreation: policyRegistered}, nil); err != nil {
+			t.Fatalf("%q: %v", env, err)
+		}
+		conf := readConf(t, dir)
+		for _, k := range []string{"always-on", "auto-away"} {
+			if !strings.Contains(conf, "\n        "+k+": "+want+"\n") {
+				t.Errorf("%q: ircd.yaml lacks %s: %s", env, k, want)
+			}
+		}
+	}
+	if _, err := render(testEnv(map[string]string{"IRC_ALWAYS_ON": "yes"}), "", t.TempDir(), netSettings{ChannelCreation: policyRegistered}, nil); err == nil {
+		t.Error("IRC_ALWAYS_ON=yes accepted")
+	}
+}
+
 func TestParseSettings(t *testing.T) {
 	st, err := parseSettings([]byte(`{"channel_creation":"admins","channel_auto_register":false,"channel_expiry_days":365}`))
 	if err != nil || st.ChannelCreation != policyAdmins || st.AutoRegister == nil || *st.AutoRegister || st.ExpiryDays == nil || *st.ExpiryDays != 365 {

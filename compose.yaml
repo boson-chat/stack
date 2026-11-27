@@ -182,6 +182,10 @@ services:
       # off; docs/irc-channels.md "Creator grace"). Default;
       # config/boson.yaml irc.channel_creator_grace wins.
       IRC_CHANNEL_CREATOR_GRACE: ${IRC_CHANNEL_CREATOR_GRACE:-10m}
+      # Signed-in users stay connected with no device open (disabled |
+      # opt-in | opt-out | mandatory). Default; config/boson.yaml
+      # irc.always_on wins.
+      IRC_ALWAYS_ON: ${IRC_ALWAYS_ON:-opt-out}
       STACK_SUBNET: ${STACK_SUBNET:-10.203.53.0/24}
       # auth-script → auth service (internal listener, never published)
       AUTH_VERIFY_URL: http://auth:8081/internal/v1/verify-password

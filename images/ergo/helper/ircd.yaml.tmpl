@@ -180,9 +180,11 @@ accounts:
     multiclient:
         enabled: true
         allowed-by-default: true
-        # Users opt in with /msg NickServ SET always-on true.
-        always-on: "opt-in"
-        auto-away: "opt-in"
+        # IRC_ALWAYS_ON / irc.always_on (default opt-out): signed-in users
+        # stay connected with no device open; /msg NickServ SET always-on
+        # false turns it off for one account.
+        always-on: {{ q .AlwaysOn }}
+        auto-away: {{ q .AlwaysOn }}
         always-on-expiration: 90d
 
     vhosts:
