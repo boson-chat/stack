@@ -623,7 +623,7 @@ services:
   quicvideod:
     <<: *restart
     profiles: [video]
-    image: ${QUICVIDEO_IMAGE:-harbor.floret.dev/boson/quicvideo:1.15.0}
+    image: ${QUICVIDEO_IMAGE:-harbor.floret.dev/boson/quicvideo:1.15.1}
     ports:
       # QUIC for the apps and WebTransport (HTTP/3, /wt) for browsers.
       - "7710:7710/udp"
@@ -1117,7 +1117,7 @@ services:
   files:
     <<: *restart
     profiles: [files]
-    image: ${FILES_IMAGE:-harbor.floret.dev/boson/files:1.1.0}
+    image: ${FILES_IMAGE:-harbor.floret.dev/boson/files:1.1.1}
     environment:
       ENV: ${FILES_ENV:-production}
       LOG_LEVEL: ${FILES_LOG_LEVEL:-info}
@@ -1195,7 +1195,7 @@ services:
     <<: *restart
     profiles: [pushrelay]
     # Placeholder version until the first release is on Harbor.
-    image: ${PUSHRELAY_IMAGE:-harbor.floret.dev/boson/pushrelay:0.1.0}
+    image: ${PUSHRELAY_IMAGE:-harbor.floret.dev/boson/pushrelay:1.0.0}
     environment:
       LOG_LEVEL: ${PUSHRELAY_LOG_LEVEL:-info}
       HTTP_ADDR: ":8080"
