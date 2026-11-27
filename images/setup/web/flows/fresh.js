@@ -659,7 +659,7 @@ function features(errors = {}) {
 				toggle({
 					label: 'Send anonymous usage & health stats',
 					name: 'usage_stats',
-					detail: 'On by default: the admin panel sends one report a day. Turn it off here, or any time later in the panel’s Settings.',
+					detail: 'On by default: the admin panel sends them once a day. Turn this off here, or any time later in the panel’s Settings.',
 					checked: A.usage_stats,
 					onchange: (v) => (A.usage_stats = v),
 				}),
