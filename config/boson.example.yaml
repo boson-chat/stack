@@ -460,3 +460,7 @@ version: 1
 #   # Default: ADMIN_TLS_CHECK_HOSTS, else every CERT_HOSTS hostname (443
 #   # via traefik; IRC_HOST on 6697).
 #   tls_check_hosts: [irc.example.com:6697, voice.example.com:443@traefik:443]
+#   # Usage & health stats: the anonymous daily install report
+#   # (docs/telemetry.md; Settings → Usage & health stats). Default: true.
+#   # TELEMETRY=off in .env turns it off whatever this says.
+#   telemetry: true

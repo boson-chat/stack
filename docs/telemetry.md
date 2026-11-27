@@ -370,12 +370,12 @@ install's last report that day counts once):
 | Metric | Labels |
 | --- | --- |
 | `boson_installs_active` | — |
-| `boson_installs_new` / `boson_installs_stopped` | — (first seen that day / last seen that day and silent for 7 days since) |
+| `boson_installs_new` | — (first seen that day) |
 | `boson_installs_version` | `service` (`stack` or the service enum), `version` |
 | `boson_installs_country` | `country` |
 | `boson_installs_profile` | `profile` |
 | `boson_installs_mode` | `mode`, `ircd` |
-| `boson_installs_setting` | `setting` (`registration`, `guest_access`, `guest_first`, `smtp`, `sso`, `directory_listed`), `value` (enum value, `true`/`false`/`unknown`) |
+| `boson_installs_setting` | `setting` (`registration`, `guest_access`, `guest_first`, `smtp`, `sso`, `directory_listed`, `federation`: peers > 0), `value` (enum value, `true`/`false`/`unknown`) |
 | `boson_installs_feature` | `feature` (`voice`, `video`, `files`, `push`): installs whose bucket isn't `0`/`null` |
 | `boson_installs_problem` | `problem` (`update_failed`, `rollback`, `crash_loop`, `unhealthy`, `cpu`, `memory`, `disk`) |
 | `boson_people_lo` / `boson_people_hi` | `count` (`accounts`, `active_7d`, `active_30d`, `irc_peak_24h`): the bucket sums |
@@ -422,15 +422,14 @@ TELEMETRY_HOST=telemetry.boson.chat
 STATS_HOST=stats.boson.chat
 CERT_HOSTS=...,telemetry.boson.chat,stats.boson.chat
 STATS_USERNAME=owner
-# bcrypt hash, in single quotes so compose doesn't expand the $ signs:
-#   docker run --rm -it harbor.floret.dev/boson/stack-telemetry:<version> hash-password
+# bcrypt hash (cost 12), in single quotes so compose doesn't expand the $ signs.
+# Make it with the image itself (asks twice, prints the hash):
+#   docker compose run --rm --no-deps telemetry hash-password
 STATS_PASSWORD_HASH='$2a$12$...'
-# 32 random bytes, base64 (scripts/setup.sh makes one): signs the panel's session cookie.
-STATS_SESSION_KEY=...
 ```
 
 DNS: `telemetry` and `stats` A/AAAA records pointing at the box. Then
-`docker compose up -d telemetry victoriametrics-telemetry`.
+`docker compose up -d telemetry victoriametrics-telemetry traefik`.
 
 The country database is downloaded on first start (and refreshed monthly)
 from `download.db-ip.com` into the `telemetry_data` volume; without it every
@@ -441,9 +440,12 @@ carries the attribution.
 
 ### The panel (`https://STATS_HOST`)
 
-One user (`STATS_USERNAME` / `STATS_PASSWORD_HASH`), a session cookie
-(`HttpOnly; Secure; SameSite=Strict`, 7 days), 5 failed logins per IP per 15
-minutes. Pages: **Overview** (active installs 1d/7d/30d; new and
+One user (`STATS_USERNAME` / `STATS_PASSWORD_HASH`), a random session token
+in a cookie (`HttpOnly; Secure; SameSite=Strict`, 7 days; only its hash is
+stored, and signing out deletes it), 5 failed logins per IP per 15 minutes.
+Stopped-reporting installs per week are counted from the per-install table
+(installs whose last report fell in that week and that have been silent
+for over 7 days since). Pages: **Overview** (active installs 1d/7d/30d; new and
 stopped-reporting installs per week; accounts and active users summed across
 installs), **Versions** (adoption per release and per service; installs
 older than N releases), **Features**, **Problems** (anonymous install IDs

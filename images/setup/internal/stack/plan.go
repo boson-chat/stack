@@ -276,6 +276,14 @@ func BuildPlan(a Answers, s Secrets, existing map[string]string, gen *Generator,
 		set("ADMIN_UPDATES_DOCKER_PROXY_URL", "")
 	}
 
+	// Usage & health stats (docs/telemetry.md): the admin panel's daily
+	// anonymous report. Off only when the admin said so.
+	if a.UsageStats {
+		set("TELEMETRY", "on")
+	} else {
+		set("TELEMETRY", "off")
+	}
+
 	// Files.
 	set("FILES_ENABLED", strconv.FormatBool(a.Files.Enabled))
 	if a.Files.Enabled {

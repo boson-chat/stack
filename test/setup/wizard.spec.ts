@@ -122,6 +122,13 @@ test('new install through the wizard', async ({ page }) => {
   const applyUpdates = page.getByRole('switch', { name: /^Let the admin panel apply updates/ });
   await expect(applyUpdates).toBeChecked();
   await expect(page.getByText('root-equivalent access to this server')).toBeVisible();
+  // Usage & health stats: on by default, the why next to the switch; this
+  // test install turns it off (the one-click opt-out), so CI never reports.
+  const usage = page.getByRole('switch', { name: /^Send anonymous usage & health stats/ });
+  await expect(usage).toBeChecked();
+  await expect(page.getByTestId('usage-why')).toContainText('to make Boson better');
+  await usage.uncheck({ force: true });
+  await expect(usage).not.toBeChecked();
   const fed = page.getByRole('group', { name: 'Accept accounts from' });
   await expect(fed.getByRole('radio', { name: /^Verified servers/ })).toBeChecked();
   await shot(page, 'features');
@@ -179,6 +186,8 @@ test('new install through the wizard', async ({ page }) => {
   await expect(env).toContainText('ADMIN_UPDATES_DOCKER_PROXY_URL=http://docker-proxy-updates:2375');
   await expect(env).toContainText(/COMPOSE_PROFILES=.*,updates/);
   await expect(page.getByTestId('review-updates')).toContainText('The admin panel applies updates');
+  await expect(env).toContainText('TELEMETRY=off');
+  await expect(page.getByTestId('review-usage')).toContainText('usage & health stats: off');
   // The image versions: every component, its tag in .env; the newest
   // release (or the pinned default, with a note, when GitHub can't be asked).
   const versions = page.getByTestId('review-versions');

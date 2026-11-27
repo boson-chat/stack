@@ -367,6 +367,45 @@ func TestApplyUpdatesAnswer(t *testing.T) {
 	}
 }
 
+func TestUsageStatsAnswer(t *testing.T) {
+	if !Defaults().UsageStats {
+		t.Fatal("usage stats are on by default")
+	}
+	for _, on := range []bool{true, false} {
+		dir := t.TempDir()
+		a := answers()
+		a.UsageStats = on
+		p, err := BuildPlan(a, Secrets{}, nil, NewGenerator(), "999")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := map[bool]string{true: "on", false: "off"}[on]
+		if got := p.EnvValue("TELEMETRY"); got != want {
+			t.Fatalf("TELEMETRY=%q, want %q", got, want)
+		}
+		env, _ := MergeEnv("", p.Env, "#")
+		os.WriteFile(filepath.Join(dir, ".env"), []byte(env), 0o600)
+		ex, _ := LoadExisting(dir)
+		if got := ex.Answers().UsageStats; got != on {
+			t.Fatalf("read back %v, want %v", got, on)
+		}
+	}
+	// An install from before this choice (no TELEMETRY line) reads as on,
+	// the default; one turned off by hand stays off on a re-run.
+	for env, want := range map[string]bool{
+		"DOMAIN=boson.test\nCOMPOSE_PROFILES=irc,auth,admin\n":                true,
+		"DOMAIN=boson.test\nCOMPOSE_PROFILES=irc,auth,admin\nTELEMETRY=Off\n": false,
+		"DOMAIN=boson.test\nCOMPOSE_PROFILES=irc,auth,admin\nTELEMETRY=0\n":   false,
+	} {
+		dir := t.TempDir()
+		os.WriteFile(filepath.Join(dir, ".env"), []byte(env), 0o600)
+		ex, _ := LoadExisting(dir)
+		if ex.Answers().UsageStats != want {
+			t.Fatalf("%q reads as %v", env, !want)
+		}
+	}
+}
+
 func TestAppDiscoveryDefault(t *testing.T) {
 	a := answers()
 	if !a.Wellknown {

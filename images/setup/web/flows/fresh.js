@@ -648,6 +648,22 @@ function features(errors = {}) {
 				}),
 				updatesNote,
 			),
+			section(
+				'Usage & health stats',
+				h(
+					'p',
+					{ class: 'muted', 'data-testid': 'usage-why' },
+					'We collect a small amount of anonymous usage and health data to make Boson better: to see which versions and features people use, and to catch failed updates, crashes and struggling servers so we can fix them, often before anyone has to report them. No names, emails, messages, channel names, IP addresses or hostnames, ever. ',
+					h('a', { href: 'https://boson.chat/telemetry', target: '_blank', rel: 'noopener' }, 'Exactly what’s sent'),
+				),
+				toggle({
+					label: 'Send anonymous usage & health stats',
+					name: 'usage_stats',
+					detail: 'On by default: the admin panel sends them once a day. Turn this off here, or any time later in the panel’s Settings.',
+					checked: A.usage_stats,
+					onchange: (v) => (A.usage_stats = v),
+				}),
+			),
 			federation,
 			smtp,
 			nav(prevOf('features'), () => saveAndGo('features', nextOf('features'), features)),
@@ -984,6 +1000,12 @@ function review(error) {
 						A.apply_updates
 							? h('li', { 'data-testid': 'review-updates' }, tag('warn', 'updates'), h('span', { class: 'name' }, 'The admin panel applies updates (root-equivalent access to this server)'))
 							: h('li', { 'data-testid': 'review-updates' }, tag('accent', 'updates'), h('span', { class: 'name' }, 'The admin panel lists updates; you apply them on the server')),
+						h(
+							'li',
+							{ 'data-testid': 'review-usage' },
+							tag(A.usage_stats ? 'accent' : 'ok', 'stats'),
+							h('span', { class: 'name' }, A.usage_stats ? 'Anonymous usage & health stats: on (one report a day; off in the panel’s Settings)' : 'Anonymous usage & health stats: off (TELEMETRY=off)'),
+						),
 					),
 				),
 				versions(r.images || []),
