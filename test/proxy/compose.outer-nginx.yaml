@@ -1,0 +1,11 @@
+# The outer proxy: nginx with the wizard's stream + http snippets.
+services:
+  outer:
+    image: nginx:1.27.5-alpine
+    volumes:
+      - ./test/proxy/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${PROXY_SNIPPETS:?}:/etc/nginx/boson:ro
+    networks:
+      outer: {}
+      internet:
+        ipv4_address: 10.214.0.10

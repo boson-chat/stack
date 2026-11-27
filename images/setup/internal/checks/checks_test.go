@@ -89,7 +89,7 @@ func TestPorts(t *testing.T) {
 			return RunProbeClient(host, nonce, tcp, send), nil
 		},
 	}
-	specs := []PortSpec{{"tcp", busyPort, "irc", ""}, {"tcp", tcpFree, "web", ""}, {"udp", udpDropped, "voice", ""}, {"udp", udpOK, "video", ""}}
+	specs := []PortSpec{{Proto: "tcp", Port: busyPort, Feature: "irc"}, {Proto: "tcp", Port: tcpFree, Feature: "web"}, {Proto: "udp", Port: udpDropped, Feature: "voice"}, {Proto: "udp", Port: udpOK, Feature: "video"}}
 	// busy listens on 127.0.0.1 only; make ":port" collide on every OS by
 	// listening on all addresses instead.
 	busy.Close()

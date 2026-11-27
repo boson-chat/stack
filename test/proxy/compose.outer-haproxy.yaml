@@ -1,0 +1,12 @@
+# The outer proxy: HAProxy with the wizard's snippet after a minimal global
+# section (run.sh concatenates them).
+services:
+  outer:
+    image: haproxy:3.0.10-alpine
+    user: root
+    volumes:
+      - ${PROXY_SNIPPETS:?}/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    networks:
+      outer: {}
+      internet:
+        ipv4_address: 10.214.0.10

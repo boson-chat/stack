@@ -111,6 +111,7 @@ func (ex Existing) Answers() Answers {
 		a.TLS.CustomURL = ca
 	}
 	a.Admin.Email = e["ADMIN_EMAIL"]
+	a.Proxy = proxyFromEnv(e)
 	a.SMTP.Host = cfgString(c, e["SMTP_HOST"], "auth", "smtp", "host")
 	a.SMTP.Port, _ = strconv.Atoi(cfgString(c, e["SMTP_PORT"], "auth", "smtp", "port"))
 	a.SMTP.From = cfgString(c, e["SMTP_FROM"], "auth", "smtp", "from")

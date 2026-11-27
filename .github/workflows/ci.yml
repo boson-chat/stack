@@ -425,6 +425,22 @@ jobs:
       - run: scripts/setup.sh --local
       - run: test/acme/run.sh
 
+  proxy:
+    name: behind a reverse proxy (${{ matrix.proxy }} → PROXY v2 → Traefik; Pebble through it; client IP)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        proxy: [traefik, nginx, haproxy]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: images/setup/go.mod
+          cache-dependency-path: images/setup/go.sum
+      - run: scripts/setup.sh --local
+      - run: test/proxy/run.sh ${{ matrix.proxy }}
+
   probe:
     name: setup probe (Go)
     runs-on: ubuntu-latest
@@ -507,7 +523,7 @@ jobs:
       - run: go test -race -count=1 ./...
       - name: install.sh is POSIX sh
         working-directory: .
-        run: sh -n install.sh && shellcheck install.sh test/setup/run.sh test/setup/run-addon.sh test/setup/addon-home.sh test/setup/hooks.sh test/federation/run.sh && sh -n images/wellknown/serve.sh
+        run: sh -n install.sh && shellcheck install.sh test/setup/run.sh test/setup/run-addon.sh test/setup/addon-home.sh test/setup/hooks.sh test/federation/run.sh test/proxy/run.sh && sh -n images/wellknown/serve.sh
 
   setup-e2e:
     name: setup wizard e2e (install.sh → wizard → Pebble ACME → working stack → re-run)
@@ -587,7 +603,7 @@ jobs:
 
   publish:
     name: publish images to Harbor
-    needs: [setup-addon-e2e, federation-e2e, helper, webircgateway, smoke, directory, files, minio, nick-claim, roles, acme, probe, ircds, setup, setup-e2e]
+    needs: [setup-addon-e2e, federation-e2e, helper, webircgateway, smoke, directory, files, minio, nick-claim, roles, acme, proxy, probe, ircds, setup, setup-e2e]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:

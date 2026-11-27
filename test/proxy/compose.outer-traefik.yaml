@@ -1,0 +1,23 @@
+# The outer proxy: a Traefik like a Forgejo install's (its own http→https
+# redirect at priority 1, as the snippet's note says), with the wizard's
+# snippet in its file provider and a site of its own (own.test).
+services:
+  outer:
+    image: traefik:v3.7.19
+    command:
+      - --log.level=INFO
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.web.http.redirections.entrypoint.priority=1
+      - --entrypoints.websecure.address=:443
+      - --providers.file.directory=/dynamic
+    volumes:
+      - ${PROXY_SNIPPETS:?}:/dynamic:ro
+    networks:
+      outer: {}
+      internet:
+        ipv4_address: 10.214.0.10
+  ownsite:
+    image: traefik/whoami:v1.11.0
+    networks: [outer]

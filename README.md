@@ -246,6 +246,10 @@ Config files are generated inside the containers at every start, so changing
 
 - `traefik/dynamic/*.yml`: your own routers/services/middlewares (Traefik
   file provider, reloaded on change; gitignored except `stack.yml`).
+- Behind a reverse proxy you already run on 80/443: `TRAEFIK_HTTP_PUBLISH`,
+  `TRAEFIK_HTTPS_PUBLISH` and `TRAEFIK_PROXY_PROTOCOL_TRUSTED_IPS` (TLS passed
+  through with PROXY protocol, so visitors' own addresses get through); see
+  [docs/reverse-proxy.md](docs/reverse-proxy.md).
 - `compose.override.yaml`: extra services or changes (gitignored; loaded
   automatically unless `COMPOSE_FILE` is set, then list it there).
 - `webroot` profile: serves `WEBROOT_DIR` for a host certbot in webroot
