@@ -134,6 +134,12 @@ it daily ([directory.md](directory.md)).
   included, since each listing is re-checked against its own DNS.
 - Answers are cached 15 minutes (not listed: 2 minutes). While the
   directory is down, a server already seen as verified stays trusted.
+- **Browser calls follow the same directory.** Federated users upload and
+  join calls here from their home server's web client, so voice, video and
+  files accept the web clients of the servers verified in that directory
+  (auth's `/v1/web-origins`, from each server's boson.json `web.url`; your
+  own `WEB_HOST` is published there by the `wellknown` profile). See
+  [voice.md](voice.md#browsers-which-pages).
 
 ## Remote users on this server
 

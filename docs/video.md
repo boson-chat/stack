@@ -84,7 +84,8 @@ VIDEO_CONTROL_TOKEN=<same>
 | `VIDEO_QUIC_URL`, `VIDEO_WEBTRANSPORT_URL` | `quic://VIDEO_HOST:7710`, `https://VIDEO_HOST:7710/wt` | What apps and browsers are told |
 | `VIDEO_TICKET_JWKS_URL` | `http://quicvoiced:8090/...` (node: `https://VOICE_HOST/...`) | Where quicvideod gets the ticket key |
 | `VIDEO_MAX_PARTICIPANTS` | 20 | Per video room |
-| `VIDEO_WEBTRANSPORT_ORIGINS` | `*` | Browser origins allowed to open WebTransport sessions |
+| `VIDEO_WEBTRANSPORT_ORIGINS` | `directory,https://WEB_HOST` | Browser origins allowed to open WebTransport sessions: `directory` = this stack's web client plus the directory's verified Boson web clients (auth's `/v1/web-origins`, as voice: [voice.md](voice.md#browsers-which-pages)); `*` = any; or comma-separated origins. Needs quicvideo with directory mode |
+| `VIDEO_ORIGINS_URL` | `http://auth:8080/v1/web-origins` (node: `https://AUTH_HOST/v1/web-origins`) | Where quicvideod reads that list. A node without `AUTH_HOST` must set this or `VIDEO_WEBTRANSPORT_ORIGINS=*` |
 | `QUICVIDEO_IMAGE` | `harbor.floret.dev/boson/quicvideo:1.12.0` | |
 
 Metrics: the `metrics` profile scrapes `quicvideod:8080/metrics`.

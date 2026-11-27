@@ -28,7 +28,7 @@ func TestAddonPlan(t *testing.T) {
 	for k, want := range map[string]string{
 		"ERGO_API_TOKEN":     "",
 		"ACCOUNT_BACKEND":    "local",
-		"WELLKNOWN_SECTIONS": "irc,auth,voice,files",
+		"WELLKNOWN_SECTIONS": "irc,auth,voice,files,web",
 		"ADMIN_IRC_CHECK":    "ircs://evrd-links:6697",
 		"WEBIRC_ALIASES":     "irc.boson.test:6697=evrd-links:6667,irc.boson.test:6667=evrd-links:6667",
 		"BRIDGE_CERT_HOST":   "irc.boson.test",

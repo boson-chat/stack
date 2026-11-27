@@ -4,7 +4,7 @@
 # https://DOMAIN/.well-known/boson.json here). Runs as nobody on a read-only
 # root with a tmpfs at /run.
 #
-#   WELLKNOWN_SECTIONS  which sections to publish: irc, voice, auth, files
+#   WELLKNOWN_SECTIONS  which sections to publish: irc, voice, auth, files, web
 #                       (comma-separated; compose defaults it to COMPOSE_PROFILES)
 #   IRC_HOST, IRC_PORT  irc section ({"host","port":6697,"tls":true})
 #   AUTH_HOST           auth section ({"url":"https://AUTH_HOST"}), plus the
@@ -19,6 +19,11 @@
 #                       (compose default https://push.boson.chat). Empty: the
 #                       block has no relay (phone push off; browser push still
 #                       works, straight from Ergo).
+#   WEB_HOST            web section ({"url":"https://WEB_HOST"}): this
+#                       install's web client (docs/web.md). Other installs'
+#                       auth lists it in /v1/web-origins, so their voice,
+#                       video and files accept its calls. Left out when
+#                       WEB_HOST is empty.
 #   WELLKNOWN_FEDERATION_URL  with the auth section: auth's federation
 #                       metadata (http://auth:8080/.well-known/boson-federation.json),
 #                       published verbatim as "federation" (docs/federation.md).
@@ -87,6 +92,10 @@ fi
 if has files; then
 	h=$(host FILES_HOST "${FILES_HOST:-}")
 	json="$json,\"files\":{\"url\":\"https://$h\"}"
+fi
+if has web && [ -n "${WEB_HOST:-}" ]; then
+	h=$(host WEB_HOST "$WEB_HOST")
+	json="$json,\"web\":{\"url\":\"https://$h\"}"
 fi
 
 fed_url=""

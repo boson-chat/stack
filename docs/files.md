@@ -63,6 +63,8 @@ downloads).
 | `FILES_GUEST_SECRET` | – | signs guest tokens (HMAC), 16+ characters; empty = guests off. `openssl rand -hex 32` |
 | `FILES_GUEST_TOKENS_PER_HOUR` | `10` | guest tokens one IP may get per hour |
 | `FILES_UPLOAD_TIMEOUT` | `30m` | how long one upload may take to send its body |
+| `FILES_CORS_ALLOWED_ORIGINS` | `directory,https://WEB_HOST` | browser pages allowed to call the upload API (uploads, usage, guest tokens, deletes): this stack's web client plus the web clients of the Boson servers verified in the directory (auth's `/v1/web-origins`, as voice: [voice.md](voice.md#browsers-which-pages)), since federated users upload here from their home server's web client; `*` = any page; or comma-separated origins. Downloads (`/f/…`), file metadata and `GET /v1/config` stay open to any page. Needs files with directory mode (older images: any page) |
+| `FILES_ORIGINS_URL` | `http://auth:8080/v1/web-origins` | where files reads that list |
 | `TRAEFIK_READ_TIMEOUT` | `35m` | Traefik's read timeout on `:443` (see [Upload timeouts](#upload-timeouts)) |
 | `TRAEFIK_IDLE_TIMEOUT` | `180s` | idle keep-alive connections on `:443` |
 | `FILES_S3_ACCESS_KEY`, `FILES_S3_SECRET_KEY` | – | S3 keys for `storage.driver: s3`. Secrets: only in `.env`, never in the config file |
@@ -79,8 +81,8 @@ What compose passes to `files`: `FILES_PUBLIC_URL=https://FILES_HOST`,
 (the default, `$AUTH_ISSUER/.well-known/jwks.json`, is the public host,
 which doesn't resolve inside the compose network), `DATABASE_URL`,
 `FILES_DATA_DIR=/data`, the S3 keys, `TRUSTED_PROXIES` (Traefik's subnet,
-for client IPs and per-IP guest limits), `FILES_GUEST_TOKENS_PER_HOUR` and
-`FILES_UPLOAD_TIMEOUT`. The image is distroless (uid 65532, no shell), so
+for client IPs and per-IP guest limits), `FILES_GUEST_TOKENS_PER_HOUR`,
+`FILES_UPLOAD_TIMEOUT`, `CORS_ALLOWED_ORIGINS` and `ORIGINS_URL`. The image is distroless (uid 65532, no shell), so
 compose has no healthcheck for it; `/healthz` and `/readyz` are on `:3001`.
 
 ### Upload timeouts
