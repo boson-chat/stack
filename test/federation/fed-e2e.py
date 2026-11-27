@@ -476,7 +476,8 @@ def phase_ui():
             row.get_by_role("button", name="Block server").click()
             dlg = page.get_by_role("dialog", name=f"Block {HOME}?")
             shot("5-block-confirm")
-            dlg.get_by_role("button", name="Block and end sessions").click()
+            # admin >= 1.29.1 with auth >= 1.26.0 says what a block does now.
+            dlg.get_by_role("button", name=re.compile(r"^Block and (end sessions|disconnect)$")).click()
             toast(f"{HOME} is blocked")
             expect(row.get_by_text("Server blocked", exact=True)).to_be_visible()
             shot("6-blocked")
