@@ -624,7 +624,7 @@ function features(errors = {}) {
 					? null
 					: toggle({
 							label: 'Require email verification',
-							detail: 'New accounts confirm their email before signing in. Needs outgoing email (below); without a mail server it stays off.',
+							detail: 'New accounts confirm their email before signing in. Needs outgoing email (SMTP, below): without it, it stays off.',
 							checked: A.email_verification,
 							onchange: (v) => (A.email_verification = v),
 						}),
