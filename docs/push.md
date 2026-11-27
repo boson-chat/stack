@@ -1,9 +1,13 @@
 # Push notifications (v1)
 
-> **Status: in progress.** This is the design being implemented across the stack, a new push relay, the Boson app and evrd; sections land as their PRs merge.
-> Stack side done: Ergo `webpush:` (§1), the `boson.json` `push` block and the `pushrelay`
-> compose profile ([Running the relay](#running-the-relay)). The relay itself, the apps and
-> evrd are still to come.
+> **Status: shipped**, except where noted. Ergo `webpush:` and the `boson.json` `push` block
+> (§1), the relay ([boson-chat/pushrelay](https://github.com/boson-chat/pushrelay) 1.1.0, live
+> at push.boson.chat, §2), the web client's browser push (boson 0.103.0) and the phone apps'
+> push code (boson#171, §3), and evrd `draft/webpush` for add-on installs (evrd 0.62.0, §4).
+> **Not yet:** the Android APK on the boson releases is built without `google-services.json`
+> (no FCM, push shows as unavailable) and the iOS test IPA has no `aps-environment` or
+> Notification Service Extension, so phone push needs builds with those; the desktop app has
+> no push (it notifies while running).
 
 Goal: a person signed in to a Boson install gets a notification on their phone, desktop or
 browser when they are mentioned or sent a DM while no Boson device is connected, from any
@@ -12,8 +16,8 @@ push credentials of their own. Nobody but the person's own install can make thei
 a notification, and nobody in between (relay, Apple, Google, browser vendors) can read it.
 
 v1 scope: networks running the Boson stack with Ergo, plus federated accounts on them. evrd
-(add-on installs like ircforever, and later the home bouncer) is phase 2, using the same
-protocol.
+(add-on installs like ircforever, and later the home bouncer) was phase 2, using the same
+protocol; it shipped in evrd 0.62.0.
 
 ## Decisions (user-approved)
 - **Only people with a Boson account** get push: an account on boson.chat or on a self-hosted
@@ -74,7 +78,7 @@ protocol.
 
 The `push` block is published with the `irc` section (it describes this network's IRC
 server). Clients still check that the server offers `draft/webpush` and `VAPID=`, so an
-add-on install's block (evrd has no push before phase 2) is harmless.
+add-on install's block is harmless with an evrd older than 0.62.0 (which has no push).
 
 ### Egress
 Ergo sends pushes itself, from the `ergo` container, over HTTPS (443) to wherever each
@@ -95,8 +99,8 @@ do break it:
 ## 2. The relay (`boson-chat/pushrelay`, new Go service, runs only at boson.chat)
 A small Web Push service that delivers to APNs and FCM. Stack profile `pushrelay`, off by
 default; boson.chat turns it on. Storage: Postgres (the stack's), one table of mailboxes.
-> **Status:** the stack profile is done ([Running the relay](#running-the-relay)); the
-> service itself is being built in `boson-chat/pushrelay`.
+> **Status: done.** The stack profile ([Running the relay](#running-the-relay)) and the service,
+> [boson-chat/pushrelay](https://github.com/boson-chat/pushrelay) (1.1.0, push.boson.chat).
 
 ### 2.1 Creating a mailbox (phone → relay)
 `POST /v1/mailboxes`, body:
@@ -395,6 +399,7 @@ sign-out, server removal, and when the person turns push off. If the server is u
 delete the mailbox anyway: Ergo then gets `404/410` and drops the subscription itself.
 
 ## 4. evrd (phase 2: add-on installs and the home bouncer)
+> **Status: done** for add-on installs: evrd 0.62.0 (`draft/webpush`, 4evrd/evrd#184).
 evrd implements the same server side as Ergo so add-on installs (ircforever) and, later,
 home-bouncer networks push too:
 - advertise `draft/webpush` and `VAPID=` to its clients; per-install VAPID key in its data
@@ -418,13 +423,12 @@ home-bouncer networks push too:
 ## 6. Rollout
 1. Always-on default (stack #56, **done**).
 2. Stack: Ergo `webpush:` config + `boson.json` `push` block (**done**); web client browser
-   push. Browser push works end to end with no relay.
-3. pushrelay service + stack profile (**stack profile done**); deploy at push.boson.chat (needs: APNs `.p8` key, Apple
-   Team ID and bundle id; Firebase project service account; Play Integrity and App Attest
-   setup).
+   push (**done**, boson 0.103.0). Browser push works end to end with no relay.
+3. pushrelay service + stack profile (**done**, pushrelay 1.1.0 at push.boson.chat).
 4. iOS and Android app support (key storage, mailbox registration, Notification Service
-   Extension / FCM service).
-5. evrd `draft/webpush` (phase 2), then desktop via relay.
+   Extension / FCM service): **code done** (boson#171); **released builds still to come**
+   (an Android build with `google-services.json`, an iOS profile with push and App Groups).
+5. evrd `draft/webpush` (**done**, evrd 0.62.0), then desktop via relay (to come).
 
 ## 7. Open questions
 - Notification text when the app can't decrypt (iOS fallback): generic "New message" vs

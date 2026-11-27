@@ -1,15 +1,21 @@
 # boson stack
 
-A self-hostable chat server in one `docker compose up`: accounts, IRC,
-voice, and automatic TLS, wired together for your own domain.
+A self-hostable chat server in one `docker compose up`: accounts, IRC, the
+web client, voice, video, uploads, push notifications, a directory, an admin
+panel and automatic TLS, wired together for your own domain. Or Boson next to
+an IRC server you already run, through a bridge ([docs/bridge.md](docs/bridge.md)).
+Releases are versioned (`vX.Y.Z`); the admin panel applies them with a backup
+first and automatic rollback ([docs/updates.md](docs/updates.md)).
 
 | Service | Profile | What it does | Ports |
 |---|---|---|---|
 | `traefik` | always | Reverse proxy and TLS: gets and renews Let's Encrypt certs for every hostname (or serves a local CA's cert for dev), routes `AUTH_HOST` and the IRC WebSocket | 80, 443 |
 | `certsync` | always | Exports Traefik's certs (`acme.json`, via traefik-certs-dumper) as files for IRC and voice, owned by each service's uid; they hot-reload | – |
 | `ergo` | `irc` | IRC server ([Ergo](https://ergo.chat) 2.19, built with the [account-opers patch](docs/ergo-account-opers.md)) with built-in NickServ/ChanServ, history, always-on clients, push notifications ([docs/push.md](docs/push.md)). Logins are checked against the auth service; network roles become IRC operator classes and vhosts | 6697 (TLS), 6667 (optional), `wss://IRC_HOST/webirc` |
+| `evrd-links`, `evrd` | `bridge` | Add-on installs only, instead of `irc`: the bridge ([evrd](https://github.com/4evrd/evrd) in managed mode) that connects each Boson user to your existing IRC server with WEBIRC, and adds history, read markers, message IDs and push. `evrd-links` holds the connections and is never restarted by updates ([docs/bridge.md](docs/bridge.md)) | 6697 (TLS) |
 | `roleserv` | `irc` | `/msg RoleServ`: network roles from any IRC client ([docs/roles.md](docs/roles.md)) | – |
 | `auth` | `auth` | Accounts ([boson-chat/auth](https://github.com/boson-chat/auth)): sign-up, login, sessions, password reset, signed tokens for voice and IRC | via Traefik at `https://AUTH_HOST` |
+| `api` | `api` | The boson API ([boson-chat/backend](https://github.com/boson-chat/backend)): profiles, avatars, nick claims, link previews for the web client ([docs/api.md](docs/api.md)) | via Traefik at `https://API_HOST` |
 | `postgres` | `auth` | Database for `auth` (Postgres 18) | internal |
 | `quicvoiced` | `voice` | Voice rooms over QUIC ([boson-chat/quicvoice](https://github.com/boson-chat/quicvoice)); accepts tokens from `auth`. Static channels from `VOICE_ROOMS` plus channels created through the rooms API at `https://VOICE_HOST/v1/rooms` (optionally under an IRC channel, lockable to IRC roles) | 7700/udp, via Traefik at `https://VOICE_HOST` |
 | `quicvideod` | `video` | Camera + screen share in voice channels ([boson-chat/quicvideo](https://github.com/boson-chat/quicvideo)): each voice channel's video room. Only quicvoiced's video tickets get in, and quicvoiced keeps its rooms in step with voice. Also runs on its own box ([docs/video.md](docs/video.md)) | 7710/udp (QUIC + WebTransport), via Traefik at `https://VIDEO_HOST` |
@@ -27,8 +33,8 @@ voice, and automatic TLS, wired together for your own domain.
 | `webircgateway` | `web` | The browser client's IRC connections ([webircgateway](https://github.com/kiwiirc/webircgateway) with Boson's guards): WebSocket in, TCP/TLS out to any IRC network on IRC ports, never to internal addresses, per-IP caps, WEBIRC to this network's Ergo ([docs/web.md](docs/web.md)) | via Traefik at `wss://WEB_HOST/webirc/websocket/` |
 | `wellknown` | `wellknown` | Serves `https://DOMAIN/.well-known/boson.json` (client discovery: IRC, auth and voice endpoints, and the network's branding), generated from `.env`. Only when `DOMAIN` points at this server; the setup wizard turns it on by default (the app needs it to find anything beyond IRC) | via Traefik |
 
-Planned: SSO (OIDC/SAML) in the auth service, video, the admin panel, and the
-desktop client configured from your domain.
+Single sign-on (OIDC/SAML), video, the admin panel and app discovery from
+your domain (`wellknown`) have all shipped; see the table above.
 
 ## Quick start
 
@@ -46,17 +52,27 @@ scripts/setup.sh            # asks for your domain etc., generates every secret 
 docker compose up -d --build
 ```
 
-Before starting on a real server:
+Before starting on a real server (the wizard checks all of this for you):
 
-1. DNS A records for your IRC, voice and auth hostnames → this server.
-2. Open 80/tcp and 443/tcp (certificates, auth, WebSocket), 6697/tcp (IRC), 7700/udp (voice), and 7710/udp with the video profile.
-3. SMTP settings in `.env` so the auth service can send verification and
-   password-reset email (needed with `REQUIRE_EMAIL_VERIFICATION=true`).
-4. Create yourself an admin account:
-   `docker compose exec auth ./auth user create --username you --email you@example.com --role admin`
+1. DNS records (A, plus AAAA if the server has IPv6) → this server, for
+   every hostname your profiles use: `irc.`, `auth.`, `chat.` (web),
+   `admin.`, `api.`, `voice.`, `files.`, and `video.` / `directory.` when
+   those are on, plus the bare domain for `/.well-known/boson.json`
+   (`wellknown`). A wildcard `*.<domain>` covers all but the bare domain.
+2. Open 80/tcp and 443/tcp (certificates, sign-in, web client, admin, API, WebSocket), 6697/tcp (IRC), 7700/udp (voice), and 7710/udp with the video profile.
+3. Email (SMTP) is **optional**. Without it, everything works except email
+   verification, password-reset email and invite / account-setup email; the
+   admin panel then hands out the reset and setup links itself (see
+   boson-chat/auth "Running without a mail server"). Add SMTP in `.env` /
+   `config/boson.yaml` `auth.smtp` (or later, in the admin panel) if you want
+   them; `REQUIRE_EMAIL_VERIFICATION=true` needs it.
+4. The wizard creates the admin (the Owner role). By hand:
+   `docker compose exec auth ./auth user create --username you --email you@example.com --role owner`
 
-Then sign up at `https://auth.<your domain>` (API: `POST /v1/register`) and
-connect any IRC client to `irc.<your domain>:6697` with TLS and SASL.
+Then sign in at `https://chat.<your domain>` (the web client), or in the
+Boson apps by adding `irc.<your domain>`, and connect any IRC client to
+`irc.<your domain>:6697` with TLS and SASL. Sign-up follows
+`REGISTRATION` (`open`, `invite` or `closed`).
 
 ### Trying it locally
 
@@ -159,10 +175,11 @@ IRC, RoleServ, and what the auth service provides for them:
 
 ## Profiles
 
-`COMPOSE_PROFILES` in `.env` picks what runs: `irc`, `voice`, `auth`,
-`api`, `directory`, `files`, `minio`, `metrics`, `admin`, `webroot`, `wellknown`, `web` (traefik and
-certsync always run).
-`scripts/setup.sh` defaults to `irc,voice,auth`. Examples:
+`COMPOSE_PROFILES` in `.env` picks what runs: `irc`, `bridge`, `voice`,
+`video`, `auth`, `api`, `directory`, `files`, `minio`, `metrics`, `admin`,
+`updates`, `pushrelay`, `webroot`, `wellknown`, `web` (traefik and certsync
+always run). The setup wizard picks them from your answers;
+`scripts/setup.sh` defaults to `irc,voice,auth,api,wellknown`. Examples:
 
 - `voice,auth,metrics` runs accounts, voice and metrics next to an IRC
   server you already have (leave `IRC_HOST` out of `CERT_HOSTS` if that
@@ -234,7 +251,8 @@ Config files are generated inside the containers at every start, so changing
 - **Ergo:** `images/ergo/helper/ircd.yaml.tmpl`, rendered by
   `boson-ergo render` (Go template). Server name = `IRC_HOST`, cloaks
   (`<hash>.<network name>`, secret generated in the datastore), history
-  (in memory + SQLite, 1 week), always-on and multiclient opt-in, WebSocket
+  (in memory + SQLite, 1 week), multiclient, always-on on by default
+  (`IRC_ALWAYS_ON`, opt-out per account), Web Push (`IRC_PUSH`), WebSocket
   on `:8097` behind Traefik at `wss://IRC_HOST/webirc` (same host as IRC so
   web clients reuse its certificate and origin rules). Mount your own
   template and set `ERGO_CONFIG_TEMPLATE` to replace it, or `IRC_MOTD_FILE`
