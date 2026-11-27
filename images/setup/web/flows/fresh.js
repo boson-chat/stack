@@ -652,7 +652,7 @@ function features(errors = {}) {
 				'Usage & health stats',
 				h(
 					'p',
-					{ class: 'hint', 'data-testid': 'usage-why' },
+					{ class: 'muted', 'data-testid': 'usage-why' },
 					'We collect a small amount of anonymous usage and health data to make Boson better: to see which versions and features people use, and to catch failed updates, crashes and struggling servers so we can fix them, often before anyone has to report them. No names, emails, messages, channel names, IP addresses or hostnames, ever. ',
 					h('a', { href: 'https://boson.chat/telemetry', target: '_blank', rel: 'noopener' }, 'Exactly what’s sent'),
 				),

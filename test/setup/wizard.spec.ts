@@ -127,7 +127,7 @@ test('new install through the wizard', async ({ page }) => {
   const usage = page.getByRole('switch', { name: /^Send anonymous usage & health stats/ });
   await expect(usage).toBeChecked();
   await expect(page.getByTestId('usage-why')).toContainText('to make Boson better');
-  await usage.click();
+  await usage.uncheck({ force: true });
   await expect(usage).not.toBeChecked();
   const fed = page.getByRole('group', { name: 'Accept accounts from' });
   await expect(fed.getByRole('radio', { name: /^Verified servers/ })).toBeChecked();
