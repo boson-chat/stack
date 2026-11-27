@@ -712,9 +712,11 @@ services:
   # the stack bridge, the first address of STACK_SUBNET; set
   # NODE_EXPORTER_ADDR when you change STACK_SUBNET). Only containers on the
   # stack network (victoriametrics) can route to it; nothing on the public
-  # interface can. With a host firewall that drops incoming traffic by default
-  # (ufw), allow the stack subnet to reach it once:
-  #   ufw allow from 10.203.53.0/24 to 10.203.53.1 port 9100 proto tcp
+  # interface can. A host firewall that drops incoming traffic by default
+  # (ufw) drops this too: install.sh adds the rule when ufw is active
+  # (an existing install: get.boson.chat ... | sudo sh -s -- --firewall);
+  # by hand:
+  #   ufw allow from 10.203.53.0/24 to 10.203.53.1 port 9100 proto tcp comment 'boson: metrics -> node-exporter'
   node-exporter:
     <<: *restart
     profiles: [metrics]

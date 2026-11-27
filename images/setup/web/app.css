@@ -934,6 +934,13 @@ fieldset.group .hint {
 	font-size: var(--text-sm);
 	color: var(--fg-2);
 }
+.checks pre.cmd {
+	margin-top: var(--space-2);
+	padding: var(--space-2) var(--space-3);
+	font-size: var(--text-xs);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
 .checks .what {
 	color: var(--fg-quiet);
 	font-size: var(--text-xs);

@@ -136,13 +136,22 @@ test('new install through the wizard', async ({ page }) => {
   await expect(page.getByLabel('Servers to accept')).toBeHidden();
   await next(page).click();
 
-  // ---- ports: the firewall drops 7700/udp ----
+  // ---- ports: the firewall drops 7700/udp, and node-exporter from the stack network ----
   await expect(page.getByRole('heading', { name: 'Firewall and ports' })).toBeVisible();
   hook('block-udp');
+  hook('block-node');
   await page.getByTestId('ports-recheck').click();
   const udp = page.locator('[data-port="7700/udp"]');
   await expect(udp).toHaveAttribute('data-level', 'warn');
   await expect(udp).toContainText('drops 7700/udp');
+  // The dev server has no probe container: no node-exporter row.
+  const node = page.locator('[data-port="10.203.53.1:9100/tcp"]');
+  if (!DEV) {
+    await expect(node).toHaveAttribute('data-level', 'warn');
+    await expect(node.getByTestId('port-command')).toHaveText(
+      "sudo ufw allow from 10.203.53.0/24 to 10.203.53.1 port 9100 proto tcp comment 'boson: metrics -> node-exporter'",
+    );
+  }
   await expect(page.locator('[data-port="443/tcp"]')).toHaveAttribute('data-level', 'ok');
   await expect(page.getByText('What this can’t check.')).toBeVisible();
   await shot(page, 'ports-udp-blocked');
@@ -152,10 +161,12 @@ test('new install through the wizard', async ({ page }) => {
   await shot(page, 'ports-voice-off');
   // Opened again: voice back on, the check passes.
   hook('unblock-udp');
+  hook('unblock-node');
   await page.getByRole('link', { name: '← Back' }).click();
   await page.getByRole('switch', { name: /^Voice/ }).check({ force: true });
   await next(page).click();
   if (!DEV) await expect(udp).toHaveAttribute('data-level', 'ok');
+  if (!DEV) await expect(node).toHaveAttribute('data-level', 'ok');
   await shot(page, 'ports-ok');
   await next(page).click();
 

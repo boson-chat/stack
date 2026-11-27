@@ -39,6 +39,7 @@ cleanup() {
 	set +e
 	[ "${ok:-}" = 1 ] || logs
 	bash test/setup/hooks.sh unblock-udp >/dev/null 2>&1
+	bash test/setup/hooks.sh unblock-node >/dev/null 2>&1
 	bash test/setup/hooks.sh free-6697 >/dev/null 2>&1
 	sudo docker rm -f boson-setup >/dev/null 2>&1
 	[ -f "$DIR/compose.yaml" ] && dc down -v --remove-orphans >/dev/null 2>&1

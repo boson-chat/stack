@@ -539,7 +539,10 @@ jobs:
       - run: go test -race -count=1 ./...
       - name: install.sh is POSIX sh
         working-directory: .
-        run: sh -n install.sh && shellcheck install.sh test/setup/run.sh test/setup/run-addon.sh test/setup/addon-home.sh test/setup/hooks.sh test/federation/run.sh test/proxy/run.sh && sh -n images/wellknown/serve.sh
+        run: sh -n install.sh && shellcheck install.sh test/install/ufw.sh test/setup/run.sh test/setup/run-addon.sh test/setup/addon-home.sh test/setup/hooks.sh test/federation/run.sh test/proxy/run.sh && sh -n images/wellknown/serve.sh
+      - name: install.sh's ufw step (node-exporter rule, a fake ufw)
+        working-directory: .
+        run: test/install/ufw.sh
 
   setup-e2e:
     name: setup wizard e2e (install.sh → wizard → Pebble ACME → working stack → re-run)

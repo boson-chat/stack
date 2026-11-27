@@ -26,6 +26,10 @@ type PortSpec struct {
 	// Proxy: a port the reverse proxy that runs here already holds (Boson
 	// behind it). In use is what's expected; informational.
 	Proxy bool `json:"proxy,omitempty"`
+	// Internal: a port on this server only Boson's own containers connect
+	// to (node-exporter on the stack bridge's gateway), tested from a
+	// container on the stack network.
+	Internal bool `json:"internal,omitempty"`
 }
 
 // BehindProxy turns the ports for a server whose 80/443 belong to a reverse
@@ -91,6 +95,8 @@ type PortResult struct {
 	// ok | warn | error
 	Level   string `json:"level"`
 	Message string `json:"message"`
+	// Command: what to run on this server to fix it (a firewall rule).
+	Command string `json:"command,omitempty"`
 }
 
 // ProbeResult is what the probe container reports (stdout, one JSON line).
@@ -110,6 +116,12 @@ type Ports struct {
 	// RunProbe starts the probe container (nil: reachability unknown).
 	RunProbe func(ctx context.Context, host, nonce string, tcp, udp []int) (ProbeResult, error)
 	Nonce    func() string
+	// Node: node-exporter's address (NODE_EXPORTER_ADDR, the stack bridge's
+	// gateway) and the stack subnet that scrapes it (nil: not checked).
+	Node func() (addr, subnet string)
+	// RunNodeProbe: whether a container on the stack network connects to
+	// addr:port (this server's firewall decides).
+	RunNodeProbe func(ctx context.Context, addr string, port int) (bool, error)
 
 	// One check at a time: two would fight over the ports they listen on.
 	mu sync.Mutex
@@ -243,8 +255,82 @@ func (p *Ports) Check(ctx context.Context, specs []PortSpec) Report {
 		}
 		describe(r)
 	}
+	if n, ok := p.checkNode(ctx); ok {
+		res = append(res, n)
+	}
 	rep.Ports = res
 	return rep
+}
+
+// NodeExporterPort: node-exporter's port (compose.yaml).
+const NodeExporterPort = 9100
+
+// NodeRule: the ufw rule that lets the stack subnet reach node-exporter
+// (install.sh adds it when ufw is active).
+func NodeRule(addr, subnet string) string {
+	return fmt.Sprintf("sudo ufw allow from %s to %s port %d proto tcp comment 'boson: metrics -> node-exporter'", subnet, addr, NodeExporterPort)
+}
+
+// checkNode: can the metrics container (on the stack network) reach
+// node-exporter on the stack bridge's gateway? A firewall that drops
+// incoming traffic by default (ufw) drops that too, and the admin panel's
+// host metrics (job "node") stay down. Until the stack runs, a listener
+// here stands in for node-exporter.
+func (p *Ports) checkNode(ctx context.Context) (PortResult, bool) {
+	if p.Node == nil || p.RunNodeProbe == nil {
+		return PortResult{}, false
+	}
+	addr, subnet := p.Node()
+	if net.ParseIP(addr) == nil {
+		return PortResult{}, false
+	}
+	r := PortResult{
+		PortSpec: PortSpec{Proto: "tcp", Port: NodeExporterPort, Feature: "metrics", Bind: addr, Internal: true,
+			What: "host metrics: node-exporter, for Boson’s containers (" + subnet + ") only"},
+		Reach: "unknown",
+	}
+	l, err := net.Listen("tcp", net.JoinHostPort(addr, strconv.Itoa(NodeExporterPort)))
+	switch {
+	case err == nil:
+		r.Local = "free"
+		defer l.Close()
+		go func() {
+			for {
+				c, err := l.Accept()
+				if err != nil {
+					return
+				}
+				c.Close()
+			}
+		}()
+	case errors.Is(err, syscall.EADDRNOTAVAIL):
+		// The stack network isn't up: nothing to connect to.
+		r.Local = "no_address"
+	default:
+		// node-exporter (or the listener of an earlier check) has it.
+		r.Local = "boson"
+	}
+	if r.Local != "no_address" {
+		pctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		reached, err := p.RunNodeProbe(pctx, addr, NodeExporterPort)
+		cancel()
+		if err == nil {
+			r.Reach = map[bool]string{true: "ok", false: "blocked"}[reached]
+		}
+	}
+	switch r.Reach {
+	case "blocked":
+		r.Level = "warn"
+		r.Message = fmt.Sprintf("This server’s firewall drops connections from Boson’s network (%s) to %s, so the admin panel’s host metrics (CPU, memory, disks; Service health’s job node) stay down. Nothing else is affected. Allow just that path:", subnet, r.Name())
+		r.Command = NodeRule(addr, subnet)
+	case "ok":
+		r.Level = "ok"
+		r.Message = "Boson’s containers reach it: the admin panel gets this server’s host metrics."
+	default:
+		r.Level = "ok"
+		r.Message = "Couldn’t test it from here. If the admin panel’s Service health shows job node down, allow it in the firewall: " + NodeRule(addr, subnet)
+	}
+	return r, true
 }
 
 func describe(r *PortResult) {

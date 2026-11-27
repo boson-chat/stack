@@ -12,6 +12,14 @@ block-udp)
 unblock-udp)
 	while sudo iptables -D INPUT -p udp --dport 7700 -j DROP -m comment --comment boson-e2e 2>/dev/null; do :; done
 	;;
+block-node)
+	# This server's own firewall drops the stack network's connections to
+	# node-exporter (what ufw's default-deny INPUT does).
+	sudo iptables -I INPUT -s 10.203.53.0/24 -d 10.203.53.1 -p tcp --dport 9100 -j DROP -m comment --comment boson-e2e
+	;;
+unblock-node)
+	while sudo iptables -D INPUT -s 10.203.53.0/24 -d 10.203.53.1 -p tcp --dport 9100 -j DROP -m comment --comment boson-e2e 2>/dev/null; do :; done
+	;;
 occupy-6697)
 	# Another program on the IRC port: Ergo can't start.
 	nohup python3 -c 'import socket,time
