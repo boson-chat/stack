@@ -523,11 +523,13 @@ services:
       HTTP_ADDR: ":8080"
       # Public API (GET /v1/rooms, /healthz), routed at https://VOICE_HOST.
       PUBLIC_HTTP_ADDR: ":8090"
-      # Browsers (the web client at WEB_HOST) join over WebTransport on the
-      # QUIC port (https://VOICE_HOST:7700/wt, quicvoice 1.15+) and call the
-      # public API cross-origin. Pages allowed (comma-separated; empty = any;
-      # the voice token still decides). config/boson.yaml voice.web_origins wins.
-      WEBTRANSPORT_ORIGINS: ${VOICE_WEBTRANSPORT_ORIGINS:-${WEB_HOST:+https://${WEB_HOST}}}
+      # Browsers (Boson web clients, this stack's WEB_HOST or anyone else's)
+      # join over WebTransport on the QUIC port (https://VOICE_HOST:7700/wt,
+      # quicvoice 1.15+) and call the public API cross-origin. Pages allowed:
+      # default * = any (safe: the API and sessions take bearer voice tokens,
+      # never cookies, so the token decides; see docs/voice.md). A
+      # comma-separated list restricts it. config/boson.yaml voice.web_origins wins.
+      WEBTRANSPORT_ORIGINS: ${VOICE_WEBTRANSPORT_ORIGINS:-*}
       # config/boson.yaml (voice:) wins over the env defaults below.
       BOSON_CONFIG: /config/boson.yaml
       # Default; config/boson.yaml voice.rooms wins.
@@ -1307,6 +1309,12 @@ services:
       BOSON_DIRECTORY_URL: ${WEB_DIRECTORY_URL:-https://directory.boson.chat}
       # Empty: this host's /webirc/websocket/ (the gateway below).
       BOSON_GATEWAY_URL: ${WEB_GATEWAY_URL:-}
+      # The network this client is the home of, shown by name (web image
+      # with networkName/networkDomain in /boson-config.js; older images
+      # ignore both). Empty name: the name the auth service gives. Empty
+      # domain: from AUTH_HOST (auth.example.com -> example.com).
+      BOSON_NETWORK_NAME: ${NETWORK_NAME:-}
+      BOSON_NETWORK_DOMAIN: ${WEB_NETWORK_DOMAIN:-}
     read_only: true
     tmpfs:
       - /tmp:uid=101,gid=101

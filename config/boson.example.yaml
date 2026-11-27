@@ -299,6 +299,10 @@ version: 1
 #   public_http_addr: ":8090"
 #   max_datagrams_per_sec: 0
 #   max_datagram_payload: 0
+#   # restart: browser pages allowed to open voice over WebTransport and
+#   # call the room API (CORS). [] = any page (the voice token still authorizes).
+#   # Default: VOICE_WEBTRANSPORT_ORIGINS (*).
+#   web_origins: [https://chat.example.com]
 #   # `rooms` also accepts bare ids: rooms: [general, gaming]
 
 # ---- directory: the stack's own directory (directory profile) --------------------

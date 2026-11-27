@@ -94,6 +94,7 @@ admin needs to change it in the panel.
 | `voice.max_kbps` | int kbit/s, 6–510 (0 / absent = no cap; quicvoiced ≥ 1.13) | none | live | quicvoiced → app | `settings.manage` |
 | `voice.settings_ttl`, `voice.ergo_cache_ttl` | duration | built-in | live | quicvoiced | hand edit |
 | `voice.quic_addr`, `voice.http_addr`, `voice.public_http_addr`, `voice.max_datagrams_per_sec`, `voice.max_datagram_payload` | listeners / limits | built-in | **restart** | quicvoiced | hand edit |
+| `voice.web_origins` | list of origins (`[]` = any page; see [voice.md](voice.md#browsers-any-page-by-default)) | `VOICE_WEBTRANSPORT_ORIGINS` (`*`) | **restart** | quicvoiced | hand edit |
 | `directory.name` / `.operator` / `.contact` | string | `DIRECTORY_NAME` / `DIRECTORY_OPERATOR` / `DIRECTORY_CONTACT` | live | directory | `directory.manage` |
 | `directory.include_main` | bool | `DIRECTORY_INCLUDE_MAIN` | live | directory | `directory.manage` |
 | `directory.main_peer_url` | https URL | `DIRECTORY_MAIN_PEER` | live | directory | `directory.manage` |

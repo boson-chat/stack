@@ -154,6 +154,39 @@ curl -fsS -X POST https://VOICE_HOST/v1/rooms -H "Authorization: Bearer $VOICE" 
   -H 'Content-Type: application/json' -d '{"name":"Game Night","parent":"#boson"}'
 ```
 
+## Browsers: any page by default
+
+Browsers join voice over WebTransport (`https://VOICE_HOST:7700/wt`,
+quicvoice 1.15+) and call the rooms API cross-origin. By default quicvoiced
+accepts **any page** (`VOICE_WEBTRANSPORT_ORIGINS=*`), so a Boson web client
+served from another install (a self-hosted web client joining this
+network's voice, or a federated user's home client) works the same as
+yours at `WEB_HOST`.
+
+That's safe because the origin check isn't what protects voice:
+
+- Every rooms API call and every WebTransport session needs a voice token
+  (`Authorization: Bearer` on the API; WebTransport sessions present one too), which only
+  `POST https://AUTH_HOST/v1/voice/token` hands out, and only to a signed-in
+  user (or a guest, when guest voice is on). The token's claims decide who
+  joins which room.
+- quicvoiced never uses cookies or other ambient credentials, and its CORS
+  answers never allow credentials. A page that has no token gets `401`
+  whatever its origin; a page that has one could use it from anywhere
+  anyway (curl, the desktop app).
+
+To restrict it anyway, list the pages (comma-separated) and restart
+quicvoiced (`docker compose up -d quicvoiced`):
+
+```sh
+VOICE_WEBTRANSPORT_ORIGINS=https://chat.example.com,https://chat.friend.example
+```
+
+or `voice.web_origins: [https://chat.example.com]` in config/boson.yaml
+(which wins; `[]` = any page; restart to apply). Other pages then get `403`
+on `/wt` and no CORS headers from the API. Video has its own list,
+`VIDEO_WEBTRANSPORT_ORIGINS` (also `*` by default; [video.md](video.md)).
+
 ## Discovery: `/.well-known/boson.json`
 
 The boson client asks for a domain (e.g. `boson.chat`) and reads
