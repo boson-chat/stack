@@ -22,6 +22,32 @@ type FakeCompose struct {
 	Stale bool
 	Svc   []string
 	Delay time.Duration
+	// Slow: these services stay "starting" this long after Up (the
+	// dev server shows the Logs panels with them).
+	Slow map[string]time.Duration
+	// LogLines: a service's log (default: one fake line).
+	LogLines map[string][]string
+	// HealthOutput: what a Slow service's healthcheck says while it waits.
+	HealthOutput map[string]string
+	// ACMEError: while a Slow service waits, Traefik's log has this ACME
+	// error.
+	ACMEError string
+	upAt      time.Time
+}
+
+// waiting: a Slow service that isn't up yet.
+func (f *FakeCompose) waiting(s string) bool {
+	d, ok := f.Slow[s]
+	return ok && (f.upAt.IsZero() || time.Since(f.upAt) < d)
+}
+
+func (f *FakeCompose) anyWaiting() bool {
+	for s := range f.Slow {
+		if f.waiting(s) {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *FakeCompose) call(s string) {
@@ -50,6 +76,7 @@ func (f *FakeCompose) Up(ctx context.Context, onLine func(string)) error {
 		return fmt.Errorf("docker compose up: exit status 1\nError response from daemon: failed to set up container networking: driver failed programming external connectivity on endpoint boson-ergo-1: Bind for 0.0.0.0:6697 failed: port is already allocated")
 	}
 	f.Started = true
+	f.upAt = time.Now()
 	onLine(" Container boson-traefik-1  Started")
 	return nil
 }
@@ -73,8 +100,13 @@ func (f *FakeCompose) PS(ctx context.Context) ([]ServiceStatus, error) {
 			out = append(out, ServiceStatus{Service: s, State: "created"})
 			continue
 		}
+		f.mu.Lock()
+		slow := f.waiting(s)
+		f.mu.Unlock()
 		if OneShot[s] {
 			out = append(out, ServiceStatus{Service: s, State: "exited"})
+		} else if slow {
+			out = append(out, ServiceStatus{Service: s, State: "running", Health: "starting"})
 		} else {
 			out = append(out, ServiceStatus{Service: s, State: "running", Health: "healthy"})
 		}
@@ -83,7 +115,38 @@ func (f *FakeCompose) PS(ctx context.Context) ([]ServiceStatus, error) {
 }
 
 func (f *FakeCompose) Logs(ctx context.Context, service string, tail int) string {
-	return service + ": (fake log)"
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	lines, ok := f.LogLines[service]
+	if !ok {
+		lines = []string{service + ": (fake log)"}
+	}
+	if service == "traefik" && f.ACMEError != "" && f.anyWaiting() {
+		lines = append(append([]string(nil), lines...), time.Now().UTC().Format(time.RFC3339)+
+			` ERR Unable to obtain ACME certificate for domains error="`+strings.ReplaceAll(f.ACMEError, `"`, `\"`)+
+			`" ACME CA=https://acme.example/directory domains=["irc.boson.test"] providerName=letsencrypt.acme routerName=webirc@docker`)
+	}
+	if len(lines) > tail {
+		lines = lines[len(lines)-tail:]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (f *FakeCompose) Health(ctx context.Context, service string) (*Health, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.waiting(service) {
+		return &Health{Status: "healthy"}, nil
+	}
+	out := f.HealthOutput[service]
+	if out == "" {
+		out = "connection refused"
+	}
+	h := &Health{Status: "starting", FailingStreak: 2}
+	for i := 2; i >= 0; i-- {
+		h.Log = append(h.Log, HealthCheck{Start: time.Now().Add(-time.Duration(i*10) * time.Second).UTC(), ExitCode: 1, Output: out + "\n"})
+	}
+	return h, nil
 }
 
 func (f *FakeCompose) Exec(ctx context.Context, service string, stdin io.Reader, args ...string) (string, error) {

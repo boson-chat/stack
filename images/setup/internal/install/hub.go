@@ -4,12 +4,14 @@ import "sync"
 
 // Event goes to the wizard's progress stream.
 type Event struct {
-	// state | log | services
+	// state | log | services | warnings
 	Type     string          `json:"type"`
 	Step     string          `json:"step,omitempty"`
 	Line     string          `json:"line,omitempty"`
 	State    *State          `json:"state,omitempty"`
 	Services []ServiceStatus `json:"services,omitempty"`
+	// Warnings: the current ones (none = cleared).
+	Warnings []Warning `json:"warnings,omitempty"`
 }
 
 // Hub fans events out to subscribers and keeps recent log lines, so a page
@@ -50,7 +52,7 @@ func (h *Hub) Subscribe() (chan Event, func()) {
 	for _, e := range h.logs {
 		c <- e
 	}
-	for _, t := range []string{"services", "state"} {
+	for _, t := range []string{"services", "warnings", "state"} {
 		if e, ok := h.last[t]; ok {
 			c <- e
 		}
@@ -71,4 +73,5 @@ func (h *Hub) ClearLogs() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.logs = nil
+	delete(h.last, "warnings")
 }

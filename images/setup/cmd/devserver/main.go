@@ -52,11 +52,29 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:8443", "listen")
 	src := flag.String("stack", "../..", "stack files")
 	admin := flag.String("admin", "", "an existing auth user (re-run)")
+	slow := flag.Duration("slow", 20*time.Second, "ergo stays \"starting\" this long, with Traefik logging an ACME error (0: off)")
 	flag.Parse()
 	os.MkdirAll(*dir, 0o755)
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	g := gate.NewWithCode("TEST-CODE")
 	fake := &install.FakeCompose{FailUp: 1, Delay: 2 * time.Second}
+	if *slow > 0 {
+		// What a stuck install looks like on the Install page: ergo waits
+		// for its certificate, its healthcheck fails, Traefik can't get one.
+		fake.Slow = map[string]time.Duration{"ergo": *slow}
+		fake.HealthOutput = map[string]string{"ergo": "wget: can't connect to remote host (127.0.0.1): Connection refused"}
+		fake.ACMEError = `unable to generate a certificate for the domains [irc.boson.test]: acme: error: 0 :: POST :: https://acme.example/directory :: "tls: failed to verify certificate: x509: certificate signed by unknown authority"`
+		fake.LogLines = map[string][]string{
+			"ergo": {},
+			"traefik": {
+				`2026-11-26T10:00:00Z INF Traefik version 3.6.2 built on 2025-11-18T00:00:00Z version=3.6.2`,
+				`2026-11-26T10:00:00Z INF Starting provider aggregator *aggregator.ProviderAggregator`,
+				`2026-11-26T10:00:00Z INF Starting provider *acme.ChallengeTLSALPN`,
+				`2026-11-26T10:00:00Z INF Starting provider *docker.Provider`,
+				`2026-11-26T10:00:01Z INF Testing certificate renew... acmeCA=https://acme.example/directory providerName=letsencrypt.acme`,
+			},
+		}
+	}
 	if *admin != "" {
 		fake.FailUp = 0
 		fake.Users = map[string]string{*admin: "owner " + *admin + "@boson.test"}

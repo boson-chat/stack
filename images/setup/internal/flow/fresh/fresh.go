@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,6 +55,8 @@ type Flow struct {
 	existing stack.Existing
 	// operPassword: generated for this install, shown once on Done.
 	operPassword string
+	// logSlots: concurrent service-log requests (each runs docker).
+	logSlots chan struct{}
 }
 
 func New(d Deps) (*Flow, error) {
@@ -69,7 +73,7 @@ func NewFlow(d Deps, cfg Config) (*Flow, error) {
 	if d.SendMail == nil {
 		d.SendMail = checks.SendTestMail
 	}
-	f := &Flow{d: d, cfg: cfg, gen: stack.NewGenerator()}
+	f := &Flow{d: d, cfg: cfg, gen: stack.NewGenerator(), logSlots: make(chan struct{}, 4)}
 	ex, err := stack.LoadExisting(d.InstallDir)
 	if err != nil {
 		return nil, err
@@ -115,6 +119,7 @@ func (f *Flow) Register(mux *http.ServeMux, p string) {
 	mux.HandleFunc("POST "+p+"install", f.startInstall)
 	mux.HandleFunc("GET "+p+"install", f.installState)
 	mux.HandleFunc("GET "+p+"install/events", f.events)
+	mux.HandleFunc("GET "+p+"install/services/{service}/logs", f.serviceLogs)
 	mux.HandleFunc("GET "+p+"done", f.done)
 	mux.HandleFunc("POST "+p+"finish", f.finish)
 }
@@ -409,6 +414,46 @@ func (f *Flow) startInstall(w http.ResponseWriter, r *http.Request) {
 
 func (f *Flow) installState(w http.ResponseWriter, _ *http.Request) {
 	flow.JSON(w, http.StatusOK, map[string]any{"install": f.d.Runner.State(), "running": f.d.Runner.Running()})
+}
+
+// serviceLogs: one service's recent log and healthcheck output, for the
+// Install page's Logs panels. Only this install's services; redacted like
+// the compose output; capped (install.MaxLogTail lines, 64 KiB).
+func (f *Flow) serviceLogs(w http.ResponseWriter, r *http.Request) {
+	tail := install.DefaultLogTail
+	if v := r.URL.Query().Get("tail"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			flow.Error(w, http.StatusBadRequest, "bad_request", "tail must be a positive number.")
+			return
+		}
+		tail = min(n, install.MaxLogTail)
+	}
+	select {
+	case f.logSlots <- struct{}{}:
+		defer func() { <-f.logSlots }()
+	default:
+		flow.Error(w, http.StatusTooManyRequests, "busy", "Too many log requests at once; try again in a moment.")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	out, err := f.d.Runner.ServiceLogs(ctx, r.PathValue("service"), tail, f.d.Redactor.Redact)
+	switch {
+	case errors.Is(err, install.ErrUnknownService):
+		flow.Error(w, http.StatusNotFound, "unknown_service", "No such service in this install.")
+	case err != nil:
+		flow.Error(w, http.StatusBadGateway, "docker", "Couldn't ask Docker for the log: "+f.d.Redactor.Redact(firstLine(err.Error())))
+	default:
+		flow.JSON(w, http.StatusOK, out)
+	}
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 func (f *Flow) events(w http.ResponseWriter, r *http.Request) {

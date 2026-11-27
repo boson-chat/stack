@@ -33,7 +33,7 @@ A web page on `https://<server>:8443` with a self-signed certificate
 | Features | Voice, video, uploads (this disk, MinIO, or an S3 bucket), the Boson directory listing and/or a directory of your own, sign-up (open / invite / closed), guests (and guests in voice), email verification, accounts from other Boson servers ([federated login](federation.md): verified servers by default, or only servers you list, any server, or off; `auth.federation.mode`/`.allow`; on the add-on path too, [federation.md](federation.md#add-on-installs)), SMTP with a test-send button. |
 | Firewall and ports | 80, 443, 6697/tcp, 7700/udp (voice), 7710/udp (video). From inside: is another program on the port; does a connection from a container on Docker's network reach it (that path crosses the host's own firewall: iptables, nftables, ufw). A dropped UDP port is a warning with a "turn voice off" button. What can't be checked from inside, a provider's firewall, is said so. |
 | Review | The `.env` lines and `config/boson.yaml` keys it will write, secrets masked (each says whether it is new, kept from your `.env`, or as you entered it). |
-| Install | Writes the stack's files, `.env` (0600) and `config/boson.yaml` into the install dir; `docker compose pull`, `up -d`; waits for every service to be healthy (one-shot services to exit 0), for every certificate, creates the admin, checks each public URL and IRC on 6697. Progress streams live (Server-Sent Events). A failed step shows its error and a **Retry**. |
+| Install | Writes the stack's files, `.env` (0600) and `config/boson.yaml` into the install dir; `docker compose pull`, `up -d`; waits for every service to be healthy (one-shot services to exit 0), for every certificate, creates the admin, checks each public URL and IRC on 6697. Progress streams live (Server-Sent Events). A failed step shows its error and a **Retry**. While services start, each row of the services list has a **Logs** panel (see [Why is a service still starting?](#why-is-a-service-still-starting)). |
 | Done | Links to the web client and the admin panel; the emergency `/OPER` password, once. **Close setup** switches the wizard off (also after 30 minutes on its own): the container exits. |
 
 ### Security
@@ -46,7 +46,36 @@ A web page on `https://<server>:8443` with a self-signed certificate
 - Writes must be JSON from the same origin (CSP, no framing).
 - Secrets are generated with `crypto/rand`, kept only in `.env` (0600);
   the wizard's state file (`<dir>/.setup/state.json`, 0600) has none.
-  Output from compose shown on the page has every secret value redacted.
+  Output from compose shown on the page has every secret value redacted,
+  and so do the services' logs and healthcheck output (Logs panels).
+
+### Why is a service still starting?
+
+On the Install page every service in the list has a **Logs** button. It
+opens the container's last 100 log lines (refreshed every 3 s, kept scrolled
+to the end unless you scroll up, with a **Copy** button) and, while its
+Docker healthcheck isn't passing, the last healthcheck results
+(`docker inspect` `.State.Health.Log`). That matters for a container that
+logs nothing while it waits: evrd's entrypoint waits for its certificate
+before it starts, so its log is empty while its healthcheck says
+`wget: can't connect to remote host (127.0.0.1): Connection refused`.
+
+A row also says what the service waits for when that's known: ergo, evrd,
+quicvoiced and quicvideod need their TLS certificate (Traefik gets it from
+the ACME CA, certsync copies it in). While services wait, and while the
+certificates step runs, the wizard reads Traefik's log every few seconds;
+ACME errors (`Unable to obtain ACME certificate …`, e.g. a CA it can't
+verify, or a challenge that can't reach port 80) show as a warning on the
+step, *Traefik can't get certificates: …*, pointing at the TLS step. A
+health step that times out with that warning says so in its error.
+
+The API is `GET /api/flows/<flow>/install/services/<service>/logs?tail=N`
+(the session cookie, like every call). Only a service with a container in
+this install's compose project is answered (the name is checked against
+`docker compose ps`; the healthcheck is read from the container ID compose
+gives), every line has the install's secrets redacted like the compose
+output, and it is capped: 200 lines, 2 KiB per line, 64 KiB in all, the
+last 3 healthcheck results, 4 requests at a time.
 
 ### Re-running
 
@@ -84,7 +113,8 @@ internal/install         the install steps, state file, progress hub, compose
 internal/gate            the one-time code, sessions, rate limits
 internal/server          HTTPS, security headers, session check
 web/                     the pages: app.js (code, chooser), flows/<id>.js
-cmd/devserver            -tags dev: the pages against fake docker/DNS
+cmd/devserver            -tags dev: the pages against fake docker/DNS (ergo stays
+                         "starting" for -slow, 20s, with an ACME error in Traefik's log)
 ```
 
 **Adding a flow**: a package implementing `flow.Flow` (`Info()` for its
@@ -109,7 +139,7 @@ buttons and Re-check, which probes again (WEBIRC with the bridge's password,
 ```sh
 cd images/setup
 go test ./...
-go run -tags dev ./cmd/devserver -stack <a copy of the stack files>   # https://127.0.0.1:8443, code TEST-CODE
+go run -tags dev ./cmd/devserver -stack <a copy of the stack files>   # https://127.0.0.1:8443 (-addr), code TEST-CODE
 cd ../../test/setup && DEV=1 npx playwright test wizard.spec.ts       # against the dev server
 ```
 

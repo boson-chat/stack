@@ -153,6 +153,25 @@ test('new install through the wizard', async ({ page }) => {
   await expect(page.locator('[data-step=health]')).toHaveAttribute('data-status', /running|done/, { timeout: 5 * 60_000 });
   await shot(page, 'install-running');
 
+  // ---- a service still starting: its Logs panel (dev server: ergo waits
+  // for its certificate, Traefik can't get one) ----
+  if (DEV) {
+    await expect(page.locator('[data-service=ergo] .waiting')).toContainText('TLS certificate');
+    await page.getByTestId('logs-toggle-ergo').click();
+    await expect(page.getByTestId('logs-toggle-ergo')).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.getByTestId('logs-ergo')).toContainText("wget: can't connect to remote host");
+    await expect(page.getByTestId('logs-text-ergo')).toHaveText('(no output yet)');
+    await expect(page.getByTestId('warning-acme')).toContainText("Traefik can't get certificates");
+    await expect(page.getByTestId('warning-acme')).toContainText('tls: failed to verify certificate');
+    await page.getByTestId('logs-toggle-traefik').click();
+    await expect(page.getByTestId('logs-text-traefik')).toContainText('Unable to obtain ACME certificate');
+    await shot(page, 'install-service-logs');
+    await page.getByTestId('logs-toggle-traefik').click();
+    await expect(page.getByTestId('logs-traefik')).toBeHidden();
+    // Only this install's services.
+    expect((await page.request.get('/api/flows/fresh/install/services/..%2F..%2Fetc/logs')).status()).toBe(404);
+  }
+
   // ---- done ----
   // Done, or a failed step (then fail with its error, not a timeout).
   const doneOrError = page.getByRole('heading', { name: 'Boson is running' }).or(page.getByTestId('install-error'));

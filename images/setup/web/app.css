@@ -1136,3 +1136,100 @@ ul.plain strong {
 .checks .fixline {
 	color: var(--warn-text);
 }
+
+/* ---- install: services, with a Logs panel each ---------------------------- */
+.checks.services li {
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	align-items: center;
+}
+.checks.services .msg {
+	grid-column: 2 / -1;
+}
+.checks.services .waiting {
+	color: var(--warn-text);
+	font-size: var(--text-xs);
+}
+.logs-toggle {
+	gap: var(--space-1);
+	font-family: var(--font-mono);
+	text-transform: uppercase;
+	letter-spacing: var(--tracking-label);
+	font-size: 10px;
+}
+.logs-toggle .chev {
+	display: inline-block;
+	transition: transform 120ms ease;
+	font-size: var(--text-sm);
+	line-height: 1;
+}
+.logs-toggle[aria-expanded='true'] {
+	color: var(--fg);
+	background: var(--surface-hover);
+}
+.logs-toggle[aria-expanded='true'] .chev {
+	transform: rotate(90deg);
+}
+.logs-panel {
+	grid-column: 1 / -1;
+	display: grid;
+	gap: var(--space-2);
+	min-width: 0;
+	margin-top: var(--space-1);
+}
+.logs-panel > * {
+	min-width: 0;
+}
+.logs-hint {
+	margin: 0;
+	font-size: var(--text-sm);
+	color: var(--warn-text);
+}
+.logs-checks {
+	display: grid;
+	gap: var(--space-1);
+}
+.logs-label {
+	font-family: var(--font-mono);
+	font-size: 10px;
+	font-weight: 600;
+	letter-spacing: var(--tracking-label);
+	text-transform: uppercase;
+	color: var(--fg-quiet);
+}
+.logs-check {
+	display: grid;
+	gap: 2px;
+}
+pre.log.wrap {
+	padding: var(--space-2) var(--space-3);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	max-height: 120px;
+}
+.logs-check pre.log {
+	color: var(--danger-text);
+}
+pre.logs-text {
+	max-height: 260px;
+	padding: var(--space-3);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+pre.logs-text.empty {
+	color: var(--fg-quiet);
+	font-style: italic;
+}
+.logs-foot {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-2);
+	font-size: var(--text-xs);
+}
+.step-warning .notice {
+	margin-top: var(--space-1);
+}
+.step-warning .notice code {
+	font-size: var(--text-xs);
+}

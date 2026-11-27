@@ -712,9 +712,10 @@ const ICON = { pending: '○', running: '◌', done: '✓', failed: '✕' };
 function install() {
 	const steps = h('ol', { class: 'checks', 'data-testid': 'install-steps' });
 	const failure = h('div', { 'aria-live': 'assertive' });
-	const services = h('div');
+	const services = serviceList();
 	const log = h('pre', { class: 'code log', 'data-testid': 'install-log', tabindex: '0', 'aria-label': 'Install log' });
 	let lines = [];
+	let warnings = [];
 
 	const draw = (st, running) => {
 		put(steps, 
@@ -725,6 +726,7 @@ function install() {
 					h('span', { class: 'num', 'aria-hidden': 'true' }, s.status === 'running' ? h('span', { class: 'spinner' }) : ICON[s.status]),
 					h('span', {}, h('span', { class: 'name' }, s.title), h('span', { class: 'sr-only' }, `: ${s.status}`)),
 					s.status === 'failed' ? h('span', { class: 'msg' }, s.hint ? s.hint.replace(/^[a-z_]+: /, '') : '') : null,
+					s.status === 'running' || s.status === 'failed' ? warnings.filter((w) => w.step === s.id).map((w) => stepWarning(w, running)) : null,
 				),
 			),
 		);
@@ -749,19 +751,6 @@ function install() {
 			if (stream) stream.close();
 			setTimeout(() => go('done'), 600);
 		}
-	};
-	const drawServices = (list) => {
-		put(services, 
-			h('details', { open: true }, h('summary', {}, `Services (${list.filter((s) => s.ready).length} of ${list.length} ready)`),
-				h(
-					'ul',
-					{ class: 'checks', 'data-testid': 'services' },
-					list.map((s) =>
-						h('li', { 'data-service': s.service }, tag(s.ready ? 'ok' : s.failed ? 'bad' : 'warn', s.ready ? 'ready' : s.failed ? 'failing' : 'starting'), h('span', { class: 'name' }, s.service, h('span', { class: 'what' }, ` ${s.state}${s.health ? ', ' + s.health : ''}`))),
-					),
-				),
-			),
-		);
 	};
 	async function retry() {
 		try {
@@ -788,7 +777,11 @@ function install() {
 				const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 8;
 				log.textContent = lines.join('\n');
 				if (atEnd) log.scrollTop = log.scrollHeight;
-			} else if (e.type === 'services') drawServices(e.services);
+			} else if (e.type === 'services') services.draw(e.services);
+			else if (e.type === 'warnings') {
+				warnings = e.warnings || [];
+				draw(S.install, S.running);
+			}
 		};
 	}
 	frame(
@@ -798,12 +791,215 @@ function install() {
 			`Writing the configuration to ${S.existing.dir}, then starting the stack with Docker Compose. This takes a few minutes; you can leave this page open or come back to it.`,
 			steps,
 			failure,
-			services,
+			services.el,
 			h('details', { open: true }, h('summary', {}, 'Log'), log),
 		),
 	);
 	draw(S.install, S.running);
 	connect();
+}
+
+// A warning on a step that waits (Traefik can't get certificates).
+function stepWarning(w, running) {
+	return h(
+		'div',
+		{ class: 'msg step-warning', 'data-testid': `warning-${w.id}` },
+		notice(
+			'warn',
+			h('strong', {}, `${w.title}: `),
+			h('code', {}, w.detail),
+			w.lines && w.lines.length ? h('details', {}, h('summary', {}, 'Traefik’s log lines'), h('pre', { class: 'code log wrap' }, w.lines.join('\n'))) : null,
+			w.fix === 'tls'
+				? h(
+						'p',
+						{},
+						'Services that need a certificate wait for it. Check the ACME server on the ',
+						running ? h('strong', {}, 'TLS step') : h('a', { href: stepHref('tls') }, 'TLS step'),
+						running ? ' once this attempt stops' : '',
+						', and that Let’s Encrypt (or your CA) reaches this server on port 80.',
+					)
+				: null,
+		),
+	);
+}
+
+// ---- the services list, with a Logs panel per service ----------------------
+
+const LOG_POLL_MS = 3000;
+
+// Rows are kept across updates (every 2 s), so an open panel stays open.
+function serviceList() {
+	const summary = h('summary', {});
+	const list = h('ul', { class: 'checks services', 'data-testid': 'services' });
+	const el = h('details', { open: true, hidden: true }, summary, list);
+	const rows = new Map();
+	const draw = (svcs) => {
+		el.hidden = false;
+		summary.textContent = `Services (${svcs.filter((s) => s.ready).length} of ${svcs.length} ready)`;
+		const seen = new Set();
+		for (const s of svcs) {
+			seen.add(s.service);
+			let row = rows.get(s.service);
+			if (!row) rows.set(s.service, (row = serviceRow(s.service)));
+			row.update(s);
+			list.append(row.li); // keeps the server's order
+		}
+		for (const [name, row] of rows) {
+			if (!seen.has(name)) {
+				row.close();
+				row.li.remove();
+				rows.delete(name);
+			}
+		}
+	};
+	return { el, draw };
+}
+
+function serviceRow(name) {
+	const safe = name.replace(/[^a-z0-9_-]/gi, '_');
+	const panelId = `logs-${safe}`;
+	let badge = h('span', {});
+	const what = h('span', { class: 'what' });
+	const waiting = h('span', { class: 'msg waiting' });
+	const toggleBtn = h(
+		'button',
+		{ class: 'btn btn-small btn-ghost logs-toggle', type: 'button', 'aria-expanded': 'false', 'aria-controls': panelId, 'data-testid': `logs-toggle-${safe}` },
+		h('span', { class: 'chev', 'aria-hidden': 'true' }, '›'),
+		'Logs',
+		h('span', { class: 'sr-only' }, ` for ${name}`),
+	);
+	const hint = h('p', { class: 'logs-hint', hidden: true });
+	const checks = h('div', { class: 'logs-checks', hidden: true });
+	const pre = h('pre', { class: 'code log logs-text', tabindex: '0', 'aria-label': `${name} log`, 'data-testid': `logs-text-${safe}` });
+	const status = h('span', { class: 'muted logs-status', 'aria-live': 'polite' });
+	let copyText = '';
+	const copyBtn = button(
+		'Copy',
+		async () => {
+			try {
+				await navigator.clipboard.writeText(copyText);
+				status.textContent = 'Copied.';
+			} catch {
+				const r = document.createRange();
+				r.selectNodeContents(pre);
+				const sel = getSelection();
+				sel.removeAllRanges();
+				sel.addRange(r);
+				status.textContent = 'Selected: press Ctrl+C (⌘C).';
+			}
+		},
+		{ kind: 'small', testid: `logs-copy-${safe}` },
+	);
+	const panel = h('div', { class: 'logs-panel', id: panelId, hidden: true, 'data-testid': `logs-${safe}` }, hint, checks, pre, h('div', { class: 'logs-foot' }, status, copyBtn));
+	const li = h('li', { 'data-service': name }, badge, h('span', {}, h('span', { class: 'name' }, name), what), toggleBtn, waiting, panel);
+
+	let open = false;
+	let waitingText = '\u0000';
+	let timer = null;
+	let stick = true;
+	let last = null;
+	pre.addEventListener('scroll', () => {
+		stick = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
+	});
+	// Lines rewrap when the page width changes: keep following the end.
+	new ResizeObserver(() => {
+		if (stick) pre.scrollTop = pre.scrollHeight;
+	}).observe(pre);
+
+	async function fetchLogs() {
+		timer = null;
+		if (!open || !li.isConnected) return;
+		try {
+			const d = await api('GET', `${BASE}install/services/${encodeURIComponent(name)}/logs?tail=100`);
+			if (!open) return;
+			render(d);
+		} catch (err) {
+			status.textContent = err.status === 429 ? 'Busy, trying again…' : `Couldn’t load the log: ${err.message}`;
+		}
+		if (open && li.isConnected) timer = setTimeout(fetchLogs, LOG_POLL_MS);
+	}
+
+	function render(d) {
+		// The row already says what it waits for; the panel adds the rest.
+		const h1 = (d.hint || '').replace(waitingText, '').trim();
+		hint.hidden = !h1;
+		hint.textContent = h1;
+		const cs = d.checks || [];
+		checks.hidden = cs.length === 0;
+		// Runs with the same output are one entry ("3 runs").
+		const groups = [];
+		for (const c of cs) {
+			const g = groups[groups.length - 1];
+			if (g && g.output === c.output && g.exit_code === c.exit_code) {
+				g.n++;
+				g.start = c.start;
+			} else groups.push({ ...c, n: 1 });
+		}
+		const when = (t) => (t && !t.startsWith('0001-') ? new Date(t).toLocaleTimeString() : '');
+		put(
+			checks,
+			cs.length ? h('div', { class: 'logs-label' }, `Healthcheck · ${d.health}`) : null,
+			groups.map((c) =>
+				h(
+					'div',
+					{ class: 'logs-check' },
+					h('span', { class: 'what' }, [c.n > 1 ? `${c.n} runs, the last${when(c.start) ? ' at ' + when(c.start) : ''}` : when(c.start), `exit ${c.exit_code}`].filter(Boolean).join(' · ')),
+					h('pre', { class: 'code log wrap' }, c.output || '(no output)'),
+				),
+			),
+		);
+		const text = d.lines.length ? d.lines.join('\n') : '(no output yet)';
+		pre.classList.toggle('empty', d.lines.length === 0);
+		if (text !== last) {
+			pre.textContent = text;
+			last = text;
+		}
+		// Follow the end unless the reader scrolled up.
+		if (stick) pre.scrollTop = pre.scrollHeight;
+		copyText = [
+			...cs.map((c) => `[healthcheck exit ${c.exit_code}] ${c.output}`),
+			...d.lines,
+		].join('\n');
+		const n = d.lines.length;
+		status.textContent = `${n ? `Last ${n} line${n === 1 ? '' : 's'}` : 'No log lines'}${d.truncated ? ' (cut)' : ''} · updated ${new Date().toLocaleTimeString()}`;
+	}
+
+	function setOpen(v) {
+		open = v;
+		panel.hidden = !v;
+		li.classList.toggle('open', v);
+		toggleBtn.setAttribute('aria-expanded', String(v));
+		if (timer) clearTimeout(timer);
+		timer = null;
+		if (v) {
+			stick = true;
+			if (!last) pre.textContent = 'Loading…';
+			fetchLogs();
+		}
+	}
+	toggleBtn.addEventListener('click', () => setOpen(!open));
+
+	return {
+		li,
+		update(s) {
+			const tone = s.ready ? 'ok' : s.failed ? 'bad' : 'warn';
+			const label = s.ready ? 'ready' : s.failed ? 'failing' : 'starting';
+			if (badge.dataset.label !== label) {
+				const t = tag(tone, label);
+				t.dataset.label = label;
+				badge.replaceWith(t);
+				badge = t;
+			}
+			what.textContent = ` ${s.state}${s.health ? ', ' + s.health : ''}`;
+			waiting.hidden = !(s.waiting && !s.ready);
+			waiting.textContent = s.waiting && !s.ready ? `Waiting for ${s.waiting}.` : '';
+			waitingText = waiting.textContent || '\u0000';
+			li.dataset.ready = String(!!s.ready);
+		},
+		close() {
+			setOpen(false);
+		},
+	};
 }
 
 // ---- done ------------------------------------------------------------------
