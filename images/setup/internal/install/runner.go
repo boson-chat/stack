@@ -165,6 +165,7 @@ func (r *Runner) Start(j Job) error {
 	r.running = true
 	r.mu.Unlock()
 	r.Hub.ClearLogs()
+	r.Hub.Publish(Event{Type: "warnings"})
 	r.update(func(s *State) {
 		s.Status = StatusRunning
 		s.Answers = j.Plan.Answers
@@ -342,6 +343,13 @@ func stepHealth(ctx context.Context, r *Runner, _ *Job, log func(string)) error 
 	deadline := time.Now().Add(r.Timeouts.Health)
 	failingSince := map[string]time.Time{}
 	lastLine := ""
+	// Services waiting on a certificate wait on Traefik's ACME: say so
+	// when it's failing.
+	acme := r.newACMEWatch("health", log)
+	traefik := false
+	for _, s := range want {
+		traefik = traefik || s == "traefik"
+	}
 	for {
 		have, err := r.Compose.PS(ctx)
 		if err != nil {
@@ -367,12 +375,16 @@ func stepHealth(ctx context.Context, r *Runner, _ *Job, log func(string)) error 
 			}
 		}
 		if len(waiting) == 0 {
+			acme.Clear()
 			log(fmt.Sprintf("all %d services are up", len(st)))
 			return nil
 		}
 		if line := "waiting for " + strings.Join(waiting, ", "); line != lastLine {
 			log(line)
 			lastLine = line
+		}
+		if traefik {
+			acme.Check(ctx)
 		}
 		if len(failed) > 0 || time.Now().After(deadline) {
 			who := failed
@@ -387,7 +399,12 @@ func stepHealth(ctx context.Context, r *Runner, _ *Job, log func(string)) error 
 			if len(failed) == 0 {
 				msg = "still not ready after " + r.Timeouts.Health.String() + ": " + strings.Join(who, ", ")
 			}
-			return &StepError{Msg: msg + b.String(), Hint: "The log lines in the error usually say why. Fix it, then retry."}
+			hint := "The log lines in the error usually say why. Fix it, then retry."
+			if why := acme.Current(); why != "" {
+				fmt.Fprintf(&b, "\n--- traefik can't get certificates:\n%s", why)
+				hint = "Traefik can't get certificates, and services that need one wait for it: check the ACME server on the TLS step (and that port 80 reaches this server), then retry."
+			}
+			return &StepError{Msg: msg + b.String(), Hint: hint}
 		}
 		time.Sleep(r.Timeouts.Poll)
 	}
@@ -415,6 +432,7 @@ func stepCerts(ctx context.Context, r *Runner, j *Job, log func(string)) error {
 	for _, h := range j.Plan.Hosts {
 		pending[h.Name] = "not checked yet"
 	}
+	acme := r.newACMEWatch("certs", log)
 	for len(pending) > 0 {
 		for host := range pending {
 			cert, err := r.edgeCert(ctx, host)
@@ -431,6 +449,7 @@ func stepCerts(ctx context.Context, r *Runner, j *Job, log func(string)) error {
 		if len(pending) == 0 {
 			break
 		}
+		acme.Check(ctx)
 		if time.Now().After(deadline) {
 			var names []string
 			for h, why := range pending {
@@ -453,6 +472,7 @@ func stepCerts(ctx context.Context, r *Runner, j *Job, log func(string)) error {
 		}
 		time.Sleep(3 * time.Second)
 	}
+	acme.Clear()
 	return nil
 }
 

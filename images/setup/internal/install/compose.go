@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/boson-chat/stack/images/setup/internal/dockercli"
 )
@@ -23,6 +25,8 @@ type ServiceStatus struct {
 	Ready bool `json:"ready"`
 	// Failed: exited non-zero or unhealthy.
 	Failed bool `json:"failed"`
+	// Waiting: what it waits on, when that's known (not ready only).
+	Waiting string `json:"waiting,omitempty"`
 }
 
 // Compose is what the install needs from docker compose.
@@ -33,6 +37,9 @@ type Compose interface {
 	Services(ctx context.Context) ([]string, error)
 	PS(ctx context.Context) ([]ServiceStatus, error)
 	Logs(ctx context.Context, service string, tail int) string
+	// Health: the service's container's healthcheck state (nil: it has
+	// no healthcheck).
+	Health(ctx context.Context, service string) (*Health, error)
 	Exec(ctx context.Context, service string, stdin io.Reader, args ...string) (string, error)
 	// Remove deletes the services' containers (compose rm -fs).
 	Remove(ctx context.Context, services []string) error
@@ -130,6 +137,51 @@ func (d *DockerCompose) Logs(ctx context.Context, service string, tail int) stri
 	return strings.Join(lines, "\n")
 }
 
+var containerIDRe = regexp.MustCompile(`^[0-9a-f]{12,64}$`)
+
+// Health inspects the service's container (compose ps -q gives its ID, so
+// only this project's containers are ever inspected).
+func (d *DockerCompose) Health(ctx context.Context, service string) (*Health, error) {
+	out, err := d.CLI.Output(ctx, d.CLI.Compose("ps", "-a", "-q", service)...)
+	if err != nil {
+		return nil, err
+	}
+	id := strings.TrimSpace(strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0])
+	if !containerIDRe.MatchString(id) {
+		return nil, ErrUnknownService
+	}
+	out, err = d.CLI.Output(ctx, "inspect", "--format", "{{json .State.Health}}", id)
+	if err != nil {
+		return nil, err
+	}
+	return parseHealth(out)
+}
+
+// parseHealth reads docker inspect's {{json .State.Health}} ("null" when
+// the container has no healthcheck).
+func parseHealth(out []byte) (*Health, error) {
+	var raw *struct {
+		Status        string
+		FailingStreak int
+		Log           []struct {
+			Start    time.Time
+			ExitCode int
+			Output   string
+		}
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(out), &raw); err != nil {
+		return nil, err
+	}
+	if raw == nil {
+		return nil, nil
+	}
+	h := &Health{Status: raw.Status, FailingStreak: raw.FailingStreak}
+	for _, l := range raw.Log {
+		h.Log = append(h.Log, HealthCheck{Start: l.Start, ExitCode: l.ExitCode, Output: l.Output})
+	}
+	return h, nil
+}
+
 func (d *DockerCompose) Exec(ctx context.Context, service string, stdin io.Reader, args ...string) (string, error) {
 	var lines []string
 	err := d.CLI.Run(ctx, stdin, func(l string) { lines = append(lines, l) },
@@ -160,6 +212,7 @@ func Evaluate(want []string, have []ServiceStatus) []ServiceStatus {
 		case s.Health == "unhealthy":
 			s.Failed = true
 		}
+		s.Waiting = waitingFor(s)
 		out = append(out, s)
 	}
 	return out

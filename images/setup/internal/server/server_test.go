@@ -102,6 +102,9 @@ func TestSessionGate(t *testing.T) {
 	if code, _ := do(t, c, "GET", ts.URL+"/api/flows/fresh/state", ""); code != 401 {
 		t.Fatalf("flow without session: %d", code)
 	}
+	if code, _ := do(t, c, "GET", ts.URL+"/api/flows/fresh/install/services/traefik/logs", ""); code != 401 {
+		t.Fatalf("service logs without session: %d", code)
+	}
 	if code, m := do(t, c, "POST", ts.URL+"/api/session", `{"code":"XXXX-XXXX"}`); code != 401 || m["code"] != "bad_code" {
 		t.Fatalf("bad code: %d %v", code, m)
 	}
