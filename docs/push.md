@@ -191,6 +191,9 @@ Before turning it on:
    install -m 640 -o root -g 65532 AuthKey_XXXXXXXXXX.p8 secrets/pushrelay/apns.p8
    install -m 640 -o root -g 65532 firebase-service-account.json secrets/pushrelay/fcm.json
    ```
+   Where Google service-account keys aren't allowed (boson.chat), `fcm.json` is instead a
+   keyless Workload Identity Federation file plus a `workload-token`: see
+   [FCM without a Google key](#fcm-without-a-google-key).
 4. **Existing install** (Postgres volume already there; `postgres/initdb/40-pushrelay.sh`
    only runs on a new one): create the database once:
    ```sh
@@ -217,7 +220,11 @@ Settings (`.env`; compose passes the same names to the relay unless noted):
 | `PUSHRELAY_APNS_KEY_ID` | – | that key's id (10 characters) |
 | `PUSHRELAY_APNS_TEAM_ID` | – | Apple Developer team id |
 | `PUSHRELAY_APNS_TOPIC` | `chat.boson.app` | the app's bundle id (`apns-topic`) |
-| `PUSHRELAY_FCM_CREDENTIALS_FILE` | `/run/secrets/pushrelay/fcm.json` | Firebase project service account (FCM HTTP v1) |
+| `PUSHRELAY_FCM_CREDENTIALS_FILE` | `/run/secrets/pushrelay/fcm.json` | Google credentials for FCM HTTP v1 (and Play Integrity): a service-account key, or a keyless `external_account` file ([below](#fcm-without-a-google-key)) |
+| `PUSHRELAY_FCM_PROJECT_ID` | – (from the key file) | Firebase project id; required with the keyless file (`boson-f7443` at boson.chat) |
+| `PUSHRELAY_WORKLOAD_TOKEN` | – | keyless FCM: the relay's secret for auth's workload endpoint; auth gets it as `WORKLOAD_TOKEN_PUSHRELAY` (not passed to the relay) |
+| `PUSHRELAY_WORKLOAD_TOKEN_FILE` | `/run/secrets/pushrelay/workload-token` | the same secret as a file, for the relay; used only when the file exists |
+| `WORKLOAD_IDENTITIES` | – | auth's workload issuer: `pushrelay:boson-pushrelay` for keyless FCM; empty = off (auth `docs/workload-identity.md`) |
 | `PUSHRELAY_APP_ATTEST_APP_ID` | – (`TEAM_ID.TOPIC`) | App Attest app id |
 | `PUSHRELAY_APP_ATTEST_ENV` | `production` | `production`, or `development` to accept dev-signed builds' attestations |
 | `PUSHRELAY_PLAY_INTEGRITY_PACKAGE` | `chat.boson.app` | Android package name |
@@ -235,6 +242,112 @@ subnet). These names are the stack's side of the contract with `boson-chat/pushr
 the relay settles on different ones, change them here.
 
 Check: `curl -si https://PUSH_HOST/v1/push/0` answers `404` (no such mailbox).
+
+#### FCM without a Google key
+boson.chat's Google Cloud organisation forbids service-account keys, so the relay reaches FCM
+through **Workload Identity Federation**, with the stack's own auth service as the OIDC
+identity provider. Nothing secret comes from Google; the only secret is a token shared
+between auth and the relay inside the compose network.
+
+```
+pushrelay ─GET http://auth:8081/internal/v1/workload/token?audience=boson-pushrelay─▶ auth
+          ◀─ {"id_token": ES256 JWT  iss=https://auth.boson.chat/workload
+                                     sub=service:pushrelay  aud=boson-pushrelay  exp ≤ 10 min}
+          ─▶ sts.googleapis.com          (Google fetches https://auth.boson.chat/workload/
+                                          .well-known/openid-configuration → /workload/jwks.json)
+          ─▶ iamcredentials.googleapis.com  generateAccessToken for pushrelay@boson-f7443
+          ─▶ fcm.googleapis.com          Bearer <service-account access token>
+```
+
+- **auth** (needs the release with the workload issuer, boson-chat/auth
+  `docs/workload-identity.md`): `WORKLOAD_IDENTITIES=pushrelay:boson-pushrelay` turns on a
+  second issuer, `https://AUTH_HOST/workload`, with its own ES256 keys (the user-token keys
+  are EdDSA, which Google doesn't take) and its own JWKS; the main JWKS is unchanged.
+  `/workload/.well-known/openid-configuration` and `/workload/jwks.json` are on auth's public
+  listener, so the existing `Host(AUTH_HOST)` Traefik router already serves them over HTTPS;
+  nothing to add. The token endpoint is on the internal listener (`:8081`), never routed,
+  and only answers `X-Workload-Token: $PUSHRELAY_WORKLOAD_TOKEN` (`WORKLOAD_TOKEN_PUSHRELAY`).
+- **pushrelay** (needs the release with `external_account` support): `fcm.json` is the
+  credential configuration below. It names the pool, provider, service account and token
+  url and holds no secret; the relay adds the `X-Workload-Token` header from
+  `secrets/pushrelay/workload-token`.
+
+Reference Google Cloud setup (already done for boson.chat; project `boson-f7443`, number
+`732970671821`, run by a project owner; no key is ever created, and the
+`iam.disableServiceAccountKeyCreation` policy stays on):
+
+```sh
+PROJECT=boson-f7443 PROJECT_NUMBER=732970671821
+SA=pushrelay@$PROJECT.iam.gserviceaccount.com
+gcloud services enable fcm.googleapis.com iam.googleapis.com iamcredentials.googleapis.com \
+  sts.googleapis.com --project=$PROJECT
+gcloud iam service-accounts create pushrelay --project=$PROJECT --display-name="Boson push relay"
+gcloud projects add-iam-policy-binding $PROJECT \
+  --member=serviceAccount:$SA --role=roles/firebasecloudmessaging.admin
+gcloud iam workload-identity-pools create boson --project=$PROJECT --location=global \
+  --display-name=Boson
+gcloud iam workload-identity-pools providers create-oidc auth-boson-chat --project=$PROJECT \
+  --location=global --workload-identity-pool=boson --display-name=auth.boson.chat \
+  --issuer-uri=https://auth.boson.chat/workload --allowed-audiences=boson-pushrelay \
+  --attribute-mapping=google.subject=assertion.sub \
+  --attribute-condition="assertion.sub == 'service:pushrelay'"
+gcloud iam service-accounts add-iam-policy-binding $SA --project=$PROJECT \
+  --role=roles/iam.workloadIdentityUser \
+  --member=principal://iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/boson/subject/service:pushrelay
+# The relay's credential configuration (only writes a local file):
+gcloud iam workload-identity-pools create-cred-config \
+  projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/boson/providers/auth-boson-chat \
+  --service-account=$SA \
+  --credential-source-url='http://auth:8081/internal/v1/workload/token?audience=boson-pushrelay' \
+  --credential-source-type=json --credential-source-field-name=id_token \
+  --output-file=fcm.json
+```
+
+The resulting `secrets/pushrelay/fcm.json` (boson.chat's, as generated; not secret):
+
+```json
+{
+  "universe_domain": "googleapis.com",
+  "type": "external_account",
+  "audience": "//iam.googleapis.com/projects/732970671821/locations/global/workloadIdentityPools/boson/providers/auth-boson-chat",
+  "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+  "token_url": "https://sts.googleapis.com/v1/token",
+  "credential_source": {
+    "url": "http://auth:8081/internal/v1/workload/token?audience=boson-pushrelay",
+    "format": {
+      "type": "json",
+      "subject_token_field_name": "id_token"
+    }
+  },
+  "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/pushrelay@boson-f7443.iam.gserviceaccount.com:generateAccessToken"
+}
+```
+
+Turning it on (after the auth and pushrelay releases):
+1. `.env`:
+   ```sh
+   WORKLOAD_IDENTITIES=pushrelay:boson-pushrelay
+   PUSHRELAY_WORKLOAD_TOKEN=<openssl rand -hex 32>
+   PUSHRELAY_FCM_PROJECT_ID=boson-f7443
+   ```
+2. Files (the relay runs as uid 65532):
+   ```sh
+   install -m 640 -o root -g 65532 fcm.json secrets/pushrelay/fcm.json
+   grep ^PUSHRELAY_WORKLOAD_TOKEN= .env | cut -d= -f2- | tr -d '\n' \
+     | install -m 640 -o root -g 65532 /dev/stdin secrets/pushrelay/workload-token
+   ```
+3. `docker compose up -d auth pushrelay`.
+4. Check: `curl -s https://AUTH_HOST/workload/.well-known/openid-configuration` shows
+   `"issuer": "https://AUTH_HOST/workload"` and `ES256`, `curl -s
+   https://AUTH_HOST/workload/jwks.json` one `EC`/`P-256` key; the relay logs `google
+   credentials loaded` with `kind=external_account`; an Android push arrives.
+
+`ISSUER` must stay `https://AUTH_HOST` (it is in compose): the provider's issuer URI is
+`https://auth.boson.chat/workload`, and the token's `iss` must match it exactly. Rotating
+the secret: change both copies and `docker compose up -d auth pushrelay`. Rotating auth's
+workload key happens by itself (`WORKLOAD_KEY_ROTATION`, 30 days; the new key is published
+an hour early and the old one kept), or now with `docker compose exec auth ./auth keys
+rotate --workload`.
 
 ## 3. Client (Boson app)
 
