@@ -250,6 +250,7 @@ Helpers (`migrations/lib.sh`): `env_get`, `env_has`, `env_set`,
 | Migration | What it does |
 |---|---|
 | `0001-bridge-client-webirc.sh` | Add-on installs (bridge profile) from before #55: `BRIDGE_CLIENT_WEBIRC_PASSWORD` generated, `,evrd-links=<it>` appended to `WEBIRC_PASSWORDS`, `managed_nick_guard_grace 60s` added to `bridge/evrd.conf` (evrd restarted). Waits while `EVRD_IMAGE` pins evrd < 0.61. |
+| `0002-wellknown-web.sh` | Installs that set `WELLKNOWN_SECTIONS` by hand (add-on installs from before #58) with the web profile and `WEB_HOST`: `web` added, so `boson.json` names the web client (`web.url`) and other installs' voice, video and files accept it (directory-mode origins). |
 
 ### Moving an existing install onto releases
 

@@ -78,7 +78,7 @@ check "migrate: recorded, evrd restart asked for, no secret in the output" \
 check "migrate: .env keeps mode 600" "[ \"\$(stat -c %a $DIR/.env 2>/dev/null || stat -f %Lp $DIR/.env)\" = 600 ]"
 cp "$DIR/.env" "$T/env.after"
 out=$(apply "$T/new" migrate "$T/new")
-check "migrate again: done, nothing changes" "grep -q '^@@MIGRATION 0001-bridge-client-webirc.sh done' <<<\"\$out\" && cmp -s $DIR/.env $T/env.after && [ \$(wc -l < $DIR/.boson/migrations.applied) = 1 ]"
+check "migrate again: done, nothing changes" "grep -q '^@@MIGRATION 0001-bridge-client-webirc.sh done' <<<\"\$out\" && cmp -s $DIR/.env $T/env.after && [ \$(wc -l < $DIR/.boson/migrations.applied) = 2 ]"
 out=$(apply "$T/new" files "$T/new")
 check "files again: everything the same" "! grep -v '^@@STACKFILE same' <<<\"\$out\" | grep -q '^@@STACKFILE'"
 
@@ -101,24 +101,40 @@ check "0001 with evrd 0.60 pinned: deferred (exit 3), nothing changed" "[ $rc = 
 rc=$(mig 'COMPOSE_PROFILES=bridge\nBRIDGE_CLIENT_WEBIRC_PASSWORD=\nWEBIRC_PASSWORDS=\n')
 check "0001 with empty values: filled in" "[ $rc = 0 ] && grep -q '^BRIDGE_CLIENT_WEBIRC_PASSWORD=[0-9a-f]\{48\}\$' $T/m/.env && grep -q '^WEBIRC_PASSWORDS=evrd-links=[0-9a-f]\{48\}\$' $T/m/.env && [ \$(grep -c '^BRIDGE_CLIENT_WEBIRC_PASSWORD=' $T/m/.env) = 1 ]"
 
+# 0002: WELLKNOWN_SECTIONS set by hand gets "web" (stack #58).
+mig2() {
+	rm -rf "$T/m" && mkdir -p "$T/m" && printf '%b' "$1" > "$T/m/.env" && cp "$T/new/compose.yaml" "$T/m/"
+	rc=0
+	STACK_DIR=$T/m ENV_FILE=$T/m/.env MIGRATIONS_LIB=$T/new/migrations/lib.sh sh "$T/new/migrations/0002-wellknown-web.sh" >"$T/m.out" 2>&1 || rc=$?
+	echo "$rc"
+}
+rc=$(mig2 'COMPOSE_PROFILES=auth,bridge,web\nWEB_HOST=chat.x\nWELLKNOWN_SECTIONS=irc,auth\n')
+check "0002 on an add-on install: web added" "[ $rc = 0 ] && grep -qx 'WELLKNOWN_SECTIONS=irc,auth,web' $T/m/.env"
+rc=$(mig2 'COMPOSE_PROFILES=auth,web\nWEB_HOST=chat.x\nWELLKNOWN_SECTIONS=irc,web,auth\n')
+check "0002 with web listed: no-op" "[ $rc = 0 ] && grep -qx 'WELLKNOWN_SECTIONS=irc,web,auth' $T/m/.env && grep -q 'already done' $T/m.out"
+rc=$(mig2 'COMPOSE_PROFILES=auth,web\nWEB_HOST=chat.x\n')
+check "0002 without WELLKNOWN_SECTIONS: nothing (follows COMPOSE_PROFILES)" "[ $rc = 0 ] && ! grep -q WELLKNOWN $T/m/.env"
+rc=$(mig2 'COMPOSE_PROFILES=auth,bridge\nWELLKNOWN_SECTIONS=irc,auth\n')
+check "0002 without the web profile: nothing" "[ $rc = 0 ] && grep -qx 'WELLKNOWN_SECTIONS=irc,auth' $T/m/.env"
+
 # A deferred migration isn't recorded and runs again on the next update.
 DIR=$T/deferred
 mkdir -p "$DIR/bridge"
 printf 'COMPOSE_PROFILES=bridge\nEVRD_IMAGE=ghcr.io/4evrd/evrd:0.59.0\n' > "$DIR/.env"
 apply "$T/new" files "$T/new" >/dev/null
 out=$(apply "$T/new" migrate "$T/new")
-check "deferred: reported, not recorded" "grep -q '^@@MIGRATION 0001-bridge-client-webirc.sh deferred' <<<\"\$out\" && [ ! -s $DIR/.boson/migrations.applied ]"
+check "deferred: reported, not recorded" "grep -q '^@@MIGRATION 0001-bridge-client-webirc.sh deferred' <<<\"\$out\" && ! grep -q 0001 $DIR/.boson/migrations.applied"
 sed -i.bak 's/0.59.0/0.61.0/' "$DIR/.env"
 out=$(apply "$T/new" migrate "$T/new")
 check "deferred, then evrd updated: applied" "grep -q '^@@MIGRATION 0001-bridge-client-webirc.sh applied' <<<\"\$out\""
 
 # A failing migration stops the run and isn't recorded.
 cp -R "$T/new" "$T/broken"
-printf '#!/bin/sh\n# Always fails.\nexit 1\n' > "$T/broken/migrations/0002-broken.sh"
-printf '#!/bin/sh\n# After the broken one.\ntouch "$STACK_DIR/ran-0003"\n' > "$T/broken/migrations/0003-after.sh"
+printf '#!/bin/sh\n# Always fails.\nexit 1\n' > "$T/broken/migrations/0098-broken.sh"
+printf '#!/bin/sh\n# After the broken one.\ntouch "$STACK_DIR/ran-0099"\n' > "$T/broken/migrations/0099-after.sh"
 rc=0
 apply "$T/broken" migrate "$T/broken" >/dev/null 2>&1 || rc=$?
-check "a failing migration: non-zero, not recorded, the next one doesn't run" "[ $rc != 0 ] && ! grep -q 0002 $DIR/.boson/migrations.applied && [ ! -e $DIR/ran-0003 ]"
+check "a failing migration: non-zero, not recorded, the next one doesn't run" "[ $rc != 0 ] && ! grep -q 0098 $DIR/.boson/migrations.applied && [ ! -e $DIR/ran-0099 ]"
 
 # ---- a pre-release install (files copied from main, no record) -----------------
 DIR=$T/pre
