@@ -311,7 +311,7 @@ services:
   evrd:
     <<: *restart
     profiles: [bridge]
-    image: ${EVRD_IMAGE:-ghcr.io/4evrd/evrd:0.60.0}
+    image: ${EVRD_IMAGE:-ghcr.io/4evrd/evrd:0.61.0}
     network_mode: "service:evrd-links"
     # Waits for its certificate (certsync copies IRC_HOST's from Traefik);
     # evrd re-reads it when it changes.
@@ -321,6 +321,9 @@ services:
       # Secrets; the rest is bridge/evrd.conf (written by Boson setup).
       EVRD_MANAGED_TOKEN: ${BRIDGE_TOKEN:-}
       EVRD_MANAGED_WEBIRC_PASSWORD: ${BRIDGE_WEBIRC_PASSWORD:-}
+      # The web gateway's WEBIRC to the bridge (WEBIRC_PASSWORDS evrd-links=):
+      # each web user's own address, for guests and for the IRC server.
+      EVRD_MANAGED_CLIENT_WEBIRC_PASSWORD: ${BRIDGE_CLIENT_WEBIRC_PASSWORD:-}
       EVRD_SECRET_KEY: ${BRIDGE_SECRET_KEY:-}
     volumes:
       - ./bridge/evrd.conf:/etc/evrd/evrd.conf:ro

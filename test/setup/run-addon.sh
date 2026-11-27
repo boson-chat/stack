@@ -13,7 +13,9 @@
 #      red then green, review, install (Pebble certificates, fake DNS);
 #   3. the result works (addon-result.py): Boson users over the bridge,
 #      replies/reactions/history, a classic client on the IRC server sees
-#      them with their own address, NickServ sign-in where auth has it, and
+#      them with their own address, NickServ sign-in where auth has it,
+#      guests and Boson users through the web gateway (auth's guest setting
+#      on the bridge, WEBIRC from the gateway: their own address), and
 #      nothing a Boson user receives says "evrd";
 #   4. federated login (FEDERATION=1, the default for ngircd-anope and
 #      insp-atheme): a second, home install (addon-home.sh, home.test) whose

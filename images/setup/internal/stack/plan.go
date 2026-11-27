@@ -300,7 +300,7 @@ func BuildPlan(a Answers, s Secrets, existing map[string]string, gen *Generator,
 
 	if a.IsAddon() {
 		addonEnv(&p, a, s, existing, gen, set, setSecret, keepOr)
-		p.Files = append(p.Files, PlanFile{Path: BridgeConfPath, Content: BridgeConf(a)})
+		p.Files = append(p.Files, PlanFile{Path: BridgeConfPath, Content: BridgeConf(a, existing["EVRD_IMAGE"])})
 	} else {
 		// Back from an add-on install: its keys go (compose's defaults are
 		// the fresh path's).

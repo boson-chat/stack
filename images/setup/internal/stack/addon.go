@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/boson-chat/stack/images/setup/internal/releases"
 	"github.com/boson-chat/stack/images/setup/internal/secret"
 )
 
@@ -176,6 +177,9 @@ var bridgeSecrets = []struct {
 }{
 	{"BRIDGE_TOKEN", 32},
 	{"BRIDGE_WEBIRC_PASSWORD", 24},
+	// The web gateway's WEBIRC to the bridge (evrd's
+	// managed_client_webirc_password): each web user's own address.
+	{"BRIDGE_CLIENT_WEBIRC_PASSWORD", 24},
 	// evrd's secret_key: 32 bytes, hex.
 	{"BRIDGE_SECRET_KEY", 32},
 }
@@ -215,7 +219,19 @@ func addonEnv(p *Plan, a Answers, s Secrets, existing map[string]string, gen *Ge
 	if webircPW == "" {
 		webircPW, origin = gen.get("BRIDGE_WEBIRC_PASSWORD", func() string { return hexSecret(24) }), "generated"
 	}
-	setSecret("WEBIRC_PASSWORDS", ad.Host+"="+webircPW, origin)
+	// The gateway sends WEBIRC to the bridge too (evrd-links, the aliases'
+	// target), so the bridge sees each web user's own address: guests are
+	// told apart and limited by it, and the IRC server shows it.
+	clientPW := existing["BRIDGE_CLIENT_WEBIRC_PASSWORD"]
+	if clientPW == "" {
+		clientPW, origin = gen.get("BRIDGE_CLIENT_WEBIRC_PASSWORD", func() string { return hexSecret(24) }), "generated"
+	}
+	passwords := ad.Host + "=" + webircPW
+	if evrdAtLeast(existing["EVRD_IMAGE"], evrdGuests) {
+		// An older evrd doesn't take WEBIRC from clients.
+		passwords += ",evrd-links=" + clientPW
+	}
+	setSecret("WEBIRC_PASSWORDS", passwords, origin)
 	if ad.Port != 6697 && ad.Port != 6667 {
 		set("WEBIRC_EXTRA_PORTS", strconv.Itoa(ad.Port))
 	} else {
@@ -300,9 +316,15 @@ func addonEnv(p *Plan, a Answers, s Secrets, existing map[string]string, gen *Ge
 const BridgeConfPath = "bridge/evrd.conf"
 
 // BridgeConf is the bridge's config (evrd's managed mode, docs/managed.md
-// in 4evrd/evrd). Secrets (the managed token, the WEBIRC password, the
+// in 4evrd/evrd). Secrets (the managed token, the WEBIRC passwords, the
 // secret key) come from .env through compose, never this file.
-func BridgeConf(a Answers) string {
+// managed_guests isn't written: auth drives it from its guest setting
+// (PUT /api/managed/settings, auth docs/bridge.md "Guests").
+//
+// evrdImage is the evrd image the install runs (.env's EVRD_IMAGE; ""
+// means compose.yaml's default): lines an older evrd doesn't know are left
+// out, since evrd refuses a config with an unknown directive.
+func BridgeConf(a Answers, evrdImage string) string {
 	ad := a.Addon
 	h := a.HostNames()
 	name := ad.ServerName
@@ -354,7 +376,36 @@ func BridgeConf(a Answers) string {
 		w("managed_webirc_gateway boson")
 	}
 	w("managed_version %s", a.NetworkName)
+	if !evrdAtLeast(evrdImage, evrdGuests) {
+		w("# evrd %s or later (the admin panel's Updates) adds the nick guard's", evrdGuests)
+		w("# grace and guests; run setup again after updating it.")
+		return b.String()
+	}
+	w("# Time to identify with NickServ on a registered nick before being moved off it.")
+	w("managed_nick_guard_grace 60s")
+	w("# Guests (no account): on and off with Boson's guest setting, which auth")
+	w("# sends the bridge. Their limits: managed_guests_max, managed_guests_per_ip.")
 	return b.String()
+}
+
+// evrdGuests is the first evrd with managed_nick_guard_grace, guests and
+// the client WEBIRC password (managed_client_webirc_password).
+const evrdGuests = "0.61.0"
+
+// evrdAtLeast: image (an evrd image reference) is version min or later.
+// "" (compose.yaml's default) and tags that aren't versions (a local
+// build) count as new.
+func evrdAtLeast(image, min string) bool {
+	if image == "" {
+		return true
+	}
+	_, tag := releases.SplitImage(image)
+	v, ok := releases.ParseVersion(tag)
+	if !ok {
+		return true
+	}
+	m, _ := releases.ParseVersion(min)
+	return releases.Compare(v, m) >= 0
 }
 
 func hexSecret(n int) string { return secret.Hex(n) }

@@ -21,8 +21,16 @@
    the Boson users identified to NickServ.
 6. Nothing a Boson user receives (IRC lines, boson.json, auth's config, the
    web client's config) says "evrd".
+7. Guests and the web gateway (wss://chat.DOMAIN/webirc/websocket/, which
+   sends WEBIRC to the bridge with BRIDGE_CLIENT_WEBIRC_PASSWORD): auth
+   drives the bridge's guest setting from guest_access (evrd's
+   /api/managed/settings; with an auth that doesn't yet, the test sets it
+   itself and says so); a guest from the web gateway gets in when guests are
+   allowed (refused otherwise), and the classic client sees the guest, and a
+   new Boson user who first connects through the web gateway, with their
+   own address: neither the bridge's nor the gateway container's.
 """
-import argparse, base64, json, re, secrets, socket, ssl, subprocess, sys, time
+import argparse, base64, json, re, secrets, socket, ssl, struct, subprocess, sys, time, urllib.request
 
 p = argparse.ArgumentParser()
 p.add_argument("--addr", default="127.0.0.1")
@@ -97,6 +105,102 @@ def bridge_api(path):
     r = dc("exec", "-T", "evrd", "wget", "-q", "-O-", "--header", f"Authorization: Bearer {ENV['BRIDGE_TOKEN']}", f"http://127.0.0.1:8098{path}")
     try: return json.loads(r.stdout)
     except ValueError: return None
+
+def container_ip(service):
+    cid = dc("ps", "-q", service).stdout.strip()
+    out = subprocess.run(["sudo", "docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}", cid],
+                         capture_output=True, text=True).stdout.split()
+    return out[0] if out else None
+
+def bridge_put(path, body):
+    """PUT on the managed API (evrd-links' address on the compose network,
+    reachable from this host; the evrd image's wget can't PUT)."""
+    req = urllib.request.Request(f"http://{container_ip('evrd-links')}:8098{path}", data=json.dumps(body).encode(), method="PUT",
+                                 headers={"Authorization": f"Bearer {ENV['BRIDGE_TOKEN']}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return json.loads(r.read())
+
+class WS:
+    """The web gateway like a browser (scripts/smoke-webirc.py's client):
+    RFC 6455 text frames, one IRC line each."""
+    def __init__(self, host):
+        self.s = ctx.wrap_socket(socket.create_connection((args.addr, 443), timeout=20), server_hostname=host)
+        key = base64.b64encode(secrets.token_bytes(16)).decode()
+        self.s.sendall((f"GET /webirc/websocket/ HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                        f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\nOrigin: https://{host}\r\n\r\n").encode())
+        head = b""
+        while b"\r\n\r\n" not in head:
+            c = self.s.recv(1)
+            if not c: break
+            head += c
+        self.status = int(head.split(b" ", 2)[1]) if head.startswith(b"HTTP/") else 0
+        self.buf, self.pending, self.lines = b"", [], []
+    def send(self, line):
+        data, mask = line.encode(), secrets.token_bytes(4)
+        n = len(data)
+        hdr = bytes([0x81]) + (bytes([0x80 | n]) if n < 126 else bytes([0x80 | 126]) + struct.pack(">H", n))
+        self.s.sendall(hdr + mask + bytes(c ^ mask[i % 4] for i, c in enumerate(data)))
+    def _frame(self):
+        """A whole frame from the buffer (op, payload), or None for more bytes."""
+        if len(self.buf) < 2: return None
+        n, i = self.buf[1] & 0x7F, 2
+        if n == 126:
+            if len(self.buf) < 4: return None
+            n, i = struct.unpack(">H", self.buf[2:4])[0], 4
+        elif n == 127:
+            if len(self.buf) < 10: return None
+            n, i = struct.unpack(">Q", self.buf[2:10])[0], 10
+        if len(self.buf) < i + n: return None
+        op, payload, self.buf = self.buf[0] & 0x0F, self.buf[i:i + n], self.buf[i + n:]
+        return op, payload
+    def _message(self):
+        while True:
+            f = self._frame()
+            if f is None:
+                c = self.s.recv(65536)  # a timeout leaves the buffer whole
+                if not c: raise EOFError
+                self.buf += c
+                continue
+            if f[0] == 0x8: raise EOFError
+            if f[0] in (0x1, 0x2): return f[1].decode(errors="replace")
+    def wait(self, pred, timeout=25):
+        end = time.time() + timeout
+        while time.time() < end:
+            if not self.pending:
+                self.s.settimeout(max(0.1, end - time.time()))
+                try: self.pending = [l.strip("\r") for l in self._message().split("\n") if l.strip("\r")]
+                except (socket.timeout, TimeoutError, ssl.SSLWantReadError): continue
+                except (EOFError, OSError, ssl.SSLError): return None
+                continue
+            line = self.pending.pop(0)
+            self.lines.append(line); boson_lines.append(line)
+            bare = line.split(" ", 1)[1] if line.startswith("@") else line
+            if bare.startswith("PING"): self.send("PONG " + bare.split(" ", 1)[1]); continue
+            if pred(line): return line
+        return None
+    def close(self):
+        try: self.send("QUIT :bye"); self.s.close()
+        except OSError: pass
+
+def web_irc(nick, token=None):
+    """A web client through the gateway to the bridge (HOST irc.DOMAIN:+6697,
+    the alias to evrd-links:6667): a guest without a token, else SASL
+    OAUTHBEARER. Returns the socket and its 001 (or None) and last lines."""
+    w = WS(WEB)
+    w.send(f"HOST {BRIDGE}:+6697")
+    w.send("CAP LS 302")
+    if token:
+        w.send("CAP REQ :sasl")
+        w.wait(lambda l: " ACK " in l or " NAK " in l)
+        w.send("AUTHENTICATE OAUTHBEARER")
+        w.wait(lambda l: l.startswith("AUTHENTICATE +") or " 90" in l)
+        w.send("AUTHENTICATE " + base64.b64encode(f"n,,\x01auth=Bearer {token}\x01\x01".encode()).decode())
+        w.wait(lambda l: " 903 " in l or " 904 " in l)
+    w.send(f"NICK {nick}"); w.send(f"USER {nick[:9]} 0 * :e2e web {nick}")
+    w.send("CAP END")
+    welcome = w.wait(lambda l: " 001 " in l or " 464 " in l or l.startswith("ERROR"), 40)
+    if welcome and " 001 " not in welcome: welcome = None
+    return w, welcome
 
 # Every line Boson users receive, for the "evrd" check.
 boson_lines = []
@@ -179,24 +283,25 @@ else:
     check("the admin signs in to Boson", st == 200 and isinstance(r, dict) and r.get("access_token"), st)
 tok_a = r.get("access_token") if isinstance(r, dict) else None
 
-second = None
-if not nickserv_mode:
-    second, second_pw = "e2e" + secrets.token_hex(3), secrets.token_urlsafe(16)
-    st, rr = https(AUTH, "POST", "/v1/register", {"username": second, "email": f"{second}@{D}", "password": second_pw})
-    check("a new Boson user signs up", st == 201, (st, rr))
-    st, rr = https(AUTH, "POST", "/v1/login", {"login": second, "password": second_pw})
-    tok_b = rr.get("access_token") if isinstance(rr, dict) else None
-else:
-    # NickServ mode: a second NickServ account (registered on IRC), then Boson.
-    second, second_pw = "e2ens" + secrets.token_hex(2), "pw-" + secrets.token_hex(6)
-    reg = IRC(IRC_HOST, IRC_PORT, IRC_HOST, second, boson=False)
-    reg.send(f"PRIVMSG NickServ :REGISTER {second_pw} {second}@{D}")
-    reg.wait(lambda l: "NOTICE" in l and "NickServ" in l and ("registered" in l.lower()), 20)
-    reg.close()
-    time.sleep(2)
-    st, rr = https(AUTH, "POST", "/v1/login", {"login": second, "password": second_pw})
-    check("a second NickServ account signs in to Boson", st == 200, (st, rr))
-    tok_b = rr.get("access_token") if isinstance(rr, dict) else None
+def new_user(what):
+    """A new Boson user (NickServ mode: a NickServ account registered on IRC,
+    then Boson): its name and access token."""
+    if not nickserv_mode:
+        name, pw = "e2e" + secrets.token_hex(3), secrets.token_urlsafe(16)
+        st, rr = https(AUTH, "POST", "/v1/register", {"username": name, "email": f"{name}@{D}", "password": pw})
+        check(f"{what} signs up", st == 201, (st, rr))
+    else:
+        name, pw = "e2ens" + secrets.token_hex(2), "pw-" + secrets.token_hex(6)
+        reg = IRC(IRC_HOST, IRC_PORT, IRC_HOST, name, boson=False)
+        reg.send(f"PRIVMSG NickServ :REGISTER {pw} {name}@{D}")
+        reg.wait(lambda l: "NOTICE" in l and "NickServ" in l and ("registered" in l.lower()), 20)
+        reg.close()
+        time.sleep(2)
+    st, rr = https(AUTH, "POST", "/v1/login", {"login": name, "password": pw})
+    check(f"{what} signs in to Boson ({name})", st == 200, (st, rr))
+    return name, (rr.get("access_token") if isinstance(rr, dict) else None)
+
+second, tok_b = new_user("a new Boson user" if not nickserv_mode else "a second NickServ account")
 
 ns_method = ENV.get("BRIDGE_NICKSERV_METHOD") or "sasl"
 if nickserv_mode:
@@ -297,6 +402,59 @@ if nickserv_mode:
             if found: break
             time.sleep(2)
         check(f"{name} is identified to NickServ on the IRC server (WHOIS 307/330)", bool(found), found or w)
+
+# 7. guests and the web gateway's WEBIRC to the bridge
+def whois_ips(nick):
+    c.send(f"WHOIS {nick}")
+    w = []
+    c.wait(lambda l: (w.append(l) or False) or " 318 " in l, 15)
+    return set(re.findall(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", " ".join(x for x in w if " 311 " in x or " 378 " in x or " 338 " in x))), w
+gw_ip = container_ip("webircgateway")
+not_ours = {x for x in (src, gw_ip) if x}
+auth_guests = bool(cfg.get("guest_access")) if isinstance(cfg, dict) else False
+settings = None
+for _ in range(30):
+    settings = bridge_api("/api/managed/settings")
+    if isinstance(settings, dict) and "guests" in (settings.get("set") or []): break
+    time.sleep(1)
+check("the bridge has the settings API (evrd 0.61+)", isinstance(settings, dict) and "guests" in settings, settings)
+if isinstance(settings, dict) and "guests" in (settings.get("set") or []):
+    check(f"auth drives the bridge's guests: {settings.get('guests')} = guest_access {auth_guests}", settings.get("guests") == auth_guests, settings)
+else:
+    print(f"SKIP auth driving guests: this auth doesn't set the bridge's guests yet; setting guests={auth_guests} on the bridge here", flush=True)
+    try: settings = bridge_put("/api/managed/settings", {"guests": auth_guests})
+    except OSError as e: settings = str(e)
+    check("guests set on the bridge through the managed API", isinstance(settings, dict) and settings.get("guests") == auth_guests, settings)
+check("evrd.conf leaves managed_guests to auth", "managed_guests " not in subprocess.run(["sudo", "cat", f"{args.dir}/bridge/evrd.conf"], capture_output=True, text=True).stdout)
+gnick = "e2eguest" + secrets.token_hex(2)
+g, gwel = web_irc(gnick)
+check("the web gateway's socket opens (wss://chat.DOMAIN/webirc/websocket/)", g.status == 101, g.status)
+if auth_guests:
+    check(f"a guest from the web gateway gets through the bridge ({gnick})", gwel, " | ".join(g.lines[-3:]))
+    g.send(f"JOIN {chan}")
+    check("the guest joins the channel", g.wait(lambda l: " JOIN " in l and chan in l))
+    c.wait(lambda l: " JOIN " in l and l.startswith(f":{gnick}"), 15)
+    h = bridge_api("/api/managed/health") or {}
+    check("the bridge counts the guest (health guests.active)", ((h.get("guests") or {}).get("active") or 0) >= 1, h.get("guests"))
+    ips, w = whois_ips(gnick)
+    check(f"the classic client sees the guest with their own address via the gateway's WEBIRC, not the bridge's or the gateway's ({sorted(not_ours)})",
+          ips and not (ips & not_ours), w)
+else:
+    check("guests not allowed: a guest from the web gateway is refused", not gwel and any(" 464 " in l for l in g.lines), " | ".join(g.lines[-3:]))
+g.close()
+third, tok_c = new_user("a Boson user who connects through the web gateway")
+wu, wwel = web_irc(third, tok_c)
+check(f"{third} signs in to the bridge through the web gateway (OAUTHBEARER)", wwel, " | ".join(wu.lines[-3:]))
+wu.send(f"JOIN {chan}")
+wu.wait(lambda l: " JOIN " in l and chan in l)
+ips = set()
+for _ in range(10):
+    ips, w = whois_ips(third)
+    if ips: break
+    time.sleep(1)
+check(f"the classic client sees {third} with their own address via the web gateway, not the bridge's or the gateway's ({sorted(not_ours)})",
+      ips and not (ips & not_ours), w)
+wu.close()
 for x in (a, b2, c): x.close()
 
 # 5/6. nothing Boson users see says evrd

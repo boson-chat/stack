@@ -45,8 +45,10 @@ func TestAddonPlan(t *testing.T) {
 		t.Error("an oper password without Ergo")
 	}
 	pw := p.EnvValue("BRIDGE_WEBIRC_PASSWORD")
-	if len(pw) != 48 || p.EnvValue("WEBIRC_PASSWORDS") != "irc.example.org="+pw {
-		t.Fatalf("webirc %q / %q", pw, p.EnvValue("WEBIRC_PASSWORDS"))
+	clientPW := p.EnvValue("BRIDGE_CLIENT_WEBIRC_PASSWORD")
+	if len(pw) != 48 || len(clientPW) != 48 || pw == clientPW ||
+		p.EnvValue("WEBIRC_PASSWORDS") != "irc.example.org="+pw+",evrd-links="+clientPW {
+		t.Fatalf("webirc %q %q / %q", pw, clientPW, p.EnvValue("WEBIRC_PASSWORDS"))
 	}
 	if len(p.EnvValue("BRIDGE_SECRET_KEY")) != 64 || len(p.EnvValue("BRIDGE_TOKEN")) != 64 {
 		t.Error("bridge secrets")
@@ -66,7 +68,7 @@ func TestAddonPlan(t *testing.T) {
 	for _, want := range []string{"managed yes", "managed_network NgircdNet", "managed_server irc.example.org +6697",
 		"managed_tls_verify no", "managed_fingerprint " + strings.Repeat("ab", 32), "managed_server_name irc.example.org",
 		"managed_token_issuer https://auth.boson.test", "managed_token_audience boson", "managed_webirc_gateway {ident}",
-		"links_socket /run/evrd-links/links.sock", "tls_cert /certs/fullchain.pem"} {
+		"links_socket /run/evrd-links/links.sock", "tls_cert /certs/fullchain.pem", "managed_nick_guard_grace 60s"} {
 		if !strings.Contains(conf, want+"\n") {
 			t.Errorf("evrd.conf lacks %q:\n%s", want, conf)
 		}
@@ -76,11 +78,42 @@ func TestAddonPlan(t *testing.T) {
 			t.Fatal("a secret in evrd.conf")
 		}
 	}
+	// auth drives the bridge's guests (PUT /api/managed/settings).
+	if strings.Contains(conf, "\nmanaged_guests ") {
+		t.Errorf("evrd.conf sets managed_guests:\n%s", conf)
+	}
 	// Same answers again with that .env: the secrets stay.
 	text, _ := MergeEnv("", p.Env, "# t")
 	p2, _ := BuildPlan(addonAnswers(), Secrets{}, ParseEnv(text), NewGenerator(), "999")
-	if p2.EnvValue("BRIDGE_TOKEN") != p.EnvValue("BRIDGE_TOKEN") || p2.EnvValue("WEBIRC_PASSWORDS") != p.EnvValue("WEBIRC_PASSWORDS") {
+	if p2.EnvValue("BRIDGE_TOKEN") != p.EnvValue("BRIDGE_TOKEN") || p2.EnvValue("WEBIRC_PASSWORDS") != p.EnvValue("WEBIRC_PASSWORDS") ||
+		p2.EnvValue("BRIDGE_CLIENT_WEBIRC_PASSWORD") != clientPW {
 		t.Fatal("bridge secrets not kept")
+	}
+	// An install from an older wizard (no client WEBIRC password yet):
+	// its server password stays, the client one is added.
+	old := ParseEnv(text)
+	delete(old, "BRIDGE_CLIENT_WEBIRC_PASSWORD")
+	old["WEBIRC_PASSWORDS"] = "irc.example.org=" + pw
+	p4, _ := BuildPlan(addonAnswers(), Secrets{}, old, NewGenerator(), "999")
+	if c := p4.EnvValue("BRIDGE_CLIENT_WEBIRC_PASSWORD"); len(c) != 48 || p4.EnvValue("WEBIRC_PASSWORDS") != "irc.example.org="+pw+",evrd-links="+c {
+		t.Fatalf("upgrade: %q / %q", c, p4.EnvValue("WEBIRC_PASSWORDS"))
+	}
+	// Still pinned to an evrd before 0.61: nothing it would refuse (an
+	// unknown directive stops evrd) or not understand (WEBIRC from the
+	// gateway); the secret is made anyway, for after the update.
+	old["EVRD_IMAGE"] = "ghcr.io/4evrd/evrd:0.60.0"
+	p5, _ := BuildPlan(addonAnswers(), Secrets{}, old, NewGenerator(), "999")
+	if p5.EnvValue("WEBIRC_PASSWORDS") != "irc.example.org="+pw || len(p5.EnvValue("BRIDGE_CLIENT_WEBIRC_PASSWORD")) != 48 {
+		t.Fatalf("evrd 0.60: %q", p5.EnvValue("WEBIRC_PASSWORDS"))
+	}
+	if c := p5.Files[0].Content; strings.Contains(c, "\nmanaged_nick_guard_grace") || !strings.Contains(c, "evrd 0.61.0 or later") {
+		t.Fatalf("evrd 0.60 conf:\n%s", c)
+	}
+	for img, want := range map[string]bool{"": true, "ghcr.io/4evrd/evrd:0.61.0": true, "ghcr.io/4evrd/evrd:1.0.0": true,
+		"evrd:local": true, "ghcr.io/4evrd/evrd:0.59.2": false, "ghcr.io/4evrd/evrd:0.61.0-rc.1": false} {
+		if evrdAtLeast(img, evrdGuests) != want {
+			t.Errorf("evrdAtLeast(%q) != %v", img, want)
+		}
 	}
 	// Read back: an add-on install.
 	if ex := (Existing{Found: true, Env: ParseEnv(text)}).Answers(); !ex.IsAddon() || ex.Addon.Host != "irc.example.org" || ex.Addon.Port != 6697 {

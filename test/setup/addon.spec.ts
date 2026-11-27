@@ -140,7 +140,12 @@ test(`add Boson to ${PAIRING} through the wizard`, async ({ page, context }) => 
   await shot(page, 'admin', P);
   await next(page).click();
   await expect(page.getByRole('heading', { name: 'Features' })).toBeVisible();
-  await expect(page.getByRole('switch', { name: /^Guests Not on this path/ })).toBeDisabled();
+  // Guests through the bridge (auth drives evrd's managed_guests): on by
+  // default, as on a new server; not in voice on this path.
+  const guests = page.getByRole('switch', { name: /^Guests People can chat in Boson/ });
+  await expect(guests).toBeEnabled();
+  await expect(guests).toBeChecked();
+  await expect(page.getByRole('switch', { name: /^Guests in voice Not on this path/ })).toBeDisabled();
   // Federated sign-in: the same choice as on a new server, verified servers
   // by default, with a note on how remote users reach the IRC server.
   const fed = page.getByRole('group', { name: 'Accept accounts from' });
