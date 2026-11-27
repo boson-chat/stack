@@ -234,3 +234,111 @@ func TestReactModuleMatchesFixture(t *testing.T) {
 		t.Fatal("test/ircds/unrealircd/boson-react.c differs from snippets/boson-react.c")
 	}
 }
+
+func TestAddonNickServSignup(t *testing.T) {
+	old := AuthNickServ
+	defer func() { AuthNickServ = old }()
+	AuthNickServ = true
+	a := addonAnswers()
+	a.Addon.Accounts, a.Addon.Strategy = AccountsNickServ, "atheme_jsonrpc"
+	a.Registration = "invite"
+	if !a.RegistersNickServ() || !a.NickServCanRegister() {
+		t.Fatal("default: register NickServ accounts (atheme)")
+	}
+	p, err := BuildPlan(a, Secrets{RPCToken: "t"}, nil, NewGenerator(), "999")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// On by default, whatever the registration mode (it was registration ==
+	// open before): auth's registration setting still gates sign-up.
+	if got := p.EnvValue("NICKSERV_REGISTRATION"); got != "true" {
+		t.Fatalf("NICKSERV_REGISTRATION=%q", got)
+	}
+	cfg, _, err := ApplyConfig(nil, example(t), p.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ConfigValue(cfg, "auth", "nickserv", "registration") != true || ConfigValue(cfg, "auth", "nickserv", "signup_message") != nil {
+		t.Fatalf("config:\n%s", cfg)
+	}
+
+	// Off, with a message: both in the config file, the switch in .env too.
+	off := false
+	a.NickServRegistration = &off
+	a.NickServSignupMessage = "  Register at https://example.org/register, then sign in here.  "
+	a.Normalize()
+	if errs := a.Validate("features", Secrets{}, false); len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	p, _ = BuildPlan(a, Secrets{RPCToken: "t"}, nil, NewGenerator(), "999")
+	if got := p.EnvValue("NICKSERV_REGISTRATION"); got != "false" {
+		t.Fatalf("NICKSERV_REGISTRATION=%q", got)
+	}
+	cfg2, _, _ := ApplyConfig(cfg, example(t), p.Config)
+	if ConfigValue(cfg2, "auth", "nickserv", "registration") != false ||
+		ConfigValue(cfg2, "auth", "nickserv", "signup_message") != "Register at https://example.org/register, then sign in here." {
+		t.Fatalf("config:\n%s", cfg2)
+	}
+	// Read back on a re-run.
+	env, _ := MergeEnv("", p.Env, "#")
+	back := Existing{Found: true, Env: ParseEnv(env), Config: cfg2}.Answers()
+	if back.RegistersNickServ() || back.NickServSignupMessage != a.NickServSignupMessage {
+		t.Fatalf("read back: %v %q", back.RegistersNickServ(), back.NickServSignupMessage)
+	}
+	// The message cleared: the key in the file is emptied (auth's default).
+	a.NickServSignupMessage = ""
+	p, _ = BuildPlan(a, Secrets{RPCToken: "t"}, nil, NewGenerator(), "999")
+	cfg3, _, _ := ApplyConfig(cfg2, example(t), p.Config)
+	if ConfigValue(cfg3, "auth", "nickserv", "signup_message") != "" {
+		t.Fatalf("cleared message:\n%s", cfg3)
+	}
+
+	// Messages that can't go in: too long, more than one line.
+	a.NickServSignupMessage = strings.Repeat("x", MaxSignupMessageLen+1)
+	if errs := a.Validate("features", Secrets{}, false); len(errs) != 1 || errs[0].Field != "nickserv_signup_message" {
+		t.Fatalf("long: %v", errs)
+	}
+	a.NickServSignupMessage = "two\nlines"
+	if errs := a.Validate("features", Secrets{}, false); len(errs) != 1 || errs[0].Field != "nickserv_signup_message" {
+		t.Fatalf("multi-line: %v", errs)
+	}
+
+	// Only Atheme's RPC registers accounts.
+	a.Addon.Strategy = "anope_rpc"
+	if a.NickServCanRegister() {
+		t.Fatal("anope can't register")
+	}
+	// Boson accounts: no nickserv keys at all.
+	b := addonAnswers()
+	p, _ = BuildPlan(b, Secrets{}, nil, NewGenerator(), "999")
+	for _, k := range p.Config {
+		if len(k.Path) > 1 && k.Path[1] == "nickserv" {
+			t.Fatalf("boson accounts wrote %v", k.Path)
+		}
+	}
+	if got := p.EnvValue("NICKSERV_REGISTRATION"); got != "" {
+		t.Fatalf("boson accounts: NICKSERV_REGISTRATION=%q", got)
+	}
+}
+
+func TestSMTPNeed(t *testing.T) {
+	a := answers()
+	for reg, want := range map[string]string{"open": SMTPRecommended, "invite": SMTPRecommended, "closed": SMTPNotNeeded} {
+		a.Registration = reg
+		if got := a.SMTPNeed(); got != want {
+			t.Errorf("%s: %s, want %s", reg, got, want)
+		}
+	}
+	// NickServ accounts: the services send their own mail.
+	n := addonAnswers()
+	n.Registration = "open"
+	n.Addon.Accounts, n.Addon.Strategy = AccountsNickServ, "atheme_jsonrpc"
+	if n.SMTPNeed() != SMTPNotNeeded {
+		t.Fatal("nickserv accounts need no SMTP")
+	}
+	// Skipping SMTP is never an error; only verification without it is.
+	a.Registration, a.SMTP.Host, a.EmailVerification = "open", "", false
+	if errs := a.Validate("features", Secrets{}, false); len(errs) != 0 {
+		t.Fatal(errs)
+	}
+}

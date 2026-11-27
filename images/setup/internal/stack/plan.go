@@ -320,6 +320,15 @@ func BuildPlan(a Answers, s Secrets, existing map[string]string, gen *Generator,
 	c(a.NetworkName, "network", "name")
 	c(a.Registration, "auth", "registration")
 	c(a.EmailVerification, "auth", "require_email_verification")
+	if a.NickServAccounts() {
+		// Sign-up with NickServ accounts (auth docs/nickserv.md).
+		c(a.RegistersNickServ(), "auth", "nickserv", "registration")
+		if a.NickServSignupMessage != "" {
+			c(a.NickServSignupMessage, "auth", "nickserv", "signup_message")
+		} else {
+			p.Config = append(p.Config, ConfigKey{Path: []string{"auth", "nickserv", "signup_message"}, Value: "", IfPresent: true})
+		}
+	}
 	c(a.Guests, "auth", "guest_access")
 	c(a.GuestVoice, "auth", "guest_voice")
 	c(origins, "auth", "cors_allowed_origins")

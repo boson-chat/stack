@@ -95,8 +95,21 @@ test('new install through the wizard', async ({ page }) => {
   const voice = page.getByRole('switch', { name: /^Voice/ });
   await expect(voice).toBeChecked();
   await expect(page.getByRole('switch', { name: /^File uploads/ })).toBeChecked();
+  // Outgoing email: recommended while sign-up is open, with what skipping
+  // it means; not needed (no warning) while sign-up is closed.
+  await expect(page.getByTestId('smtp-need')).toHaveText('recommended');
+  await expect(page.getByTestId('smtp-skip-warning')).toContainText('no email verification');
+  await expect(page.getByTestId('smtp-skip-warning')).toContainText('no password reset by email');
+  await page.getByRole('group', { name: 'Sign-up' }).getByText('Closed').click();
+  await expect(page.getByTestId('smtp-need')).toHaveText('not needed');
+  await expect(page.getByTestId('smtp-skip-warning')).toBeHidden();
+  await expect(page.getByTestId('smtp-not-needed')).toBeVisible();
+  await shot(page, 'features-smtp-not-needed');
+  await page.getByRole('group', { name: 'Sign-up' }).getByText('Open', { exact: true }).click();
+  await expect(page.getByTestId('smtp-need')).toHaveText('recommended');
   if (SMTP_HOST) {
     await page.getByLabel('Mail server').fill(SMTP_HOST);
+    await expect(page.getByTestId('smtp-skip-warning')).toBeHidden();
     await page.getByLabel('Port').fill(SMTP_PORT);
     await page.getByLabel('Sender').fill(`E2E Net <noreply@${DOMAIN}>`);
     await page.getByLabel('Security').selectOption('none');
