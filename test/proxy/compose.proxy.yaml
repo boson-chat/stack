@@ -1,0 +1,56 @@
+# Boson behind an outer reverse proxy (docs/reverse-proxy.md), for
+# test/proxy/run.sh: the outer proxy (compose.outer-<software>.yaml) holds
+# "the internet's" 80/443 and is configured with the wizard's own snippets;
+# a client on the "internet" network (10.214.0.99) must show up as itself
+# behind Boson's Traefik. Pebble validates HTTP-01 through the outer proxy.
+networks:
+  # The outer proxy's own Docker network (like a Forgejo Traefik's "proxy").
+  outer:
+    ipam:
+      config:
+        - subnet: 10.213.0.0/24
+          gateway: 10.213.0.1
+  internet:
+    ipam:
+      config:
+        - subnet: 10.214.0.0/24
+services:
+  traefik:
+    environment:
+      LEGO_CA_CERTIFICATES: /pebble-ca/pebble.minica.pem
+    volumes:
+      - ./test/acme/pebble.minica.pem:/pebble-ca/pebble.minica.pem:ro
+    networks:
+      default:
+        ipv4_address: 10.203.53.10
+  pebble:
+    image: ghcr.io/letsencrypt/pebble:2.10.3
+    command: ["-config", "/pebble.json", "-dnsserver", "10.203.53.11:8053", "-strict"]
+    environment:
+      PEBBLE_VA_NOSLEEP: "1"
+    volumes:
+      - ./test/acme/pebble.json:/pebble.json:ro
+    networks: [default, internet]
+  challtestsrv:
+    image: ghcr.io/letsencrypt/pebble-challtestsrv:2.10.3
+    # Every name resolves to the outer proxy.
+    command: ["-defaultIPv4", "10.214.0.10", "-defaultIPv6", "", "-dnsserver", ":8053",
+              "-http01", "", "-https01", "", "-tlsalpn01", "", "-doh", ""]
+    networks:
+      default:
+        ipv4_address: 10.203.53.11
+  # Echoes the request behind Boson's Traefik: X-Real-Ip / X-Forwarded-For
+  # are what auth, the api, files and the web gateway read.
+  whoami:
+    image: traefik/whoami:v1.11.0
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.whoami.rule: Host(`api.boson.test`)
+      traefik.http.routers.whoami.entrypoints: websecure
+      traefik.http.routers.whoami.tls: "true"
+  client:
+    image: curlimages/curl:8.11.1
+    entrypoint: ["sleep", "infinity"]
+    networks:
+      internet:
+        ipv4_address: 10.214.0.99

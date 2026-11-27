@@ -29,6 +29,9 @@ type Deps struct {
 	DockerGID  func() string
 	SendMail   func(ctx context.Context, s stack.SMTPAnswers, password, to, network string) error
 	Redactor   *dockercli.Redactor
+	// Docker runs a docker command (finding the reverse proxy on 80/443);
+	// nil = don't look.
+	Docker checks.DockerOutput
 	// Finish closes the wizard for good (after the Done page).
 	Finish func()
 }
@@ -94,6 +97,8 @@ func NewFlow(d Deps, cfg Config) (*Flow, error) {
 			fromFiles := ex.Answers()
 			fromFiles.Mode, fromFiles.Addon = st.Answers.Mode, st.Answers.Addon
 			fromFiles.Admin.Username = st.Answers.Admin.Username
+			// .env doesn't say which proxy it is.
+			fromFiles.Proxy.Software = st.Answers.Proxy.Software
 			if fromFiles.Admin.Email == "" {
 				fromFiles.Admin.Email = st.Answers.Admin.Email
 			}
@@ -111,6 +116,8 @@ func (f *Flow) Register(mux *http.ServeMux, p string) {
 	mux.HandleFunc("POST "+p+"check/dns", f.checkDNS)
 	mux.HandleFunc("POST "+p+"check/ports", f.checkPorts)
 	mux.HandleFunc("POST "+p+"check/smtp", f.checkSMTP)
+	mux.HandleFunc("GET "+p+"proxy/detect", f.proxyDetect)
+	mux.HandleFunc("GET "+p+"proxy/snippets", f.proxySnippets)
 	mux.HandleFunc("GET "+p+"review", f.review)
 	mux.HandleFunc("POST "+p+"install", f.startInstall)
 	mux.HandleFunc("GET "+p+"install", f.installState)
@@ -236,6 +243,7 @@ func (f *Flow) putAnswers(w http.ResponseWriter, r *http.Request) {
 	}
 	a := req.Answers
 	a.Mode = f.cfg.Mode
+	f.proxyDefaults(&a)
 	a.Normalize()
 	f.mu.Lock()
 	sec := f.secrets
@@ -296,7 +304,7 @@ func (f *Flow) checkDNS(w http.ResponseWriter, r *http.Request) {
 
 func (f *Flow) checkPorts(w http.ResponseWriter, r *http.Request) {
 	a := f.currentAnswers()
-	flow.JSON(w, http.StatusOK, f.d.Ports.Check(r.Context(), checks.PortsFor(a.Voice, a.Video)))
+	flow.JSON(w, http.StatusOK, f.d.Ports.Check(r.Context(), portSpecs(a)))
 }
 
 func (f *Flow) checkSMTP(w http.ResponseWriter, r *http.Request) {

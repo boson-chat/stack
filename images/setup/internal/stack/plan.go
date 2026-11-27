@@ -184,6 +184,7 @@ func BuildPlan(a Answers, s Secrets, existing map[string]string, gen *Generator,
 	set("ADMIN_EMAIL", a.Admin.Email)
 	set("TLS_ISSUER", a.TLS.Email)
 	set("ACME_CA_SERVER", a.ACMEServer())
+	proxyEnv(a, existing, set)
 	set("OPER_NAME", "admin")
 	if a.IsAddon() {
 		// No Ergo, so no emergency oper: keep a hash that's there.

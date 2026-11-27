@@ -2,7 +2,7 @@
 // the bridge → accounts → (fresh.js's) domain, TLS, admin, features,
 // ports → the config for your server (Re-check) → review → install → done.
 // The wizard never edits the IRC server: it shows what to add, then checks.
-import { h, put, api, ApiError, field, toggle, choices, notice, tag, button, errorMap } from '../lib.js';
+import { h, put, api, ApiError, field, toggle, choices, notice, tag, button, errorMap, snippetBox } from '../lib.js';
 import { useFlow, mountFlow, state, go, frame, card, nav, save, stepHref, nextOf, prevOf } from './fresh.js';
 
 const BASE = '/api/flows/addon/';
@@ -308,37 +308,6 @@ function checkList(checks) {
 				h('span', { class: 'msg' }, c.detail, c.fix ? h('span', { class: 'fixline', 'data-testid': `fix-${c.id}` }, ' ', c.fix) : null),
 			),
 		),
-	);
-}
-
-function snippetBox(s) {
-	const pre = h('pre', { class: 'code', 'data-snippet': s.id, 'data-first': s.first ? 'true' : 'false', tabindex: '0' }, s.text);
-	const status = h('span', { class: 'muted copied', 'aria-live': 'polite' });
-	const copy = button(
-		'Copy',
-		async () => {
-			try {
-				await navigator.clipboard.writeText(s.text);
-				status.textContent = 'Copied.';
-			} catch {
-				const r = document.createRange();
-				r.selectNodeContents(pre);
-				const sel = getSelection();
-				sel.removeAllRanges();
-				sel.addRange(r);
-				status.textContent = 'Selected: press Ctrl+C (⌘C).';
-			}
-			setTimeout(() => (status.textContent = ''), 4000);
-		},
-		{ kind: 'small', testid: `copy-${s.id}` },
-	);
-	return h(
-		'div',
-		{ class: 'panel snippet', 'data-snippet-box': s.id },
-		h('div', { class: 'snippet-head' }, h('h2', {}, s.title, s.optional ? h('span', { class: 'tag tag-accent' }, 'optional') : null, s.first ? h('span', { class: 'tag tag-warn' }, 'goes first') : null), h('span', { class: 'snippet-copy' }, status, copy)),
-		h('p', { class: 'muted' }, s.where),
-		s.warning ? notice('warn', h('strong', {}, 'Read this first. '), s.warning) : null,
-		pre,
 	);
 }
 

@@ -657,6 +657,19 @@ input[aria-invalid='true'] {
 .panel h2 {
 	font-size: var(--text-base);
 }
+.row-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-3);
+	align-items: center;
+}
+.panel > p.hint {
+	font-family: var(--font-mono);
+	color: var(--fg-quiet);
+	font-size: var(--text-xs);
+	line-height: 1.4;
+	margin-top: calc(-1 * var(--space-2));
+}
 .actions {
 	display: flex;
 	flex-wrap: wrap;

@@ -215,6 +215,7 @@ func serve() error {
 			Probe:    checks.InstanceProbe(port, instance),
 		},
 		Ports:     ports,
+		Docker:    cli.Output,
 		DockerGID: dockerGID,
 		Redactor:  red,
 		Finish:    finish,

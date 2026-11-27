@@ -2,7 +2,7 @@
 // install → done. Answers are saved on the server at every Continue (a
 // reload or a restarted wizard comes back to them); secrets typed here are
 // sent once and never shown again.
-import { h, put, api, ApiError, field, select, toggle, choices, notice, tag, button, errorMap } from '../lib.js';
+import { h, put, api, ApiError, field, select, toggle, choices, notice, tag, button, errorMap, snippetBox } from '../lib.js';
 
 const FRESH_STEPS = [
 	{ id: 'domain', title: 'Domain' },
@@ -283,6 +283,11 @@ function domain(errors = {}) {
 // ---- tls -------------------------------------------------------------------
 
 function tls(errors = {}) {
+	let tlsNote;
+	const portNote = () =>
+		A.proxy.enabled
+			? 'Let’s Encrypt checks each name over port 80, through your reverse proxy: it forwards them to Boson. The ports step shows how.'
+			: 'Let’s Encrypt checks each name over port 80, so 80/tcp must be open to the internet. The ports step tests what it can.';
 	const custom = h('div', { hidden: A.tls.ca !== 'custom' }, field({ label: 'ACME directory URL', name: 'tls.custom_url', value: A.tls.custom_url, errors, placeholder: 'https://acme.example.com/directory', oninput: (e) => (A.tls.custom_url = e.target.value) }));
 	frame(
 		'tls',
@@ -306,7 +311,17 @@ function tls(errors = {}) {
 				},
 			}),
 			custom,
-			notice('info', 'Let’s Encrypt checks each name over port 80, so 80/tcp must be open to the internet. The ports step tests what it can.'),
+			toggle({
+				label: 'This server already runs a reverse proxy on ports 80 and 443',
+				detail: 'Such as a Traefik, nginx, Caddy or HAProxy for your other sites. Boson goes behind it: the ports step asks where, and shows what to add to it.',
+				checked: A.proxy.enabled,
+				name: 'proxy.enabled',
+				onchange: (v) => {
+					A.proxy.enabled = v;
+					tlsNote.textContent = portNote();
+				},
+			}),
+			notice('info', (tlsNote = h('span', {}, portNote()))),
 			nav(prevOf('tls'), () => saveAndGo('tls', nextOf('tls'), tls)),
 		),
 	);
@@ -583,10 +598,115 @@ function federationSection(section, errors) {
 
 // ---- ports -----------------------------------------------------------------
 
-function ports() {
+const PROXIES = [
+	['traefik', 'Traefik'],
+	['nginx', 'nginx'],
+	['caddy', 'Caddy'],
+	['haproxy', 'HAProxy'],
+	['other', 'Other'],
+];
+
+let proxyFound = null; // GET proxy/detect, once per page load
+
+const portName = (p) => (p.bind ? `${p.bind.includes(':') ? '[' + p.bind + ']' : p.bind}:${p.port}/${p.proto}` : `${p.port}/${p.proto}`);
+
+/** Behind a reverse proxy: where Boson listens, whom it trusts. */
+function proxyPanel(errors, onSave, onOff) {
+	const P = A.proxy;
+	const found = proxyFound && proxyFound.containers && proxyFound.containers[0];
+	const gw = (proxyFound && proxyFound.gateway) || (P.trusted_ips || '').split(',')[0] || '10.203.53.1';
+	const httpF = field({ label: 'Boson’s HTTP address', name: 'proxy.http_addr', value: P.http_addr, errors, placeholder: '127.0.0.1:8081', oninput: (e) => (P.http_addr = e.target.value.trim()) });
+	const httpsF = field({ label: 'Boson’s HTTPS address', name: 'proxy.https_addr', value: P.https_addr, errors, placeholder: '127.0.0.1:8444', oninput: (e) => (P.https_addr = e.target.value.trim()) });
+	const sugIP = proxyFound && proxyFound.suggest_ip;
+	const cur = (P.https_addr || '').replace(/:\d+$/, '');
+	const useSug =
+		sugIP && sugIP !== cur
+			? button(
+					`Use ${sugIP}`,
+					() => {
+						P.http_addr = `${sugIP}:${(P.http_addr || ':8081').split(':').pop()}`;
+						P.https_addr = `${sugIP}:${(P.https_addr || ':8444').split(':').pop()}`;
+						onSave();
+					},
+					{ kind: 'small', testid: 'proxy-use-suggested' },
+				)
+			: null;
+	return h(
+		'div',
+		{ class: 'panel', 'data-testid': 'proxy-panel' },
+		h('h2', {}, 'Your reverse proxy'),
+		h('p', { class: 'muted' }, 'It keeps 80 and 443. Boson’s own front door listens on two private ports instead, and your proxy passes Boson’s names to it, with each visitor’s address (PROXY protocol), so sign-in limits, logs and bans see real people, not your proxy.'),
+		found
+			? notice(
+					'info',
+					h('strong', {}, `Found ${found.name}`),
+					` (${found.image}) on ports 80/443`,
+					found.host_network ? ', on this server’s own network: 127.0.0.1 reaches Boson.' : found.networks.length ? `, on the Docker network ${found.networks[0].name} (this server is ${found.networks[0].gateway} there).` : '.',
+				)
+			: null,
+		errors._ ? notice('bad', errors._) : null,
+		select({ label: 'Which proxy', name: 'proxy.software', value: P.software || 'traefik', options: PROXIES, onchange: (e) => ((P.software = e.target.value), onSave()) }),
+		h('div', { class: 'grid2' }, httpF, httpsF),
+		h(
+			'p',
+			{ class: 'hint' },
+			'127.0.0.1 if your proxy runs directly on this server. A proxy in a Docker container can’t reach this server’s 127.0.0.1: use the gateway address of a Docker network it’s on (docker network inspect NAME).',
+			sugIP && sugIP !== '127.0.0.1' ? ` For ${found ? found.name : 'yours'}, that’s ${sugIP}.` : '',
+			useSug ? h('span', {}, ' ', useSug) : null,
+		),
+		field({
+			label: 'Trust visitors’ addresses from',
+			name: 'proxy.trusted_ips',
+			value: (P.trusted_ips || '').split(',').filter(Boolean).join(', '),
+			errors,
+			placeholder: gw,
+			hint: `Docker hands Boson every connection from this server through Boson’s own network gateway, ${gw}, whether your proxy is a container or not: keep it. Add your proxy’s address (or range) only if it runs on another machine.`,
+			oninput: (e) => (P.trusted_ips = e.target.value),
+		}),
+		h('div', { class: 'row-actions' }, button('Save and check again', onSave, { kind: 'primary', testid: 'proxy-save' }), button('I don’t run a reverse proxy', onOff, { kind: 'ghost', testid: 'proxy-off' })),
+	);
+}
+
+function ports(errors = {}) {
 	const out = h('div', { 'aria-live': 'polite', class: 'stack' }, h('p', { class: 'muted' }, h('span', { class: 'spinner' }), ' Testing ports from inside this server…'));
+	const snippetsOut = h('div', { class: 'stack', 'data-testid': 'proxy-snippets' });
 	let report = null;
 	let recheck;
+	const enable = async () => {
+		A.proxy.enabled = true;
+		if (!proxyFound) proxyFound = await api('GET', BASE + 'proxy/detect').catch(() => null);
+		if (proxyFound && proxyFound.suggest && !S.answers.proxy.enabled) {
+			Object.assign(A.proxy, { ...proxyFound.suggest, enabled: true });
+		}
+		await saveProxy();
+	};
+	const saveProxy = async () => {
+		try {
+			await save('proxy');
+			ports();
+		} catch (err) {
+			ports(err instanceof ApiError && err.status === 422 ? errorMap(err) : { _: err.message });
+		}
+	};
+	const disable = async () => {
+		A.proxy.enabled = false;
+		await save('').catch(() => {});
+		ports();
+	};
+	const loadSnippets = async () => {
+		if (!A.proxy.enabled || Object.keys(errors).length) return put(snippetsOut);
+		try {
+			const r = await api('GET', BASE + 'proxy/snippets');
+			put(
+				snippetsOut,
+				h('h2', {}, `Add this to your ${PROXIES.find((p) => p.at(0) === r.software)?.at(1) || 'proxy'}`),
+				h('p', { class: 'muted' }, `For ${r.hosts.length} names: ${r.hosts.map((x) => x.name).join(', ')}. Boson’s HTTPS is at ${r.https}, its HTTP at ${r.http}. Setup never changes your proxy’s config; the install checks the result through it.`),
+				r.snippets.map(snippetBox),
+			);
+		} catch (err) {
+			put(snippetsOut, notice('warn', err.message));
+		}
+	};
 	const run = async () => {
 		if (recheck) recheck.disabled = true;
 		put(out, h('p', { class: 'muted' }, h('span', { class: 'spinner' }), ' Testing ports from inside this server…'));
@@ -604,16 +724,26 @@ function ports() {
 			await save('');
 			run();
 		};
-		put(out, 
+		const webTaken = !A.proxy.enabled && report.ports.some((p) => p.feature === 'web' && p.local === 'in_use');
+		put(
+			out,
+			webTaken
+				? notice(
+						'warn',
+						h('strong', {}, 'Ports 80 or 443 are taken. '),
+						'If that’s a reverse proxy for your other sites (Traefik, nginx, Caddy, HAProxy), Boson can go behind it.',
+						h('div', { class: 'row-actions' }, button('I already run a reverse proxy on this server', enable, { kind: 'primary', testid: 'proxy-on' })),
+					)
+				: null,
 			h(
 				'ul',
 				{ class: 'checks', 'data-testid': 'port-results' },
 				report.ports.map((p) =>
 					h(
 						'li',
-						{ 'data-port': `${p.port}/${p.proto}`, 'data-level': p.level },
+						{ 'data-port': portName(p), 'data-level': p.level, 'data-proxy': p.proxy ? 'true' : undefined },
 						tag(p.level === 'ok' ? 'ok' : p.level === 'warn' ? 'warn' : 'bad', p.level === 'ok' ? 'ok' : p.level === 'warn' ? 'warning' : 'problem'),
-						h('span', {}, h('span', { class: 'name' }, `${p.port}/${p.proto}`), ' ', h('span', { class: 'what' }, p.what)),
+						h('span', {}, h('span', { class: 'name' }, portName(p)), ' ', h('span', { class: 'what' }, p.what)),
 						h(
 							'span',
 							{ class: 'msg' },
@@ -631,13 +761,27 @@ function ports() {
 		'ports',
 		card(
 			'Firewall and ports',
-			'Boson needs these ports open to the internet. This test runs from inside the server: it finds programs already using a port and this server’s own firewall blocking one.',
+			A.proxy.enabled
+				? 'Boson goes behind the reverse proxy you run here. This test runs from inside the server: it checks the ports Boson listens on are free, and what it can of the rest.'
+				: 'Boson needs these ports open to the internet. This test runs from inside the server: it finds programs already using a port and this server’s own firewall blocking one.',
+			A.proxy.enabled ? proxyPanel(errors, saveProxy, disable) : null,
 			out,
 			h('div', {}, (recheck = button('Check again', run, { testid: 'ports-recheck' }))),
-			nav(prevOf('ports'), () => go(nextOf('ports'))),
+			snippetsOut,
+			!A.proxy.enabled ? h('p', { class: 'muted' }, 'Already run a reverse proxy on 80 and 443? ', h('a', { href: '#', 'data-testid': 'proxy-on-link', onclick: (e) => (e.preventDefault(), enable()) }, 'Put Boson behind it.')) : null,
+			nav(prevOf('ports'), () => (A.proxy.enabled ? saveAndGo('proxy', nextOf('ports'), ports) : go(nextOf('ports')))),
 		),
 	);
+	if (A.proxy.enabled && !proxyFound) {
+		api('GET', BASE + 'proxy/detect')
+			.then((r) => {
+				proxyFound = r;
+				if (r.containers.length || (r.suggest_ip && r.suggest_ip !== '127.0.0.1')) ports(errors);
+			})
+			.catch(() => (proxyFound = {}));
+	}
 	run();
+	loadSnippets();
 }
 
 // ---- review ----------------------------------------------------------------

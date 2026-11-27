@@ -187,3 +187,35 @@ export function errorMap(err) {
 	for (const e of (err && err.body && err.body.errors) || []) out[e.field] = e.message;
 	return out;
 }
+
+/** A config snippet to paste (title, where it goes, a warning, Copy). */
+export function snippetBox(s) {
+	const pre = h('pre', { class: 'code', 'data-snippet': s.id, 'data-first': s.first ? 'true' : 'false', tabindex: '0' }, s.text);
+	const status = h('span', { class: 'muted copied', 'aria-live': 'polite' });
+	const copy = button(
+		'Copy',
+		async () => {
+			try {
+				await navigator.clipboard.writeText(s.text);
+				status.textContent = 'Copied.';
+			} catch {
+				const r = document.createRange();
+				r.selectNodeContents(pre);
+				const sel = getSelection();
+				sel.removeAllRanges();
+				sel.addRange(r);
+				status.textContent = 'Selected: press Ctrl+C (⌘C).';
+			}
+			setTimeout(() => (status.textContent = ''), 4000);
+		},
+		{ kind: 'small', testid: `copy-${s.id}` },
+	);
+	return h(
+		'div',
+		{ class: 'panel snippet', 'data-snippet-box': s.id },
+		h('div', { class: 'snippet-head' }, h('h2', {}, s.title, s.optional ? h('span', { class: 'tag tag-accent' }, 'optional') : null, s.first ? h('span', { class: 'tag tag-warn' }, 'goes first') : null), h('span', { class: 'snippet-copy' }, status, copy)),
+		h('p', { class: 'muted' }, s.where),
+		s.warning ? notice('warn', h('strong', {}, 'Read this first. '), s.warning) : null,
+		pre,
+	);
+}

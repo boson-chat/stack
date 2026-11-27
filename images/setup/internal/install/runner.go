@@ -58,6 +58,9 @@ type Runner struct {
 	// network goes, so the stack's network can take its subnet).
 	BeforeUp func(ctx context.Context)
 
+	// edgeHTTPS: Edge:443 (tests: another port).
+	edgeHTTPS string
+
 	mu      sync.Mutex
 	state   State
 	running bool
@@ -393,11 +396,20 @@ func stepHealth(ctx context.Context, r *Runner, _ *Job, log func(string)) error 
 	}
 }
 
-// edgeCert dials Traefik with SNI host and returns the certificate it serves.
-func (r *Runner) edgeCert(ctx context.Context, host string) (*x509.Certificate, error) {
+// traefikAddr: where Boson's Traefik answers HTTPS from here: Edge:443,
+// or its own address behind a reverse proxy (TRAEFIK_HTTPS_PUBLISH).
+func (r *Runner) traefikAddr(p stack.Plan) string {
+	if p.Answers.Proxy.Enabled {
+		return p.Answers.HTTPSTarget()
+	}
+	return net.JoinHostPort(r.Edge, "443")
+}
+
+// edgeCert dials addr with SNI host and returns the certificate it serves.
+func (r *Runner) edgeCert(ctx context.Context, addr, host string) (*x509.Certificate, error) {
 	d := tls.Dialer{NetDialer: &net.Dialer{Timeout: 5 * time.Second},
 		Config: &tls.Config{ServerName: host, InsecureSkipVerify: true}} // inspected below
-	c, err := d.DialContext(ctx, "tcp", net.JoinHostPort(r.Edge, "443"))
+	c, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
@@ -417,7 +429,7 @@ func stepCerts(ctx context.Context, r *Runner, j *Job, log func(string)) error {
 	}
 	for len(pending) > 0 {
 		for host := range pending {
-			cert, err := r.edgeCert(ctx, host)
+			cert, err := r.edgeCert(ctx, r.traefikAddr(j.Plan), host)
 			switch {
 			case err != nil:
 				pending[host] = err.Error()
@@ -446,9 +458,13 @@ func stepCerts(ctx context.Context, r *Runner, j *Job, log func(string)) error {
 			if len(acme) > 8 {
 				acme = acme[len(acme)-8:]
 			}
+			hint := "Let's Encrypt must reach this server on port 80 at each of these names. Check DNS and that 80/tcp is open (also in your provider's firewall), then retry."
+			if j.Plan.Answers.Proxy.Enabled {
+				hint = proxyCertHint(j.Plan.Answers)
+			}
 			return &StepError{
 				Msg:  "no certificate yet for " + strings.Join(names, ", ") + "\n" + strings.Join(acme, "\n"),
-				Hint: "Let's Encrypt must reach this server on port 80 at each of these names. Check DNS and that 80/tcp is open (also in your provider's firewall), then retry.",
+				Hint: hint,
 			}
 		}
 		time.Sleep(3 * time.Second)
@@ -556,6 +572,11 @@ func stepVerify(ctx context.Context, r *Runner, j *Job, log func(string)) error 
 		probes = append(probes, probe{h[stack.RoleFiles], "/v1/config"})
 	}
 	deadline := time.Now().Add(r.Timeouts.Verify)
+	if p.Answers.Proxy.Enabled {
+		if err := r.checkProxyPath(ctx, p, deadline, log); err != nil {
+			return err
+		}
+	}
 	for _, pr := range probes {
 		for {
 			code, err := r.get(ctx, pr.host, pr.path)

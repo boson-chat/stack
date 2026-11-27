@@ -26,6 +26,8 @@ type Answers struct {
 
 	TLS   TLSAnswers   `json:"tls"`
 	Admin AdminAnswers `json:"admin"`
+	// Proxy: behind a reverse proxy that already has 80/443 here.
+	Proxy ProxyAnswers `json:"proxy"`
 
 	Voice            bool         `json:"voice"`
 	Video            bool         `json:"video"`
@@ -161,6 +163,7 @@ func (a *Answers) Normalize() {
 		a.Federation = FederationDirectory
 	}
 	a.FederationAllow = strings.Join(federationDomains(a.FederationAllow), ",")
+	a.Proxy.normalize()
 	if a.Mode == ModeAddon {
 		a.Addon.normalize()
 		// The bridge signs everyone in: no guests on this path (yet).
@@ -263,7 +266,7 @@ func validEmail(s string) bool {
 	return at > 0 && at < len(s)-1
 }
 
-// Validate checks one section ("domain", "tls", "admin", "features") or
+// Validate checks one section ("domain", "tls", "proxy", "admin", "features") or
 // all of them (""). needPassword: a new admin needs a password.
 func (a Answers) Validate(section string, s Secrets, needPassword bool) []FieldError {
 	var errs []FieldError
@@ -294,6 +297,9 @@ func (a Answers) Validate(section string, s Secrets, needPassword bool) []FieldE
 		default:
 			add("tls.ca", "Pick a certificate authority.")
 		}
+	}
+	if all || section == "proxy" {
+		a.Proxy.validate(add)
 	}
 	if all || section == "admin" {
 		if !usernameRe.MatchString(a.Admin.Username) {

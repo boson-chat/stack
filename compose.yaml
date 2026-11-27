@@ -56,9 +56,13 @@ services:
   traefik:
     <<: *restart
     image: traefik:v3.7.19
+    # Where :80 and :443 are published. Default: every address, the
+    # internet's way in. Behind a reverse proxy you already run on 80/443
+    # (docs/reverse-proxy.md): a private address it forwards to, such as
+    # 127.0.0.1:8081 / 127.0.0.1:8444.
     ports:
-      - "80:80"
-      - "443:443"
+      - "${TRAEFIK_HTTP_PUBLISH:-80}:80"
+      - "${TRAEFIK_HTTPS_PUBLISH:-443}:443"
     command:
       - --global.checknewversion=false
       - --global.sendanonymoususage=false
@@ -84,6 +88,16 @@ services:
       - --entrypoints.web.http.redirections.entrypoint.scheme=https
       - --entrypoints.websecure.address=:443
       - --entrypoints.websecure.http.tls=true
+      # Behind a reverse proxy (docs/reverse-proxy.md): the PROXY protocol
+      # header (v1 or v2) from TRAEFIK_PROXY_PROTOCOL_TRUSTED_IPS carries
+      # each visitor's own address, on both entrypoints; X-Forwarded-For on
+      # :80 is kept from those addresses too. Connections from anywhere else
+      # (or without a header) are taken as they are. Empty = off. Traefik
+      # refuses an empty trustedips list, so when it's unset each of these
+      # lines is a second --ping=true instead.
+      - "${TRAEFIK_PROXY_PROTOCOL_TRUSTED_IPS:+--entrypoints.websecure.proxyprotocol.trustedips=}${TRAEFIK_PROXY_PROTOCOL_TRUSTED_IPS:---ping=true}"
+      - "${TRAEFIK_PROXY_PROTOCOL_TRUSTED_IPS:+--entrypoints.web.proxyprotocol.trustedips=}${TRAEFIK_PROXY_PROTOCOL_TRUSTED_IPS:---ping=true}"
+      - "${TRAEFIK_PROXY_PROTOCOL_TRUSTED_IPS:+--entrypoints.web.forwardedheaders.trustedips=}${TRAEFIK_PROXY_PROTOCOL_TRUSTED_IPS:---ping=true}"
       # Uploads (files profile) may take up to FILES_UPLOAD_TIMEOUT (30m) to
       # send their body; Traefik's default read timeout (60s) would cut
       # them off. Applies to the whole entrypoint (there's only one :443);

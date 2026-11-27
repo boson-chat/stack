@@ -87,6 +87,9 @@ func main() {
 			return nil
 		},
 		Finish: func() { g.Close() },
+		// The reverse proxy on 80/443 (ports step): a Traefik container on
+		// the "proxy" network.
+		Docker: fakeDocker,
 	}
 	fr, err := fresh.New(deps)
 	if err != nil {
@@ -107,4 +110,14 @@ func main() {
 	_ = web.FS
 	fmt.Println("dev wizard on https://" + *addr + "  code TEST-CODE")
 	panic(srv.ListenAndServeTLS("", ""))
+}
+
+func fakeDocker(_ context.Context, args ...string) ([]byte, error) {
+	switch args[0] {
+	case "ps":
+		return []byte("abc123\tforgejo-traefik-1\ttraefik:v3.4\t0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp\tforgejo\n"), nil
+	case "inspect":
+		return []byte(`"proxy" {"proxy":{"Gateway":"172.18.0.1","IPAddress":"172.18.0.2"}}`), nil
+	}
+	return nil, fmt.Errorf("fake docker: %v", args)
 }
