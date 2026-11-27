@@ -393,7 +393,7 @@ services:
     profiles: [auth]
     # Releases: harbor.floret.dev/boson/auth:<version>. To run an unreleased
     # checkout instead, add compose.auth-src.yaml (see README).
-    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.27.0}
+    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.30.0}
     environment:
       ENV: production
       LOG_LEVEL: ${AUTH_LOG_LEVEL:-info}
@@ -530,7 +530,7 @@ services:
   quicvoiced:
     <<: *restart
     profiles: [voice]
-    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.15.1}
+    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.16.0}
     ports:
       - "7700:7700/udp"
     environment:
@@ -623,7 +623,7 @@ services:
   quicvideod:
     <<: *restart
     profiles: [video]
-    image: ${QUICVIDEO_IMAGE:-harbor.floret.dev/boson/quicvideo:1.14.3}
+    image: ${QUICVIDEO_IMAGE:-harbor.floret.dev/boson/quicvideo:1.15.0}
     ports:
       # QUIC for the apps and WebTransport (HTTP/3, /wt) for browsers.
       - "7710:7710/udp"
@@ -1117,7 +1117,7 @@ services:
   files:
     <<: *restart
     profiles: [files]
-    image: ${FILES_IMAGE:-harbor.floret.dev/boson/files:1.0.3}
+    image: ${FILES_IMAGE:-harbor.floret.dev/boson/files:1.1.0}
     environment:
       ENV: ${FILES_ENV:-production}
       LOG_LEVEL: ${FILES_LOG_LEVEL:-info}
