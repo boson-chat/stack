@@ -17,9 +17,15 @@ Versions are the `*_IMAGE` variables in `.env` (`AUTH_IMAGE`, `API_IMAGE`,
 RoleServ and the web IRC gateway are pinned in `compose.yaml` and come with a
 stack update (`git pull`), which the page lists but doesn't apply.
 
-## Applying updates (opt-in)
+A new install from the setup wizard starts on the newest releases, so the
+page starts empty ([setup.md](setup.md#versions)); a re-run of the wizard
+never changes versions.
 
-Seeing updates needs nothing. Applying them needs the `updates` profile:
+## Applying updates
+
+Seeing updates needs nothing. Applying them needs the `updates` profile. The
+setup wizard turns it on by default (Features → **Let the admin panel apply
+updates**; re-running the wizard turns it on or off). By hand:
 
 ```sh
 # .env

@@ -27,13 +27,13 @@ A web page on `https://<server>:8443` with a self-signed certificate
 
 | Step | What happens |
 |---|---|
-| Domain | Network name and domain. Every hostname the chosen features need (`irc.`, `auth.`, `chat.`, `admin.`, `api.`, plus `voice.`, `video.`, `files.`, `directory.`) is looked up live (A and AAAA, every 5 s). An address counts as this server when it's one of the host's own, or when the wizard answers on it (`/.well-known/boson-setup`, for NAT'd clouds). A name pointing elsewhere blocks the step, and the install. |
+| Domain | Network name and domain. Every hostname the chosen features need (`irc.`, `auth.`, `chat.`, `admin.`, `api.`, plus `voice.`, `video.`, `files.`, `directory.`) is looked up live (A and AAAA, every 5 s). An address counts as this server when it's one of the host's own, or when the wizard answers on it (`/.well-known/boson-setup`, for NAT'd clouds). A name pointing elsewhere blocks the step, and the install. **App discovery** (on by default): the `wellknown` profile serves `https://DOMAIN/.well-known/boson.json`, so `DOMAIN` itself goes in the DNS check and `CERT_HOSTS`. The Boson app finds a server's accounts, voice, uploads and federation through that file (on the domain of `irc.DOMAIN` without its first label); without it the app sees plain IRC. Turn it off only when `DOMAIN` is your website on another server: the step then shows the JSON to publish there yourself ([federation.md](federation.md), "Which domain", for the `federation` section). |
 | TLS | Traefik's ACME resolver, as with `scripts/setup.sh`: Let's Encrypt, its staging CA, or any ACME directory (`ACME_CA_SERVER`). A switch for **"This server already runs a reverse proxy on ports 80 and 443"**: Boson goes behind it ([reverse-proxy.md](reverse-proxy.md)), set up on the ports step. |
 | Admin | Username, email, password. Created after the stack is up with `auth user create --role owner` (the Owner network role, [roles.md](roles.md)). |
-| Features | Voice, video, uploads (this disk, MinIO, or an S3 bucket), the Boson directory listing and/or a directory of your own, sign-up (open / invite / closed), guests (and guests in voice), email verification, accounts from other Boson servers ([federated login](federation.md): verified servers by default, or only servers you list, any server, or off; `auth.federation.mode`/`.allow`; on the add-on path too, [federation.md](federation.md#add-on-installs)), SMTP with a test-send button. |
+| Features | Voice, video, uploads (this disk, MinIO, or an S3 bucket), the Boson directory listing and/or a directory of your own, sign-up (open / invite / closed), guests (and guests in voice), email verification, accounts from other Boson servers ([federated login](federation.md): verified servers by default, or only servers you list, any server, or off; `auth.federation.mode`/`.allow`; on the add-on path too, [federation.md](federation.md#add-on-installs)), SMTP with a test-send button, and **Let the admin panel apply updates** (on by default; the `updates` profile and `ADMIN_UPDATES_DOCKER_PROXY_URL`, [updates.md](updates.md#applying-updates)): it gives the panel root-equivalent access to the host for the people with `services.manage` + `settings.manage`, which the step says. Off, the Updates page lists updates and you apply them on the server. |
 | Firewall and ports | 80, 443, 6697/tcp, 7700/udp (voice), 7710/udp (video). From inside: is another program on the port; does a connection from a container on Docker's network reach it (that path crosses the host's own firewall: iptables, nftables, ufw). A dropped UDP port is a warning with a "turn voice off" button. What can't be checked from inside, a provider's firewall, is said so. When 80 or 443 is taken it offers **"I already run a reverse proxy on this server"** (also a link under the results, and the TLS step's switch): which proxy (Traefik, nginx, Caddy, HAProxy, other), where Boson's Traefik listens (`TRAEFIK_HTTP_PUBLISH` / `TRAEFIK_HTTPS_PUBLISH`, default `127.0.0.1:8081` / `127.0.0.1:8444`; for a proxy container on 80/443 it finds the gateway of its Docker network and offers that), and whose PROXY protocol header to believe (`TRAEFIK_PROXY_PROTOCOL_TRUSTED_IPS`, default the stack network's gateway, `10.203.53.1`). 80/443 then only need to be in use (by the proxy), Boson's two ports are checked instead (free, an address this server has; not probed from outside), and the step shows the snippets for the proxy with the install's names. See [reverse-proxy.md](reverse-proxy.md). |
-| Review | The `.env` lines and `config/boson.yaml` keys it will write, secrets masked (each says whether it is new, kept from your `.env`, or as you entered it). |
-| Install | Writes the stack's files, `.env` (0600) and `config/boson.yaml` into the install dir; `docker compose pull`, `up -d`; waits for every service to be healthy (one-shot services to exit 0), for every certificate, creates the admin, checks each public URL and IRC on 6697. Progress streams live (Server-Sent Events). A failed step shows its error and a **Retry**. While services start, each row of the services list has a **Logs** panel (see [Why is a service still starting?](#why-is-a-service-still-starting)). |
+| Review | The `.env` lines and `config/boson.yaml` keys it will write, secrets masked (each says whether it is new, kept from your `.env`, or as you entered it), whether the panel applies updates, and the **versions** it installs (see [Versions](#versions)). |
+| Install | Writes the stack's files, `.env` (0600) and `config/boson.yaml` into the install dir; `docker compose pull`, `up -d`; waits for every service to be healthy (one-shot services to exit 0), for every certificate, creates the admin, checks each public URL, that `https://DOMAIN/.well-known/boson.json` names this server's IRC and auth (and has the `federation` section unless federation is off) when app discovery is on, and IRC on 6697. Progress streams live (Server-Sent Events). A failed step shows its error and a **Retry**. While services start, each row of the services list has a **Logs** panel (see [Why is a service still starting?](#why-is-a-service-still-starting)). |
 | Done | Links to the web client and the admin panel; the emergency `/OPER` password, once. **Close setup** switches the wizard off (also after 30 minutes on its own): the container exits. |
 
 ### Security
@@ -77,6 +77,42 @@ gives), every line has the install's secrets redacted like the compose
 output, and it is capped: 200 lines, 2 KiB per line, 64 KiB in all, the
 last 3 healthcheck results, 4 requests at a time.
 
+### Versions
+
+A new install gets the **newest release** of every component it runs
+(`AUTH_IMAGE`, `API_IMAGE`, `WEB_IMAGE`, `ADMIN_IMAGE`, `QUICVOICE_IMAGE`,
+`QUICVIDEO_IMAGE`, `FILES_IMAGE`, `DIRECTORY_IMAGE`, and on the add-on path
+`EVRD_IMAGE` and `EVRD_LINKS_IMAGE`), written to `.env`, so the admin
+panel's Updates page has nothing to offer right after the install. The rules
+are the Updates page's (boson-chat/admin `internal/services/updates`):
+GitHub Releases of the component's repository, semver tags, drafts left
+out, and only a version whose image the registry (harbor.floret.dev, or
+ghcr.io for evrd) has. On top of that the wizard stays in the major version
+of `compose.yaml`'s pinned default (a new major version can need a stack
+change) and never goes below the default. It asks GitHub once per repository
+per run (about ten requests; unauthenticated GitHub allows 60 an hour per
+address; `BOSON_SETUP_GITHUB_TOKEN`, a token with no scopes, passed through
+`install.sh`, raises that) and the registry once per tag. When GitHub or the
+registry can't be asked, the Review step says so and the install uses
+`compose.yaml`'s pinned defaults; the Updates page offers anything newer
+afterwards.
+
+**A re-run never upgrades**: an image already in `.env` is kept, and a
+component that runs without a pin in `.env` (an install from before this)
+stays on `compose.yaml`'s default. Only a component the re-run turns on gets
+the newest release. Updates are the admin panel's job
+([updates.md](updates.md)).
+
+The pinned defaults in `compose.yaml` stay current too: the **Bump images**
+workflow (`.github/workflows/bump-images.yml`, daily and on demand) runs
+`go run ./cmd/bumpimages` (the same rules) and opens a pull request moving
+them, and their mentions in `.env.example` and `docs/`, to the newest
+releases; CI tests the new versions on that PR. `EVRD_LINKS_IMAGE`'s default
+never moves (a new default would recreate evrd-links and drop every Boson
+user off IRC). Ergo, RoleServ, the web IRC gateway, certsync and the setup
+image are built from this repository and published by its CI, so they are
+always the stack's own.
+
 ### Re-running
 
 Run `install.sh` again any time: it replaces the wizard container, with a
@@ -86,7 +122,10 @@ secret (a database password changed after the first start would lock the
 services out), never creates the admin twice (it only makes sure they are
 the Owner, and refuses to promote an account with another email), and edits
 `.env` and `config/boson.yaml` in place: comments, your own lines and keys,
-and admin-panel edits stay. With the same answers nothing changes.
+and admin-panel edits stay. With the same answers nothing changes: image
+versions included (see [Versions](#versions)), and applying updates and app
+discovery are read back as they are (an install from before those choices
+reads them as off; turn them on here).
 
 An install that fails or is interrupted (the wizard restarted) comes back on
 the Install page with the failed step. Every step is idempotent, so Retry
@@ -110,12 +149,15 @@ internal/flow/addon      "Add Boson to my existing IRC server": probe, snippets,
 internal/stack           answers → .env + config/boson.yaml; reads an install back;
                          IRC server and reverse proxy snippets (snippets.go, proxy.go)
 internal/checks          DNS, ports (and the probe container), SMTP test, the proxy on 80/443
+internal/releases        the newest release of each image (GitHub + registry), pins for .env
+cmd/bumpimages           moves compose.yaml's pinned image defaults (the Bump images workflow)
 internal/install         the install steps, state file, progress hub, compose
 internal/gate            the one-time code, sessions, rate limits
 internal/server          HTTPS, security headers, session check
 web/                     the pages: app.js (code, chooser), flows/<id>.js
 cmd/devserver            -tags dev: the pages against fake docker/DNS (ergo stays
-                         "starting" for -slow, 20s, with an ACME error in Traefik's log)
+                         "starting" for -slow, 20s, with an ACME error in Traefik's log;
+                         -releases live|fail|off for the Review step's versions)
 ```
 
 **Adding a flow**: a package implementing `flow.Flow` (`Info()` for its
