@@ -1,0 +1,38 @@
+{
+  "branches": ["main"],
+  "tagFormat": "v${version}",
+  "plugins": [
+    [
+      "@semantic-release/commit-analyzer",
+      {
+        "preset": "conventionalcommits",
+        "releaseRules": [
+          { "breaking": true, "release": "major" },
+          { "type": "feat", "release": "minor" },
+          { "release": "patch" }
+        ]
+      }
+    ],
+    ["@semantic-release/release-notes-generator", { "preset": "conventionalcommits" }],
+    [
+      "@semantic-release/exec",
+      {
+        "prepareCmd": "scripts/release/publish.sh prepare ${nextRelease.version}",
+        "successCmd": "scripts/release/publish.sh success ${nextRelease.version}"
+      }
+    ],
+    [
+      "@semantic-release/github",
+      {
+        "assets": [
+          { "path": "dist/boson-stack-*.tar.gz", "label": "Stack bundle" },
+          { "path": "dist/boson-stack-*.tar.gz.sha256", "label": "Stack bundle SHA-256" },
+          { "path": "dist/manifest.json", "label": "Release manifest" }
+        ],
+        "successComment": false,
+        "failComment": false,
+        "releasedLabels": false
+      }
+    ]
+  ]
+}

@@ -10,10 +10,17 @@
 # Running it again is safe: it restarts the wizard with a new code, and the
 # wizard keeps an existing install's secrets and admin.
 #
+# The setup image carries the newest stack release (its bundle: compose
+# files, migrations, docs/updates.md "Stack releases"); the wizard records
+# the installed release so the admin panel can move it to newer ones.
+#
 # Options:
 #   -y, --yes        don't ask (install Docker if needed)
 #   --dir DIR        install directory (default /opt/boson-stack)
-#   --image IMAGE    setup image (default harbor.floret.dev/boson/stack-setup:latest)
+#   --image IMAGE    setup image (default harbor.floret.dev/boson/stack-setup:latest,
+#                    the newest stack release; :<version> for an older one)
+#   --edge           the setup image of main, unreleased (stack-setup:edge;
+#                    for testing)
 #   --port PORT      wizard port (default 8443)
 #   --no-pull        use the image as it is locally (tests)
 set -eu
@@ -33,9 +40,10 @@ while [ $# -gt 0 ]; do
 	-y | --yes) YES=true ;;
 	--dir) DIR=${2:?--dir needs a directory}; shift ;;
 	--image) IMAGE=${2:?--image needs an image}; shift ;;
+	--edge) IMAGE=${IMAGE%:*}:edge ;;
 	--port) PORT=${2:?--port needs a number}; shift ;;
 	--no-pull) PULL=false ;;
-	-h | --help) sed -n '2,20p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
+	-h | --help) sed -n '2,26p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
 	*) die "unknown option: $1 (try --help)" ;;
 	esac
 	shift

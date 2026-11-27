@@ -8,3 +8,8 @@ local-certs
 auth-src
 .env
 config/boson.yaml
+# Not in the stack bundle anyway (scripts/release/bundle.sh)
+dist
+test
+images/setup/web/node_modules
+**/__pycache__

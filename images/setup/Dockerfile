@@ -13,21 +13,19 @@ ARG TARGETOS TARGETARCH
 RUN --mount=type=cache,target=/root/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/stack-setup .
 
-# The stack the wizard installs: what a clone of this repo has, minus tests.
+# The stack the wizard installs: the release bundle of this commit
+# (scripts/release/bundle.sh, docs/updates.md "Stack releases"). A release
+# build passes its version (STACK_VERSION, STACK_RELEASE=true: the images
+# this repository builds pinned to it); other builds are 0.0.0-dev with
+# main's tags.
 FROM alpine:3.22 AS stackfiles
-COPY compose.yaml compose.video-node.yaml .env.example README.md LICENSE NOTICE /stack/
-COPY config/boson.example.yaml /stack/config/
-COPY config/branding/.gitkeep /stack/config/branding/
-COPY traefik/dynamic/stack.yml traefik/dynamic/directory.yml traefik/dynamic/README.md /stack/traefik/dynamic/
-COPY postgres/ /stack/postgres/
-COPY monitoring/ /stack/monitoring/
-COPY scripts/ /stack/scripts/
-COPY docs/ /stack/docs/
-COPY images/certsync/ /stack/images/certsync/
-COPY images/ergo/ /stack/images/ergo/
-COPY images/webircgateway/ /stack/images/webircgateway/
-COPY images/wellknown/ /stack/images/wellknown/
-RUN rm -rf /stack/scripts/__pycache__
+ARG STACK_VERSION=0.0.0-dev
+ARG STACK_RELEASE=false
+ARG STACK_COMMIT=unknown
+COPY . /src/
+RUN set -eu; \
+    flag=; [ "$STACK_RELEASE" != true ] || flag=--release; \
+    sh /src/scripts/release/bundle.sh --out /stack --version "$STACK_VERSION" --commit "$STACK_COMMIT" $flag
 
 FROM alpine:3.22
 # The docker CLI and its compose plugin, for the host's Docker socket.
