@@ -46,11 +46,12 @@ browser origins follow by default (each has its own override):
 | api | `API_ALLOWED_ORIGINS` | calls from the page |
 | directory | `DIRECTORY_CORS_ALLOWED_ORIGINS` | owner edits from the page |
 
-Voice, video and uploads accept this web client and, by default
+Voice, video, uploads and the api accept this web client and, by default
 (`directory`), the web clients of the Boson servers verified in the
 directories this install follows, so Boson web clients on other installs
-can join this stack's calls and upload here too (the token still decides
-who gets in; see [voice.md](voice.md#browsers-which-pages)). The other way
+can join this stack's calls, upload here, and reach this server's api for
+the users whose home it is (the token still decides who gets in; see
+[voice.md](voice.md#browsers-which-pages)). The other way
 round, boson.json names this web client (`"web": {"url": "https://WEB_HOST"}`,
 `wellknown` profile), which is how other installs learn its origin:
 

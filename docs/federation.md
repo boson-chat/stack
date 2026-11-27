@@ -139,7 +139,11 @@ it daily ([directory.md](directory.md)).
   files accept the web clients of the servers verified in that directory
   (auth's `/v1/web-origins`, from each server's boson.json `web.url`; your
   own `WEB_HOST` is published there by the `wellknown` profile). See
-  [voice.md](voice.md#browsers-which-pages).
+  [voice.md](voice.md#browsers-which-pages). The api does too
+  (`API_ALLOWED_ORIGINS`, [api.md](api.md)): a federated session on another
+  server's web client calls the user's home api with the home token, so
+  your users signed in on another server's web client still reach their
+  account's api here.
 
 ## Remote users on this server
 
