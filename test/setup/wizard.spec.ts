@@ -51,6 +51,19 @@ test('new install through the wizard', async ({ page }) => {
   await expect(page.locator(`[data-host="irc.${DOMAIN}"]`)).toHaveAttribute('data-status', 'ok');
   await expect(page.getByText('Every name points at this server.')).toBeVisible();
   await expect(next(page)).toBeEnabled();
+  // App discovery (boson.json on the bare domain) is on by default, so the
+  // domain itself is checked too. Off: what to publish elsewhere.
+  const discovery = page.getByRole('switch', { name: /^App discovery/ });
+  await expect(discovery).toBeChecked();
+  await expect(page.locator(`[data-host="${DOMAIN}"]`)).toHaveAttribute('data-status', 'ok');
+  await discovery.uncheck({ force: true });
+  await expect(page.getByTestId('boson-json')).toContainText(`"host": "irc.${DOMAIN}"`);
+  await expect(page.locator(`[data-host="${DOMAIN}"]`)).toHaveCount(0);
+  await shot(page, 'domain-discovery-off');
+  await discovery.check({ force: true });
+  await expect(page.getByTestId('boson-json')).toHaveCount(0);
+  await expect(page.locator(`[data-host="${DOMAIN}"]`)).toHaveAttribute('data-status', 'ok');
+  await expect(next(page)).toBeEnabled();
   await shot(page, 'domain-ok');
   await next(page).click();
 
@@ -92,6 +105,10 @@ test('new install through the wizard', async ({ page }) => {
   }
   // Accounts from other servers: verified servers by default; an empty
   // allowlist is refused.
+  // Applying updates from the admin panel: on by default, with the warning.
+  const applyUpdates = page.getByRole('switch', { name: /^Let the admin panel apply updates/ });
+  await expect(applyUpdates).toBeChecked();
+  await expect(page.getByText('root-equivalent access to this server')).toBeVisible();
   const fed = page.getByRole('group', { name: 'Accept accounts from' });
   await expect(fed.getByRole('radio', { name: /^Verified servers/ })).toBeChecked();
   await shot(page, 'features');
@@ -135,6 +152,19 @@ test('new install through the wizard', async ({ page }) => {
   await expect(env).toContainText('POSTGRES_PASSWORD=••••••••  # new, random');
   await expect(env).toContainText(`AUTH_HOST=auth.${DOMAIN}`);
   await expect(env).toContainText('COMPOSE_PROFILES=irc,auth,api,web,admin,metrics,voice,files');
+  await expect(env).toContainText('ADMIN_UPDATES_DOCKER_PROXY_URL=http://docker-proxy-updates:2375');
+  await expect(env).toContainText(/COMPOSE_PROFILES=.*,updates/);
+  await expect(page.getByTestId('review-updates')).toContainText('The admin panel applies updates');
+  // The image versions: every component, its tag in .env; the newest
+  // release (or the pinned default, with a note, when GitHub can't be asked).
+  const versions = page.getByTestId('review-versions');
+  for (const v of ['AUTH_IMAGE', 'API_IMAGE', 'WEB_IMAGE', 'ADMIN_IMAGE', 'QUICVOICE_IMAGE', 'FILES_IMAGE']) {
+    const row = versions.locator(`li[data-env="${v}"]`);
+    await expect(row).toHaveAttribute('data-source', /^(newest|default)$/);
+    const image = (await row.locator('.what').textContent()) ?? '';
+    await expect(env).toContainText(`${v}=${image}`);
+  }
+  await expect(versions.locator('li[data-env="EVRD_IMAGE"]')).toHaveCount(0);
   await expect(page.getByTestId('review-config')).toContainText('registration: open');
   await expect(page.getByTestId('review-config')).toContainText(/federation:\s+mode: directory/);
   await shot(page, 'review');

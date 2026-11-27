@@ -35,6 +35,7 @@ import (
 	"github.com/boson-chat/stack/images/setup/internal/flow/fresh"
 	"github.com/boson-chat/stack/images/setup/internal/gate"
 	"github.com/boson-chat/stack/images/setup/internal/install"
+	"github.com/boson-chat/stack/images/setup/internal/releases"
 	"github.com/boson-chat/stack/images/setup/internal/secret"
 	"github.com/boson-chat/stack/images/setup/internal/server"
 	"github.com/boson-chat/stack/images/setup/internal/stack"
@@ -219,6 +220,9 @@ func serve() error {
 		DockerGID: dockerGID,
 		Redactor:  red,
 		Finish:    finish,
+		// A new install gets the newest releases (GitHub + the registries;
+		// an optional token raises GitHub's limit of 60 an hour).
+		Releases: releases.NewResolver(env("BOSON_SETUP_GITHUB_TOKEN", "")),
 	}
 	fr, err := fresh.New(deps)
 	if err != nil {

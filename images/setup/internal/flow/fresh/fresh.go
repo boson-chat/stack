@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +19,7 @@ import (
 	"github.com/boson-chat/stack/images/setup/internal/dockercli"
 	"github.com/boson-chat/stack/images/setup/internal/flow"
 	"github.com/boson-chat/stack/images/setup/internal/install"
+	"github.com/boson-chat/stack/images/setup/internal/releases"
 	"github.com/boson-chat/stack/images/setup/internal/secret"
 	"github.com/boson-chat/stack/images/setup/internal/stack"
 )
@@ -34,6 +37,9 @@ type Deps struct {
 	// Docker runs a docker command (finding the reverse proxy on 80/443);
 	// nil = don't look.
 	Docker checks.DockerOutput
+	// Releases finds the newest release of each component for a new
+	// install (nil: compose.yaml's defaults, no lookups).
+	Releases *releases.Resolver
 	// Finish closes the wizard for good (after the Done page).
 	Finish func()
 }
@@ -60,6 +66,9 @@ type Flow struct {
 	operPassword string
 	// logSlots: concurrent service-log requests (each runs docker).
 	logSlots chan struct{}
+	// pins: the image versions the review showed last; the install writes
+	// exactly those.
+	pins map[string]releases.Pin
 }
 
 func New(d Deps) (*Flow, error) {
@@ -355,8 +364,72 @@ func (f *Flow) plan() (stack.Plan, stack.Secrets, error) {
 	return p, f.secrets, err
 }
 
-func (f *Flow) review(w http.ResponseWriter, _ *http.Request) {
-	p, _, err := f.plan()
+// imageLookup bounds the release and registry checks of one review.
+const imageLookup = 20 * time.Second
+
+// composeDefaults: the *_IMAGE defaults of the compose.yaml this wizard
+// installs (its own copy of the stack), else the install dir's.
+func (f *Flow) composeDefaults() map[string]string {
+	for _, dir := range []string{f.d.Runner.StackSrc, f.d.InstallDir} {
+		if dir == "" {
+			continue
+		}
+		if b, err := os.ReadFile(filepath.Join(dir, "compose.yaml")); err == nil {
+			return releases.ComposeDefaults(string(b))
+		}
+	}
+	return nil
+}
+
+// planImages is plan() with the image pins added to .env: fresh lookups
+// (review) or the ones the review showed (reuse, for the install).
+func (f *Flow) planImages(ctx context.Context, reuse bool) (stack.Plan, stack.Secrets, []releases.Pin, error) {
+	p, sec, err := f.plan()
+	if err != nil {
+		return p, sec, nil, err
+	}
+	f.mu.Lock()
+	existing := f.existing.Env
+	shown := f.pins
+	f.mu.Unlock()
+	defaults := f.composeDefaults()
+	if reuse && shown != nil {
+		// Only what the review didn't list (answers changed since) is
+		// looked up now.
+		for k := range defaults {
+			if _, ok := shown[k]; ok {
+				delete(defaults, k)
+			}
+		}
+	}
+	lctx, cancel := context.WithTimeout(ctx, imageLookup)
+	pins := releases.Choose(lctx, f.d.Releases, defaults, p.Profiles, existing)
+	cancel()
+	if reuse && shown != nil {
+		for _, c := range releases.Components {
+			if x, ok := shown[c.EnvVar]; ok && has(p.Profiles, c.Profile) {
+				pins = append(pins, x)
+			}
+		}
+	} else {
+		m := map[string]releases.Pin{}
+		for _, x := range pins {
+			m[x.EnvVar] = x
+		}
+		f.mu.Lock()
+		f.pins = m
+		f.mu.Unlock()
+	}
+	for _, x := range pins {
+		if x.Write() {
+			p.Env = append(p.Env, stack.EnvVar{Key: x.EnvVar, Value: x.Image})
+		}
+	}
+	return p, sec, pins, nil
+}
+
+func (f *Flow) review(w http.ResponseWriter, r *http.Request) {
+	p, _, pins, err := f.planImages(r.Context(), false)
 	if err != nil {
 		flow.Error(w, http.StatusUnprocessableEntity, "invalid", err.Error())
 		return
@@ -387,11 +460,12 @@ func (f *Flow) review(w http.ResponseWriter, _ *http.Request) {
 		"kept_secrets":   kept,
 		"existing":       f.existing.Found,
 		"files":          p.Files,
+		"images":         pins,
 	})
 }
 
 func (f *Flow) startInstall(w http.ResponseWriter, r *http.Request) {
-	p, sec, err := f.plan()
+	p, sec, _, err := f.planImages(r.Context(), true)
 	if err != nil {
 		flow.Error(w, http.StatusUnprocessableEntity, "invalid", err.Error())
 		return
@@ -455,6 +529,15 @@ func (f *Flow) serviceLogs(w http.ResponseWriter, r *http.Request) {
 	default:
 		flow.JSON(w, http.StatusOK, out)
 	}
+}
+
+func has(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 func firstLine(s string) string {

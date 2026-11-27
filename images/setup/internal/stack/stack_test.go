@@ -33,10 +33,10 @@ func TestPlanNewInstall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := p.EnvValue("COMPOSE_PROFILES"); got != "irc,auth,api,web,admin,metrics,voice,files" {
+	if got := p.EnvValue("COMPOSE_PROFILES"); got != "irc,auth,api,web,admin,metrics,voice,files,wellknown,updates" {
 		t.Fatalf("profiles %q", got)
 	}
-	if got := p.EnvValue("CERT_HOSTS"); got != "irc.boson.test,auth.boson.test,chat.boson.test,admin.boson.test,api.boson.test,voice.boson.test,files.boson.test" {
+	if got := p.EnvValue("CERT_HOSTS"); got != "irc.boson.test,auth.boson.test,chat.boson.test,admin.boson.test,api.boson.test,voice.boson.test,files.boson.test,boson.test" {
 		t.Fatalf("cert hosts %q", got)
 	}
 	if p.OperPassword == "" || bcrypt.CompareHashAndPassword([]byte(p.EnvValue("OPER_PASSWORD_HASH")), []byte(p.OperPassword)) != nil {
@@ -311,5 +311,82 @@ func TestFederationAnswers(t *testing.T) {
 		if strings.HasPrefix(e.Field, "federation") {
 			t.Fatalf("add-on refused: %v", e)
 		}
+	}
+}
+
+func TestApplyUpdatesAnswer(t *testing.T) {
+	if !Defaults().ApplyUpdates {
+		t.Fatal("applying updates is on by default")
+	}
+	for _, on := range []bool{true, false} {
+		dir := t.TempDir()
+		a := answers()
+		a.ApplyUpdates = on
+		p, err := BuildPlan(a, Secrets{}, nil, NewGenerator(), "999")
+		if err != nil {
+			t.Fatal(err)
+		}
+		profiles := "," + p.EnvValue("COMPOSE_PROFILES") + ","
+		url := p.EnvValue("ADMIN_UPDATES_DOCKER_PROXY_URL")
+		if on && (!strings.Contains(profiles, ",updates,") || url != UpdatesProxyURL) {
+			t.Fatalf("on: profiles %q url %q", profiles, url)
+		}
+		if !on && (strings.Contains(profiles, ",updates,") || url != "") {
+			t.Fatalf("off: profiles %q url %q", profiles, url)
+		}
+		// Read back by a re-run.
+		env, _ := MergeEnv("", p.Env, "#")
+		os.WriteFile(filepath.Join(dir, ".env"), []byte(env), 0o600)
+		ex, _ := LoadExisting(dir)
+		if got := ex.Answers().ApplyUpdates; got != on {
+			t.Fatalf("read back %v, want %v", got, on)
+		}
+		// Turned off on a re-run: the line is emptied, not left behind.
+		if on {
+			a.ApplyUpdates = false
+			p2, _ := BuildPlan(a, Secrets{}, ex.Env, NewGenerator(), "999")
+			env2, _ := MergeEnv(env, p2.Env, "#")
+			if e := ParseEnv(env2); e["ADMIN_UPDATES_DOCKER_PROXY_URL"] != "" || strings.Contains(e["COMPOSE_PROFILES"], "updates") {
+				t.Fatalf("off on re-run: %q %q", e["ADMIN_UPDATES_DOCKER_PROXY_URL"], e["COMPOSE_PROFILES"])
+			}
+		}
+	}
+	// An install from before this choice (no profile, or only half of it)
+	// reads as off: a re-run doesn't turn it on.
+	for _, env := range []string{
+		"DOMAIN=boson.test\nCOMPOSE_PROFILES=irc,auth,api,web,admin\n",
+		"DOMAIN=boson.test\nCOMPOSE_PROFILES=irc,auth,admin,updates\n",
+		"DOMAIN=boson.test\nCOMPOSE_PROFILES=irc,auth,admin\nADMIN_UPDATES_DOCKER_PROXY_URL=http://docker-proxy-updates:2375\n",
+	} {
+		dir := t.TempDir()
+		os.WriteFile(filepath.Join(dir, ".env"), []byte(env), 0o600)
+		ex, _ := LoadExisting(dir)
+		if ex.Answers().ApplyUpdates {
+			t.Fatalf("%q reads as on", env)
+		}
+	}
+}
+
+func TestAppDiscoveryDefault(t *testing.T) {
+	a := answers()
+	if !a.Wellknown {
+		t.Fatal("app discovery is on by default")
+	}
+	hosts := a.NeededHosts()
+	if last := hosts[len(hosts)-1]; last.Role != RoleDomain || last.Name != "boson.test" {
+		t.Fatalf("the bare domain isn't checked: %+v", last)
+	}
+	// Switchable, for a domain served elsewhere; read back on a re-run.
+	a.Wellknown = false
+	p, _ := BuildPlan(a, Secrets{}, nil, NewGenerator(), "999")
+	if strings.Contains(p.EnvValue("COMPOSE_PROFILES"), "wellknown") || strings.HasSuffix(p.EnvValue("CERT_HOSTS"), ",boson.test") {
+		t.Fatalf("off: %q %q", p.EnvValue("COMPOSE_PROFILES"), p.EnvValue("CERT_HOSTS"))
+	}
+	dir := t.TempDir()
+	env, _ := MergeEnv("", p.Env, "#")
+	os.WriteFile(filepath.Join(dir, ".env"), []byte(env), 0o600)
+	ex, _ := LoadExisting(dir)
+	if ex.Answers().Wellknown {
+		t.Fatal("an install without it reads back as off")
 	}
 }

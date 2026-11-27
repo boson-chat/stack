@@ -133,7 +133,7 @@ fi
 (cd test/setup && npm ci --no-audit --no-fund >/dev/null && npx playwright install --with-deps chromium >/dev/null)
 
 echo "== install.sh --yes"
-sudo BOSON_SETUP_DNS_SERVER=127.0.0.1:8053 ./install.sh --yes --image "$IMAGE" --no-pull | tee "$TMP/install.out"
+sudo BOSON_SETUP_DNS_SERVER=127.0.0.1:8053 BOSON_SETUP_GITHUB_TOKEN="${BOSON_SETUP_GITHUB_TOKEN:-}" ./install.sh --yes --image "$IMAGE" --no-pull | tee "$TMP/install.out"
 CODE=$(sed -n 's/.*enter code \([A-Z0-9-]*\).*/\1/p' "$TMP/install.out")
 URL=$(sed -n 's/.*Open \(https:[^ ]*\) and.*/\1/p' "$TMP/install.out")
 [ -n "$CODE" ] && [ -n "$URL" ] || { echo "install.sh printed no code/URL"; exit 1; }

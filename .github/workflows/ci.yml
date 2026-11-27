@@ -533,6 +533,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: install.sh --yes, the wizard with Playwright (error cases, fake DNS, Pebble), the result, a re-run
         run: test/setup/run.sh
+        env:
+          # The wizard's release checks (newest versions): GitHub's limit
+          # without a token is 60 an hour per runner address.
+          BOSON_SETUP_GITHUB_TOKEN: ${{ github.token }}
       - name: Screenshots of every step (desktop + phone)
         if: always()
         uses: actions/upload-artifact@v4
@@ -586,6 +590,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: IRC server up, install.sh, the add-on path (Playwright), snippets applied, the result over the bridge, federated login
         run: test/setup/run-addon.sh "${{ matrix.pairing }}"
+        env:
+          BOSON_SETUP_GITHUB_TOKEN: ${{ github.token }}
       - name: Screenshots of every step (desktop + phone)
         if: always()
         uses: actions/upload-artifact@v4

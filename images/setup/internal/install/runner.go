@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -614,6 +616,27 @@ func stepVerify(ctx context.Context, r *Runner, j *Job, log func(string)) error 
 			time.Sleep(2 * time.Second)
 		}
 	}
+	// App discovery: boson.json on the bare domain, naming this install.
+	if p.Answers.Wellknown {
+		for {
+			code, body, err := r.fetch(ctx, h[stack.RoleDomain], WellknownPath)
+			if err == nil && code != http.StatusOK {
+				err = fmt.Errorf("HTTP %d", code)
+			}
+			if err == nil {
+				err = CheckBosonJSON(body, p.Answers)
+			}
+			if err == nil {
+				log(fmt.Sprintf("https://%s%s names this server's IRC and auth", h[stack.RoleDomain], WellknownPath))
+				break
+			}
+			if time.Now().After(deadline) {
+				return &StepError{Msg: fmt.Sprintf("https://%s%s: %s", h[stack.RoleDomain], WellknownPath, err),
+					Hint: "The Boson app finds this server's features through this file. Check the wellknown service's log, then retry."}
+			}
+			time.Sleep(2 * time.Second)
+		}
+	}
 	// IRC over TLS on 6697, with its certificate.
 	d := tls.Dialer{NetDialer: &net.Dialer{Timeout: 5 * time.Second}, Config: &tls.Config{ServerName: h[stack.RoleIRC], InsecureSkipVerify: true}}
 	for {
@@ -634,7 +657,50 @@ func stepVerify(ctx context.Context, r *Runner, j *Job, log func(string)) error 
 	}
 }
 
+// WellknownPath: app discovery (the wellknown profile, images/wellknown).
+const WellknownPath = "/.well-known/boson.json"
+
+// CheckBosonJSON: boson.json names this install's IRC server and auth, and
+// carries the federation section when federated sign-in is on (the
+// wellknown service adds it within a refresh of auth answering).
+func CheckBosonJSON(body []byte, a stack.Answers) error {
+	var doc struct {
+		IRC *struct {
+			Host string `json:"host"`
+			Port int    `json:"port"`
+		} `json:"irc"`
+		Auth *struct {
+			URL string `json:"url"`
+		} `json:"auth"`
+		Federation json.RawMessage `json:"federation"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return fmt.Errorf("not JSON: %v", err)
+	}
+	h := a.HostNames()
+	switch {
+	case doc.IRC == nil:
+		return errors.New("no irc section")
+	case doc.IRC.Host != h[stack.RoleIRC]:
+		return fmt.Errorf("irc.host is %q, not %s", doc.IRC.Host, h[stack.RoleIRC])
+	case doc.Auth == nil:
+		return errors.New("no auth section")
+	case doc.Auth.URL != "https://"+h[stack.RoleAuth]:
+		return fmt.Errorf("auth.url is %q, not https://%s", doc.Auth.URL, h[stack.RoleAuth])
+	case a.Federation != stack.FederationOff && (len(doc.Federation) == 0 || string(doc.Federation) == "null"):
+		return errors.New("no federation section yet (it follows auth's metadata)")
+	}
+	return nil
+}
+
 func (r *Runner) get(ctx context.Context, host, path string) (int, error) {
+	code, _, err := r.fetch(ctx, host, path)
+	return code, err
+}
+
+// fetch GETs https://host/path through Traefik on the edge, with up to
+// 64 KiB of the body.
+func (r *Runner) fetch(ctx context.Context, host, path string) (int, []byte, error) {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{ServerName: host, InsecureSkipVerify: true}, // the certs step checked them
 		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
@@ -648,14 +714,15 @@ func (r *Runner) get(ctx context.Context, host, path string) (int, error) {
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+host+path, nil)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	resp, err := cl.Do(req)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
-	resp.Body.Close()
-	return resp.StatusCode, nil
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	return resp.StatusCode, body, err
 }
 
 // DevSkipNetwork replaces the certificate and verify steps (which talk to

@@ -22,7 +22,7 @@ func TestAddonPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := p.EnvValue("COMPOSE_PROFILES"); got != "bridge,auth,api,web,admin,metrics,voice,files" {
+	if got := p.EnvValue("COMPOSE_PROFILES"); got != "bridge,auth,api,web,admin,metrics,voice,files,wellknown,updates" {
 		t.Fatalf("profiles %q", got)
 	}
 	for k, want := range map[string]string{
