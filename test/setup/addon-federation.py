@@ -18,8 +18,12 @@ an existing IRC server) without signing up there.
    NICK) before joining; a classic client sees her join and talk as
    alice-hometest_, never as alice or alice-hometest, not identified to
    NickServ (no 307/330).
-4. Past the enforcement delay she is neither renamed nor killed and still
-   connected; the bridge says currentNick alice-hometest_.
+4. Past the enforcement delay she is not killed and still connected; the
+   bridge says currentNick alice-hometest_. While she's on the registered
+   nick during the nick guard's grace (managed_nick_guard_grace, 60s from
+   setup) the services may rename her (the fixture enforces after 20s);
+   the bridge then moves her to alice-hometest_, never back to a guest
+   nick.
 5. The add-on's admin bans alice@home.test: the bridge drops her, the
    classic client sees her quit, a new sign-in is refused (identity_banned).
 """
@@ -255,8 +259,13 @@ time.sleep(max(0, connected_at + ENFORCE + 12 - time.time()))
 a.send("PING :still-here")
 pong = a.wait(lambda l: "still-here" in l, 20)
 check(f"{ENFORCE + 12}s on she is still connected (no kill)", pong and not a.closed, a.lines[-4:])
-bad = [l for l in a.lines if re.search(r"NICK :?Guest|\bKILL\b|^ERROR", l)]
-check("she was never renamed to a guest nick or killed", not bad, bad)
+bad = [l for l in a.lines if re.search(r"\bKILL\b|^ERROR", l)]
+check("she was never killed", not bad, bad)
+# A services rename (Guest…) can only come during the grace, before the
+# move to SAFE: after it she stays on SAFE.
+nicks = [l for l in a.lines if re.search(r" NICK :?\S+", l)]
+last = re.search(r" NICK :?(\S+)", nicks[-1]).group(1) if nicks else None
+check(f"she ends on {SAFE}, not a guest nick", last == SAFE, nicks)
 on_registered = [l for l in watch.lines if re.match(rf":({re.escape(handle)}|alice)!\S+ (JOIN|PRIVMSG|NICK)", l)]
 check(f"the classic client never saw her as alice or {handle}", not on_registered, on_registered)
 w = whois(watch, SAFE)

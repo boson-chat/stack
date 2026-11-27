@@ -32,8 +32,9 @@ bridge: its lines come from your server's name, under your network's name.
    a last resort, never recommended).
 5. Domain, TLS, admin, features, ports, as on a new server. With NickServ
    accounts the admin is your NickServ account (no Boson password: you sign
-   in with your NickServ password). Guests aren't available on this path.
-   Accounts from other Boson servers (federated login) are: they join your
+   in with your NickServ password). **Guests** (on by default, as on a new
+   server) come in through the bridge: see [Guests](#guests). Guests in
+   voice aren't available on this path yet. Accounts from other Boson servers (federated login) are: they join your
    server through the bridge under a nick that carries their home server,
    without a services account there ([federation.md](federation.md#add-on-installs)).
 6. **Your server's config**: what to add to your server, per software, with
@@ -76,18 +77,84 @@ answer.
 | `evrd` | evrd (`EVRD_IMAGE`, same image) in `evrd-links`' network namespace, config `bridge/evrd.conf` (written by setup), data in `bridge_data`, certificate from certsync (`BRIDGE_CERT_HOST`). Health: `GET /api/managed/health` with `BRIDGE_TOKEN`. Update it on its own (`up -d --no-deps evrd`): connections stay up. |
 | `auth` | Also provisions the bridge (auth ≥ 1.25.0, auth `docs/bridge.md`): with `BRIDGE_API_URL` (compose sets `http://evrd-links:8098` while `BRIDGE_CERT_HOST` is set) and `BRIDGE_TOKEN`, it gives every Boson account its bridge account through evrd's managed API (`PUT/DELETE /api/managed/users/{username}`, subject = the token's `sub`). Database triggers queue every change (sign-up, rename, disable or federation ban, delete) and a full sync runs at start and every 10 minutes, so a bridge outage loses nothing. After each NickServ sign-in it also hands the bridge that NickServ login, encrypted there with evrd's secret key, so the user's connection to your server is identified to NickServ (`BRIDGE_NICKSERV_METHOD`: `sasl` by default; setup writes `nickserv`, IDENTIFY once connected, for a server without SASL such as ngIRCd). Status: `GET http://auth:8081/internal/v1/bridge/status` (`X-Internal-Token`). This replaces the stack's earlier `bridge-sync` service, whose accounts auth takes over on its first full sync; on an existing install `docker compose up -d --remove-orphans` removes its old container. |
 
-`.env`: `BRIDGE_TOKEN`, `BRIDGE_WEBIRC_PASSWORD`, `BRIDGE_SECRET_KEY`
-(generated), `BRIDGE_IRC_SERVER`, `BRIDGE_CERT_HOST`, `BRIDGE_NICKSERV_METHOD`; auth's
+`.env`: `BRIDGE_TOKEN`, `BRIDGE_WEBIRC_PASSWORD`, `BRIDGE_CLIENT_WEBIRC_PASSWORD`,
+`BRIDGE_SECRET_KEY` (generated), `BRIDGE_IRC_SERVER`, `BRIDGE_CERT_HOST`, `BRIDGE_NICKSERV_METHOD`; auth's
 `ACCOUNT_BACKEND` and `NICKSERV_*` (auth `docs/nickserv.md`, auth ≥ 1.23.0);
 `WEBIRC_ALIASES` (the web client's IRC goes to the bridge),
-`WEBIRC_PASSWORDS` (your server, for direct connections through the web
-gateway), `WELLKNOWN_SECTIONS` (boson.json names `irc.DOMAIN` as the IRC
+`WEBIRC_PASSWORDS` (`<your server>=<BRIDGE_WEBIRC_PASSWORD>` for direct
+connections through the web gateway, and `evrd-links=<BRIDGE_CLIENT_WEBIRC_PASSWORD>`
+for the bridge: [web users' addresses](#web-users-addresses)), `WELLKNOWN_SECTIONS` (boson.json names `irc.DOMAIN` as the IRC
 server), `ADMIN_IRC_CHECK`, `ADMIN_CONFIG_STATUS_TARGETS` (no Ergo),
 `ERGO_API_TOKEN` empty (no IRC roles).
 
+### bridge/evrd.conf
+
+Setup writes it (running setup again rewrites it); secrets stay in `.env`.
+Besides the listeners, storage and `managed_server`/`managed_token_*`
+lines it sets:
+
+- `managed_nick_guard_grace 60s` (evrd ≥ 0.61): a Boson user without a
+  services login who lands on a nick registered with NickServ has 60
+  seconds to `IDENTIFY` before the bridge moves them to their alternative
+  nick. One who identifies keeps the nick, and the bridge tries it first
+  next time (`identifiedNick` in the managed API). `0` moves them at once.
+- No `managed_guests`: auth sets the bridge's guests (below).
+
+While `.env` pins an evrd older than 0.61 (`EVRD_IMAGE`), setup leaves the
+grace out (evrd stops on a directive it doesn't know) and doesn't add the
+gateway's `evrd-links=` WEBIRC password; run it again after updating evrd.
+
+### Guests
+
+With guests allowed (`auth.guest_access` in `config/boson.yaml`, the
+wizard's Features step or the admin panel), people without an account
+chat in Boson under a nick, through the bridge (evrd ≥ 0.61, evrd
+`docs/managed.md` "Guests"): each gets a temporary connection to your
+server, with WEBIRC and their own address, kept off nicks registered with
+NickServ, and gone 30 seconds after they leave (`managed_guest_linger`).
+Limits: 100 at once (`managed_guests_max`), 3 from one address
+(`managed_guests_per_ip`); add those lines to `bridge/evrd.conf` to change
+them.
+
+auth drives the switch (auth `docs/bridge.md` "Guests"): at startup and on
+every change of `guest_access` it sends `PUT /api/managed/settings
+{"guests": …}`, so the bridge lets guests in exactly when Boson does. That
+needs an auth with that change; an older auth leaves the bridge's
+setting alone (evrd.conf's, off), and guests are refused (`464`).
+
+### Web users' addresses
+
+The web client reaches the bridge through the web gateway
+(`WEBIRC_ALIASES`: `irc.DOMAIN:6697` → `evrd-links:6667`). The gateway
+sends WEBIRC with each web user's address to the bridge too:
+`WEBIRC_PASSWORDS` has `evrd-links=<BRIDGE_CLIENT_WEBIRC_PASSWORD>`, and
+compose hands evrd the same secret as `EVRD_MANAGED_CLIENT_WEBIRC_PASSWORD`
+(`managed_client_webirc_password`, evrd ≥ 0.61). So a web user, guest or
+account, shows on your server with their own address rather than the
+gateway's, and guests are limited per address.
+
+### Upgrading an older add-on install
+
+An install made by an earlier wizard has evrd 0.60 or older, a
+`bridge/evrd.conf` without the grace, no `BRIDGE_CLIENT_WEBIRC_PASSWORD`
+and guests forced off. First update evrd to 0.61 or later (the admin
+panel's Updates page, or `EVRD_IMAGE=ghcr.io/4evrd/evrd:0.61.0` in `.env`
+and `docker compose up -d --no-deps evrd`; a re-run of setup keeps the
+pinned version). Leave `EVRD_LINKS_IMAGE` alone: changing it drops every
+Boson user. Then either run setup again (`install.sh`; it writes the rest
+and keeps your secrets), or by hand:
+
+1. In `.env`: `BRIDGE_CLIENT_WEBIRC_PASSWORD=<openssl rand -hex 24>`, and
+   append `,evrd-links=<that password>` to `WEBIRC_PASSWORDS`.
+2. In `bridge/evrd.conf`: add `managed_nick_guard_grace 60s`.
+3. `docker compose up -d --no-deps evrd webircgateway` (connections stay
+   up: evrd-links isn't touched).
+4. Guests: update auth to a release that drives the bridge's guests, then
+   set `auth.guest_access: true` in `config/boson.yaml` (or in the admin
+   panel) if you want them.
+
 ## Not yet
 
-- **Guests** (evrd's managed mode has none yet).
-- **Web client users' addresses**: the web gateway connects to the bridge
-  from the compose network and evrd takes no WEBIRC from it, so a web user
-  shows on your server with the gateway's address.
+- **Guests in voice** on this path.
+- **A web user's new address**: the bridge keeps the address a user's
+  connection was made with until it reconnects.

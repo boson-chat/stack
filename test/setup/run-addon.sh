@@ -13,7 +13,9 @@
 #      red then green, review, install (Pebble certificates, fake DNS);
 #   3. the result works (addon-result.py): Boson users over the bridge,
 #      replies/reactions/history, a classic client on the IRC server sees
-#      them with their own address, NickServ sign-in where auth has it, and
+#      them with their own address, NickServ sign-in where auth has it,
+#      guests and Boson users through the web gateway (auth's guest setting
+#      on the bridge, WEBIRC from the gateway: their own address), and
 #      nothing a Boson user receives says "evrd";
 #   4. federated login (FEDERATION=1, the default for ngircd-anope and
 #      insp-atheme): a second, home install (addon-home.sh, home.test) whose
@@ -21,7 +23,8 @@
 #      home.test (allowlist), and addon-federation.py checks she reaches
 #      the IRC server through the bridge under a nick nobody registered
 #      with NickServ (the registered alice and alice-hometest exist), is
-#      never renamed, killed or identified, and is dropped when banned.
+#      never killed or identified, ends on alice-hometest_ (a services rename
+#      during the nick guard's grace is fine), and is dropped when banned.
 #
 # Needs sudo (install.sh runs as root). Cleans up what it started, by name
 # and label.

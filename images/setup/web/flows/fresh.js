@@ -437,14 +437,21 @@ function features(errors = {}) {
 		s3,
 	);
 	const videoT = toggle({ label: 'Video and screen share', detail: 'Cameras and screens in voice channels (UDP 7710).', checked: A.video, disabled: !A.voice, onchange: (v) => (A.video = v) });
-	const guestVoiceT = toggle({ label: 'Guests in voice', detail: 'Guests can join voice channels too, under their nick with a guest badge.', checked: A.guest_voice, disabled: !A.guests || !A.voice, onchange: (v) => (A.guest_voice = v) });
+	const guestVoiceOK = () => A.guests && A.voice && A.mode !== 'addon';
+	const guestVoiceT = toggle({
+		label: 'Guests in voice',
+		detail: A.mode === 'addon' ? 'Not on this path yet: guests chat, but only Boson accounts join voice.' : 'Guests can join voice channels too, under their nick with a guest badge.',
+		checked: A.guest_voice,
+		disabled: !guestVoiceOK(),
+		onchange: (v) => (A.guest_voice = v),
+	});
 	const refreshDeps = () => {
 		const vi = videoT.querySelector('input');
 		vi.disabled = !A.voice;
 		videoT.classList.toggle('disabled', !A.voice);
 		if (!A.voice) vi.checked = A.video = false;
 		const gi = guestVoiceT.querySelector('input');
-		gi.disabled = !A.guests || !A.voice;
+		gi.disabled = !guestVoiceOK();
 		guestVoiceT.classList.toggle('disabled', gi.disabled);
 		if (gi.disabled) gi.checked = A.guest_voice = false;
 	};
@@ -551,8 +558,7 @@ function features(errors = {}) {
 				}),
 				toggle({
 					label: 'Guests',
-					detail: A.mode === 'addon' ? 'Not on this path yet: the bridge signs every Boson user in. People without an account can still use your IRC server directly.' : 'People can chat on IRC without an account, under a nick.',
-					disabled: A.mode === 'addon',
+					detail: A.mode === 'addon' ? 'People can chat in Boson without an account, under a nick: the bridge brings them to your IRC server with their own address.' : 'People can chat on IRC without an account, under a nick.',
 					checked: A.guests,
 					onchange: (v) => {
 						A.guests = v;

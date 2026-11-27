@@ -177,8 +177,10 @@ func (a *Answers) Normalize() {
 	a.Proxy.normalize()
 	if a.Mode == ModeAddon {
 		a.Addon.normalize()
-		// The bridge signs everyone in: no guests on this path (yet).
-		a.Guests, a.GuestVoice = false, false
+		// Guests come in through the bridge (evrd 0.61's managed guests,
+		// switched on and off by auth from auth.guest_access); voice for
+		// them isn't wired up on this path yet.
+		a.GuestVoice = false
 	} else {
 		a.Mode = ModeFresh
 	}
