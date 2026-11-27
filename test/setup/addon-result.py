@@ -112,13 +112,15 @@ def container_ip(service):
                          capture_output=True, text=True).stdout.split()
     return out[0] if out else None
 
-def bridge_put(path, body):
-    """PUT on the managed API (evrd-links' address on the compose network,
-    reachable from this host; the evrd image's wget can't PUT)."""
-    req = urllib.request.Request(f"http://{container_ip('evrd-links')}:8098{path}", data=json.dumps(body).encode(), method="PUT",
+def bridge_put(path, body, method="PUT"):
+    """PUT (or DELETE) on the managed API (evrd-links' address on the
+    compose network, reachable from this host; the evrd image's wget can't)."""
+    req = urllib.request.Request(f"http://{container_ip('evrd-links')}:8098{path}", method=method,
+                                 data=json.dumps(body).encode() if body is not None else None,
                                  headers={"Authorization": f"Bearer {ENV['BRIDGE_TOKEN']}", "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=10) as r:
-        return json.loads(r.read())
+        data = r.read()
+        return json.loads(data) if data else None
 
 class WS:
     """The web gateway like a browser (scripts/smoke-webirc.py's client):
@@ -455,6 +457,15 @@ for _ in range(10):
 check(f"the classic client sees {third} with their own address via the web gateway, not the bridge's or the gateway's ({sorted(not_ours)})",
       ips and not (ips & not_ours), w)
 wu.close()
+# Every test user shows with this host's address now (the gateway's WEBIRC),
+# and IRC servers cap connections per address (InspIRCd's connect class):
+# drop the web user's always-on connection and wait for the guest to go
+# (managed_guest_linger), so the federation test has room.
+try: bridge_put(f"/api/managed/users/{third.lower()}", None, method="DELETE")
+except OSError as e: print(f"note: removing {third}'s bridge account: {e}")
+for _ in range(60):
+    if not ((bridge_api("/api/managed/health") or {}).get("guests") or {}).get("active"): break
+    time.sleep(1)
 for x in (a, b2, c): x.close()
 
 # 5/6. nothing Boson users see says evrd

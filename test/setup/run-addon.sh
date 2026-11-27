@@ -23,7 +23,8 @@
 #      home.test (allowlist), and addon-federation.py checks she reaches
 #      the IRC server through the bridge under a nick nobody registered
 #      with NickServ (the registered alice and alice-hometest exist), is
-#      never renamed, killed or identified, and is dropped when banned.
+#      never killed or identified, ends on alice-hometest_ (a services rename
+#      during the nick guard's grace is fine), and is dropped when banned.
 #
 # Needs sudo (install.sh runs as root). Cleans up what it started, by name
 # and label.
