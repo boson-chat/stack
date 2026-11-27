@@ -5,6 +5,8 @@
 2. Register a user through the auth service REST API, and log in.
 3. IRC over TLS (also verified against the local CA): SASL PLAIN as that
    user gets RPL_LOGGEDIN (900) + RPL_SASLSUCCESS (903) and the welcome (001).
+   Push (docs/push.md, IRC_PUSH default true): CAP LS offers draft/webpush and
+   ISUPPORT has VAPID= (Ergo's VAPID public key).
 4. SASL PLAIN with a wrong password fails (904).
 5. SASL OAUTHBEARER with the user's access token logs in too.
 6. With --channel-creation: the logged-in user creating a new channel works
@@ -132,6 +134,10 @@ seen, lines = irc_session("PLAIN", f"\0{user}\0{password}".encode(), user)
 logged = [l for l in lines if " 900 " in l]
 check("SASL PLAIN: RPL_LOGGEDIN 900", "900" in seen and "903" in seen, logged[0][:120] if logged else " | ".join(lines[-3:]))
 check("welcome 001", "001" in seen)
+caps = " ".join(l.split(" :", 1)[-1] for l in lines if " CAP " in l and " LS " in l).split()
+vapid = [t for l in lines if " 005 " in l for t in l.split(" :", 1)[0].split() if t.startswith("VAPID=")]
+check("push: CAP draft/webpush and ISUPPORT VAPID=", "draft/webpush" in [c.split("=")[0] for c in caps] and len(vapid) == 1 and len(vapid[0]) > 60,
+      f"caps {[c for c in caps if 'push' in c]} vapid {vapid}")
 
 # 4. wrong password
 seen, lines = irc_session("PLAIN", f"\0{user}\0wrong-{password}".encode(), user)

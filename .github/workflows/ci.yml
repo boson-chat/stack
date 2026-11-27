@@ -105,7 +105,7 @@ jobs:
           code=$(c -o /dev/null -w '%{http_code}' https://voice.localhost/metrics)
           [ "$code" = 404 ] || { echo "/metrics on the voice host: $code, want 404"; exit 1; }
           c -fD headers https://localhost/.well-known/boson.json |
-            python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["version"]==1 and d["voice"]["addr"]=="voice.localhost:7700" and d["auth"]["url"]=="https://auth.localhost" and d["irc"]["host"]=="irc.localhost" and d["branding"]=="https://auth.localhost/v1/branding", d; print(d)'
+            python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["version"]==1 and d["voice"]["addr"]=="voice.localhost:7700" and d["auth"]["url"]=="https://auth.localhost" and d["irc"]["host"]=="irc.localhost" and d["branding"]=="https://auth.localhost/v1/branding" and d["push"]=={"version":1,"relay":"https://push.boson.chat"}, d; print(d)'
           grep -qi '^access-control-allow-origin: \*' headers && grep -qi '^content-type: application/json' headers
       - name: Ergo API is internal only and answers with the token
         run: |

@@ -1,6 +1,9 @@
 # Push notifications (v1)
 
-> **Status: planned.** This is the design being implemented across the stack, a new push relay, the Boson app and evrd; sections land as their PRs merge.
+> **Status: in progress.** This is the design being implemented across the stack, a new push relay, the Boson app and evrd; sections land as their PRs merge.
+> Stack side done: Ergo `webpush:` (§1), the `boson.json` `push` block and the `pushrelay`
+> compose profile ([Running the relay](#running-the-relay)). The relay itself, the apps and
+> evrd are still to come.
 
 Goal: a person signed in to a Boson install gets a notification on their phone, desktop or
 browser when they are mentioned or sent a DM while no Boson device is connected, from any
@@ -40,14 +43,20 @@ protocol.
   receives ordinary encrypted, VAPID-signed Web Push and forwards it to APNs or FCM.
 
 ## 1. Stack (Ergo)
+> **Status: done** (this repo). Settings below; `scripts/smoke-irc.py` checks that Ergo
+> offers `draft/webpush` and `VAPID=`.
+
 - Render `webpush:` in `images/ergo/helper/ircd.yaml.tmpl`:
   - `enabled` (`IRC_PUSH` / `irc.push`, default true),
   - `delay` (default `20s`, so a message read on another device within 20 s is not pushed),
   - `subscriber: https://<DOMAIN>/`,
   - `max-subscriptions: 8` (phone, tablet, desktop, a few browsers),
   - `expiration: 30d`.
-- Ergo generates and stores its VAPID key itself; keep it in the persistent data volume so
-  subscriptions survive restarts and image updates.
+- Ergo generates and stores its VAPID key itself: in its datastore, `/ircd/ircd.db`
+  (created by `ergo initdb`, or added by the schema upgrade on an existing database), which is
+  the `ergo_db` volume. So the key and the subscriptions survive restarts, image updates and
+  recreating the container; only removing the volume makes a new key (devices then register
+  again on their next connect).
 - Add `push` to the Ergo `fakelag` command budgets only if needed (WEBPUSH is already 1).
 - Guests can't register (Ergo refuses unless logged in), so the "accounts only" rule holds on
   Ergo networks without extra code.
@@ -55,9 +64,39 @@ protocol.
   this install recommends; default boson.chat's, override `PUSH_RELAY_URL`, empty = phone
   push off for this install; browser push still works).
 
+### Settings
+| Where | Default | |
+|---|---|---|
+| `IRC_PUSH` / `irc.push` | `true` | `webpush.enabled`. Forced off when `IRC_ALWAYS_ON` / `irc.always_on` is `disabled`, since Ergo won't start with push on and always-on off. Applies with a rehash (clients get `CAP NEW`/`DEL`) |
+| `IRC_PUSH_DELAY` / `irc.push_delay` | `20s` | `webpush.delay`. A Go duration (`s`/`m`/`h`, not `d`), 0 to 1h; 0 = push at once |
+| `PUSH_RELAY_URL` (`wellknown`) | `https://push.boson.chat` | `boson.json` `push.relay`; an `https://` URL, or empty for no relay |
+| fixed | | `subscriber: https://DOMAIN/` (IRC_HOST without `DOMAIN`), `max-subscriptions: 8`, `expiration: 30d`, `timeout: 10s` |
+
+The `push` block is published with the `irc` section (it describes this network's IRC
+server). Clients still check that the server offers `draft/webpush` and `VAPID=`, so an
+add-on install's block (evrd has no push before phase 2) is harmless.
+
+### Egress
+Ergo sends pushes itself, from the `ergo` container, over HTTPS (443) to wherever each
+device registered: browser push services (`fcm.googleapis.com`,
+`updates.push.services.mozilla.com`, `web.push.apple.com`, ...) and the relay
+(`push.boson.chat`). Nothing in `compose.yaml` restricts that: `ergo` is on the stack's
+default bridge network, which has a route out (only `docker-proxy` is `internal`). Things that
+do break it:
+- **A host firewall or egress filter** that blocks outbound 443 from Docker networks.
+- **An HTTP(S) proxy as the only way out.** Ergo's push client has its own transport and
+  ignores `HTTPS_PROXY`; such installs can't push.
+- **Split-horizon DNS** that answers a private address for the relay or a push service:
+  Ergo refuses to dial loopback, private (RFC 1918, ULA), link-local and CGNAT addresses,
+  whatever the name. That includes boson.chat itself reaching `push.boson.chat`: it must
+  resolve to the public address (hairpinning through Docker's published 443 works).
+- Non-HTTPS endpoints are refused at `WEBPUSH REGISTER`.
+
 ## 2. The relay (`boson-chat/pushrelay`, new Go service, runs only at boson.chat)
 A small Web Push service that delivers to APNs and FCM. Stack profile `pushrelay`, off by
 default; boson.chat turns it on. Storage: Postgres (the stack's), one table of mailboxes.
+> **Status:** the stack profile is done ([Running the relay](#running-the-relay)); the
+> service itself is being built in `boson-chat/pushrelay`.
 
 ### 2.1 Creating a mailbox (phone → relay)
 `POST /v1/mailboxes`, body:
@@ -128,6 +167,75 @@ The relay never holds a decryption key and logs only mailbox id, install, size, 
 - The worst case is an install misusing pushes to its own signed-in users, who chose it and
   can sign out (which deletes the mailbox).
 
+### Running the relay
+Only boson.chat runs it (or whoever ships their own build of the app). Compose service
+`pushrelay`, profile `pushrelay`, needs `auth` (the stack's Postgres).
+
+| Service | Listens | Image |
+|---|---|---|
+| `pushrelay` | `:8080` public API, routed by Traefik at `https://PUSH_HOST`; `:3001` operator API (`X-Internal-Token`) and `/metrics`, compose network only | `harbor.floret.dev/boson/pushrelay` |
+
+Before turning it on:
+1. **DNS:** an A/AAAA record for `PUSH_HOST` (default `push.$DOMAIN`, so
+   `push.boson.chat`) at the server. It must be the public address (see [Egress](#egress));
+   behind Cloudflare, use a DNS-only record so Traefik sees client IPs and gets the cert.
+2. `.env`: `pushrelay` in `COMPOSE_PROFILES`, `PUSH_HOST` added to `CERT_HOSTS`,
+   `PUSHRELAY_DB_PASSWORD` and `PUSHRELAY_INTERNAL_TOKEN` (`scripts/setup.sh` writes both;
+   `openssl rand -hex 32`), and the settings below. If `PUSH_HOST` isn't `push.boson.chat`,
+   set `PUSH_RELAY_URL=https://PUSH_HOST` so this install's `boson.json` names it.
+3. **Secrets as files**, never in `.env` or `compose.yaml`: put them in
+   `PUSHRELAY_SECRETS_DIR` (default `./secrets/pushrelay`, git-ignored), mounted read-only
+   at `/run/secrets/pushrelay`. The relay runs as uid 65532:
+   ```sh
+   install -d -m 750 -o root -g 65532 secrets/pushrelay
+   install -m 640 -o root -g 65532 AuthKey_XXXXXXXXXX.p8 secrets/pushrelay/apns.p8
+   install -m 640 -o root -g 65532 firebase-service-account.json secrets/pushrelay/fcm.json
+   ```
+4. **Existing install** (Postgres volume already there; `postgres/initdb/40-pushrelay.sh`
+   only runs on a new one): create the database once:
+   ```sh
+   P=$(grep ^PUSHRELAY_DB_PASSWORD= .env | cut -d= -f2-)
+   docker compose exec -T postgres psql -U auth -d postgres \
+     -v pw="$P" -v usr=pushrelay -v db=pushrelay <<'SQL'
+   CREATE ROLE :"usr" LOGIN PASSWORD :'pw';
+   CREATE DATABASE :"db" OWNER :"usr";
+   SQL
+   ```
+5. `docker compose up -d` (recreates `postgres` for the new env, `traefik` for
+   `CERT_HOSTS`, and starts `pushrelay`).
+
+Settings (`.env`; compose passes the same names to the relay unless noted):
+
+| Variable | Default | |
+|---|---|---|
+| `PUSHRELAY_IMAGE` | `harbor.floret.dev/boson/pushrelay:0.1.0` | placeholder until the first release |
+| `PUSH_HOST` | `push.$DOMAIN` | public hostname; the relay gets `PUSHRELAY_PUBLIC_URL=https://PUSH_HOST` (the VAPID `aud` it checks, the base of mailbox endpoints) |
+| `PUSHRELAY_DB_PASSWORD`, `_USER`, `_NAME` | –, `pushrelay`, `pushrelay` | the relay gets `DATABASE_URL` |
+| `PUSHRELAY_INTERNAL_TOKEN` | – | operator API on `:3001`: block an install domain, delete a mailbox, per-install counts |
+| `PUSHRELAY_SECRETS_DIR` | `./secrets/pushrelay` | host directory, mounted read-only at `/run/secrets/pushrelay` (not passed to the relay) |
+| `PUSHRELAY_APNS_KEY_FILE` | `/run/secrets/pushrelay/apns.p8` | APNs token-auth key (`.p8`), path in the container |
+| `PUSHRELAY_APNS_KEY_ID` | – | that key's id (10 characters) |
+| `PUSHRELAY_APNS_TEAM_ID` | – | Apple Developer team id |
+| `PUSHRELAY_APNS_TOPIC` | `chat.boson.app` | the app's bundle id (`apns-topic`) |
+| `PUSHRELAY_FCM_CREDENTIALS_FILE` | `/run/secrets/pushrelay/fcm.json` | Firebase project service account (FCM HTTP v1) |
+| `PUSHRELAY_APP_ATTEST_APP_ID` | – (`TEAM_ID.TOPIC`) | App Attest app id |
+| `PUSHRELAY_APP_ATTEST_ENV` | `production` | `production`, or `development` to accept dev-signed builds' attestations |
+| `PUSHRELAY_PLAY_INTEGRITY_PACKAGE` | `chat.boson.app` | Android package name |
+| `PUSHRELAY_PLAY_INTEGRITY_CERT_SHA256` | – | release signing certificate SHA-256 digest(s), comma-separated |
+| `PUSHRELAY_PLAY_INTEGRITY_CREDENTIALS_FILE` | – (the FCM one) | service account allowed to decode integrity tokens |
+| `PUSHRELAY_DEV_ALLOWLIST_FILE` | – | development builds (`apns-sandbox`) allowed in; empty = refused |
+| `PUSHRELAY_MAILBOX_BURST`, `_INTERVAL`, `_PER_DAY` | `10`, `6s`, `300` | per mailbox (§2.4) |
+| `PUSHRELAY_INSTALL_PER_HOUR` | `10000` | per install domain; `429` above it |
+| `PUSHRELAY_CREATE_PER_IP_PER_HOUR` | `20` | new mailboxes per client IP (from Traefik's `X-Forwarded-For`, `TRUSTED_PROXIES`) |
+| `PUSHRELAY_MAILBOX_IDLE_DAYS` | `60` | unused mailboxes are deleted after this |
+| `PUSHRELAY_LOG_LEVEL` | `info` | passed as `LOG_LEVEL` |
+
+The relay also gets `HTTP_ADDR=:8080`, `INTERNAL_ADDR=:3001` and `TRUSTED_PROXIES` (the stack
+subnet). These names are the stack's side of the contract with `boson-chat/pushrelay`; if
+the relay settles on different ones, change them here.
+
+Check: `curl -si https://PUSH_HOST/v1/push/0` answers `404` (no such mailbox).
+
 ## 3. Client (Boson app)
 
 ### 3.1 Which servers offer push
@@ -195,10 +303,10 @@ home-bouncer networks push too:
   encrypted.
 
 ## 6. Rollout
-1. Always-on default (stack #56, done/merging).
-2. Stack: Ergo `webpush:` config + `boson.json` `push` block; web client browser push.
-   Browser push works end to end with no relay.
-3. pushrelay service + stack profile; deploy at push.boson.chat (needs: APNs `.p8` key, Apple
+1. Always-on default (stack #56, **done**).
+2. Stack: Ergo `webpush:` config + `boson.json` `push` block (**done**); web client browser
+   push. Browser push works end to end with no relay.
+3. pushrelay service + stack profile (**stack profile done**); deploy at push.boson.chat (needs: APNs `.p8` key, Apple
    Team ID and bundle id; Firebase project service account; Play Integrity and App Attest
    setup).
 4. iOS and Android app support (key storage, mailbox registration, Notification Service

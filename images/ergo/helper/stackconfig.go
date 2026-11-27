@@ -38,6 +38,7 @@ const (
 	kindOrigins // list of URL patterns
 	kindErgoDuration
 	kindLogLevel
+	kindDelay // a Go duration (s/m/h), 0..1h: Ergo's webpush.delay
 )
 
 // fileKey is one key of the file and the env var it stands for.
@@ -66,6 +67,8 @@ var fileKeys = []fileKey{
 	{Path: "irc.history_expire", Env: "IRC_HISTORY_EXPIRE", Kind: kindErgoDuration},
 	{Path: "irc.channel_creator_grace", Env: "IRC_CHANNEL_CREATOR_GRACE", Kind: kindErgoDuration},
 	{Path: "irc.always_on", Env: "IRC_ALWAYS_ON", Kind: kindString},
+	{Path: "irc.push", Env: "IRC_PUSH", Kind: kindBool, Default: true},
+	{Path: "irc.push_delay", Env: "IRC_PUSH_DELAY", Kind: kindDelay},
 	{Path: "irc.log_level", Env: "IRC_LOG_LEVEL", Kind: kindLogLevel},
 	// Ergo opens the history database only at startup.
 	{Path: "irc.persistent_history", Env: "IRC_PERSISTENT_HISTORY", Kind: kindBool, Restart: true, Default: true},
@@ -237,6 +240,15 @@ func fileValue(k fileKey, v *yaml.Node) (string, error) {
 		}
 		if !ergoDurRe.MatchString(s) {
 			return "", errAt(v, "%s: %q is not a duration like 1w, 30d or 12h", k.Path, s)
+		}
+		return s, nil
+	case kindDelay:
+		s, err := scalar()
+		if err != nil {
+			return "", err
+		}
+		if !validDelay(s) {
+			return "", errAt(v, "%s: %q is not a duration like 20s, 1m or 0 (at most 1h)", k.Path, s)
 		}
 		return s, nil
 	case kindLogLevel:
