@@ -1,0 +1,70 @@
+# Keep compose.yaml's pinned image defaults on the newest releases.
+#
+# Daily (and on demand), cmd/bumpimages asks GitHub Releases and the
+# registries, with the same rules the setup wizard uses for a new install
+# (images/setup/internal/releases: same major version, the image is on the
+# registry), and rewrites the defaults in compose.yaml plus their mentions in
+# .env.example and docs/. When anything moved it pushes the branch
+# bot/bump-images and opens (or updates) one pull request; the full CI,
+# e2e included, then tests the new versions before a person merges it.
+#
+# Pull requests opened with the workflow's own GITHUB_TOKEN don't start other
+# workflows (GitHub's rule against loops): set the BUMP_PR_TOKEN secret (a
+# fine-grained token with contents + pull requests write on this repository)
+# so CI runs on the PR by itself; without it, close and reopen the PR to
+# start CI. The repository must allow GitHub Actions to create pull requests
+# (Settings → Actions → General) when BUMP_PR_TOKEN isn't set.
+name: Bump images
+
+on:
+  schedule:
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: bump-images
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: bump pinned image defaults
+    runs-on: ubuntu-latest
+    env:
+      BRANCH: bot/bump-images
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.BUMP_PR_TOKEN || github.token }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: images/setup/go.mod
+      - name: Newest releases → compose.yaml, .env.example, docs
+        working-directory: images/setup
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: go run ./cmd/bumpimages -root ../.. > "$RUNNER_TEMP/body.md"
+      - name: Open or update the pull request
+        env:
+          GH_TOKEN: ${{ secrets.BUMP_PR_TOKEN || github.token }}
+        run: |
+          if git diff --quiet; then
+            echo "compose.yaml's image defaults are the newest releases."
+            exit 0
+          fi
+          cat "$RUNNER_TEMP/body.md" >> "$GITHUB_STEP_SUMMARY"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git commit -qam "chore: bump pinned image defaults to the newest releases"
+          git push -f origin "$BRANCH"
+          if [ -n "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+            gh pr edit "$BRANCH" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh pr create --head "$BRANCH" --base main \
+              --title "chore: bump pinned image defaults to the newest releases" \
+              --body-file "$RUNNER_TEMP/body.md"
+          fi
