@@ -27,7 +27,7 @@ REPO=${GITHUB_REPOSITORY:-boson-chat/stack}
 
 case "$step" in
 prepare)
-	for name in certsync ergo webircgateway; do
+	for name in certsync ergo webircgateway telemetry; do
 		src=$REGISTRY/boson/stack-$name:sha-$SHORT
 		echo "tag $src -> :$V"
 		docker buildx imagetools create -t "$REGISTRY/boson/stack-$name:$V" "$src"

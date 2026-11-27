@@ -91,6 +91,7 @@ func (ex Existing) Answers() Answers {
 	// Both halves, as docs/updates.md sets them: the profile alone (or the
 	// URL alone) doesn't let the panel apply anything.
 	a.ApplyUpdates = prof["updates"] && e["ADMIN_UPDATES_DOCKER_PROXY_URL"] != ""
+	a.UsageStats = !TelemetryOff(e["TELEMETRY"])
 	switch {
 	case cfgString(c, "local", "files", "storage", "driver") != "s3":
 		a.Files.Storage = "local"
@@ -202,4 +203,14 @@ func InstallFiles(src, dir string) (int, error) {
 		return WriteFileAtomic(dst, data, mode)
 	})
 	return n, err
+}
+
+// TelemetryOff: TELEMETRY in .env turns the usage report off (off, false,
+// 0, no; docs/telemetry.md). Anything else, or unset, is on.
+func TelemetryOff(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "off", "false", "0", "no":
+		return true
+	}
+	return false
 }

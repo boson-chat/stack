@@ -4,7 +4,7 @@
 #   docker compose up -d --build
 # Which parts run is chosen by COMPOSE_PROFILES in .env
 # (irc, voice, video, auth, api, directory, files, minio, metrics, admin,
-# updates, webroot, wellknown, web, bridge, pushrelay). traefik and
+# updates, webroot, wellknown, web, bridge, pushrelay, telemetry). traefik and
 # certsync always run.
 # Install-specific additions: traefik/dynamic/*.yml and compose.override.yaml.
 name: boson
@@ -864,6 +864,13 @@ services:
       # The update journal survives the panel's own restart (it updates
       # itself last and picks the run up again).
       UPDATES_STATE_DIR: /data
+      # Usage & health stats (docs/telemetry.md): the anonymous install report
+      # the panel sends once a day. TELEMETRY=off turns it off, as does
+      # Settings → Usage & health stats (config/boson.yaml admin.telemetry).
+      # TELEMETRY_URL: another receiver's base URL (default
+      # https://telemetry.boson.chat).
+      TELEMETRY: ${TELEMETRY:-on}
+      TELEMETRY_URL: ${TELEMETRY_URL:-}
     volumes:
       # rw: the panel saves config/boson.yaml (temp file + rename in this dir)
       # and the Branding page's images in config/branding/.
@@ -1299,6 +1306,70 @@ services:
       - traefik.http.services.pushrelay.loadbalancer.server.port=8080
     # Note: PUSH_HOST must be in CERT_HOSTS so Traefik gets its certificate.
 
+  # ---- telemetry (boson.chat only): usage and health stats ---------------------
+  # telemetryd (images/telemetry, docs/telemetry.md) receives the anonymous
+  # install reports every self-hosted admin panel sends and the Boson apps'
+  # daily pings, and serves the owner's private panel. Self-hosted installs
+  # never run this; they only send to it (opt-out: docs/telemetry.md).
+  # Ingest at https://TELEMETRY_HOST (POST /v1/report, /v1/app only), the
+  # panel at https://STATS_HOST (STATS_USERNAME / STATS_PASSWORD_HASH).
+  # Per-install state in SQLite on telemetry_data; daily aggregates in its
+  # own VictoriaMetrics below (2 years), separate from the metrics profile's.
+  telemetry:
+    <<: *restart
+    profiles: [telemetry]
+    build: images/telemetry
+    image: harbor.floret.dev/boson/stack-telemetry:latest
+    environment:
+      LOG_LEVEL: ${TELEMETRY_LOG_LEVEL:-info}
+      STATS_USERNAME: ${STATS_USERNAME:-}
+      STATS_PASSWORD_HASH: ${STATS_PASSWORD_HASH:-}
+      # Client IPs (country lookup, per-IP limits) from Traefik's X-Forwarded-For.
+      TRUSTED_PROXIES: ${STACK_SUBNET:-10.203.53.0/24}
+      TELEMETRY_VM_URL: http://victoriametrics-telemetry:8428
+      # DB-IP Lite country database (CC BY 4.0), downloaded into /data on
+      # first start and monthly; "off" = no download (every country ZZ).
+      TELEMETRY_GEOIP_URL: ${TELEMETRY_GEOIP_URL:-}
+    volumes:
+      - telemetry_data:/data
+    depends_on:
+      victoriametrics-telemetry:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/telemetryd", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      - traefik.enable=true
+      # Two hosts, two listeners: the ingest (8080) never serves the panel
+      # and the panel (8081) never accepts reports.
+      - traefik.http.routers.telemetry.rule=Host(`${TELEMETRY_HOST:-telemetry.${DOMAIN:-localhost}}`)
+      - traefik.http.routers.telemetry.entrypoints=websecure
+      - traefik.http.routers.telemetry.tls=true
+      - traefik.http.routers.telemetry.service=telemetry
+      - traefik.http.services.telemetry.loadbalancer.server.port=8080
+      - traefik.http.routers.stats.rule=Host(`${STATS_HOST:-stats.${DOMAIN:-localhost}}`)
+      - traefik.http.routers.stats.entrypoints=websecure
+      - traefik.http.routers.stats.tls=true
+      - traefik.http.routers.stats.service=stats
+      - traefik.http.services.stats.loadbalancer.server.port=8081
+    # Note: TELEMETRY_HOST and STATS_HOST must be in CERT_HOSTS.
+
+  # telemetryd's own VictoriaMetrics: daily points only, kept 2 years.
+  # Internal only (not published, not routed).
+  victoriametrics-telemetry:
+    <<: *restart
+    profiles: [telemetry]
+    image: victoriametrics/victoria-metrics:v1.131.0
+    command:
+      - -storageDataPath=/storage
+      - -retentionPeriod=2y
+      - -httpListenAddr=:8428
+    volumes:
+      - vm_telemetry_data:/storage
+
   # ---- minio (optional): an S3-compatible bucket for files ---------------------
   # For files with storage.driver: s3 on this host. Internal only: the S3 API
   # (9000) isn't published or routed and the web console is off; files
@@ -1541,3 +1612,5 @@ volumes:
   files_data:
   minio_data:
   admin_data:
+  telemetry_data:
+  vm_telemetry_data:

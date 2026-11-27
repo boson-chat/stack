@@ -233,6 +233,9 @@ umask 077
 	echo "ERGO_API_TOKEN=$(openssl rand -hex 32)"
 	echo "ROLESERV_AUTH_TOKEN=$(openssl rand -hex 32)"
 	echo "ADMIN_SESSION_KEY=$(openssl rand -base64 32)"
+	# A *.localhost dev install (--local) never sends the usage report
+	# (docs/telemetry.md); a real one does unless you set TELEMETRY=off.
+	[ "$LOCAL" = false ] || echo "TELEMETRY=off"
 	# The admin panel's Docker socket proxy runs as nobody:<docker group>.
 	echo "DOCKER_GID=$( (getent group docker 2>/dev/null || true) | cut -d: -f3 | grep . || stat -c %g /var/run/docker.sock 2>/dev/null || echo 999)"
 	echo "API_DB_PASSWORD=$(rand 40)"

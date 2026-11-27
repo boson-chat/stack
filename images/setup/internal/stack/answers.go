@@ -63,6 +63,10 @@ type Answers struct {
 	// panel root-equivalent access to this host, for the people with
 	// services.manage + settings.manage. On by default.
 	ApplyUpdates bool `json:"apply_updates"`
+	// UsageStats: the admin panel sends the anonymous daily usage and
+	// health report (docs/telemetry.md). On by default; off writes
+	// TELEMETRY=off.
+	UsageStats bool `json:"usage_stats"`
 }
 
 // Federation modes (auth.federation.mode).
@@ -131,6 +135,7 @@ func Defaults() Answers {
 		Guests:            true,
 		Federation:        FederationDirectory,
 		ApplyUpdates:      true,
+		UsageStats:        true,
 		// App discovery: the Boson app finds auth, voice, uploads and
 		// federation through https://DOMAIN/.well-known/boson.json (the
 		// domain of irc.DOMAIN without its first label); without it the

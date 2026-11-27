@@ -38,6 +38,67 @@ jobs:
       - run: go vet ./...
       - run: go test -race -count=1 ./...
 
+  telemetry:
+    name: telemetryd (Go + a real VictoriaMetrics, panel unit + Playwright e2e, image)
+    runs-on: ubuntu-latest
+    services:
+      victoriametrics:
+        image: victoriametrics/victoria-metrics:v1.131.0
+        ports:
+          - 18428:8428
+    defaults:
+      run:
+        working-directory: images/telemetry
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: images/telemetry/go.mod
+          cache-dependency-path: images/telemetry/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: images/telemetry/web/package-lock.json
+      - name: Panel build (embedded in the binary)
+        working-directory: images/telemetry/web
+        run: npm ci --no-audit --no-fund && npm run check && npm test && npm run build
+      - run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - run: go vet ./...
+      - name: go test (the rollup writes to and reads from the VictoriaMetrics service)
+        env:
+          TELEMETRY_TEST_VM_URL: http://127.0.0.1:18428
+        run: go test -race -count=1 ./...
+      - name: Panel e2e (Playwright Chromium, desktop + phone; screenshots)
+        working-directory: images/telemetry/web
+        env:
+          E2E_VM_URL: http://127.0.0.1:18428
+          SHOTS: ${{ github.workspace }}/images/telemetry/web/shots
+        run: |
+          mkdir -p "$SHOTS"
+          npx playwright install --with-deps chromium
+          npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: telemetry-panel-screenshots
+          path: images/telemetry/web/shots/
+          if-no-files-found: ignore
+      - name: Image builds, hash-password works, the ingest answers
+        run: |
+          docker build -t stack-telemetry:ci .
+          h=$(printf 'a-long-enough-password\n' | docker run --rm -i stack-telemetry:ci hash-password)
+          case "$h" in '$2a$12$'*) echo "hash ok" ;; *) echo "bad hash: $h"; exit 1 ;; esac
+          docker run -d --name tel -e TELEMETRY_GEOIP_URL=off -e TELEMETRY_VM_URL=http://127.0.0.1:1 -p 127.0.0.1:18090:8080 -p 127.0.0.1:18091:8081 stack-telemetry:ci
+          for i in $(seq 1 20); do curl -fs 127.0.0.1:18090/healthz && break; sleep 1; done
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' 127.0.0.1:18090/v1/app \
+            -d '{"schema":1,"device_id":"0123456789abcdef0123456789abcdef","app_version":"1.0.0","platform":"web","channel":"stable","crashes":0,"servers":"1"}')
+          [ "$code" = 202 ] || { echo "app ping: $code"; docker logs tel; exit 1; }
+          [ "$(curl -s -o /dev/null -w '%{http_code}' 127.0.0.1:18090/)" = 404 ] || { echo "the ingest serves the panel"; exit 1; }
+          [ "$(curl -s -o /dev/null -w '%{http_code}' 127.0.0.1:18091/api/overview)" = 401 ] || { echo "panel API without a session"; exit 1; }
+          docker exec tel /usr/local/bin/telemetryd healthcheck
+          docker rm -f tel
+
   webircgateway:
     name: webircgateway policy (Go, patched upstream)
     runs-on: ubuntu-latest
@@ -640,7 +701,7 @@ jobs:
         run: |
           scripts/release/bundle.sh --out "$RUNNER_TEMP/b" --version 9.9.9 --release
           (cd "$RUNNER_TEMP/b" && bash scripts/setup.sh --local)
-          for p in "" irc,voice,video,auth,api,directory,files,minio,metrics,admin,updates,webroot,wellknown,web,bridge,pushrelay; do
+          for p in "" irc,voice,video,auth,api,directory,files,minio,metrics,admin,updates,webroot,wellknown,web,bridge,pushrelay,telemetry; do
             COMPOSE_PROFILES=$p docker compose --project-directory "$RUNNER_TEMP/b" --env-file "$RUNNER_TEMP/b/.env" config -q
           done
           grep -q 'stack-ergo:9.9.9' "$RUNNER_TEMP/b/compose.yaml"
@@ -654,7 +715,7 @@ jobs:
   # last: when a panel sees the release, its images are on Harbor.
   publish:
     name: publish images to Harbor + stack release
-    needs: [setup-addon-e2e, federation-e2e, helper, webircgateway, smoke, directory, files, minio, nick-claim, roles, acme, proxy, probe, ircds, setup, setup-e2e, stack-apply]
+    needs: [setup-addon-e2e, federation-e2e, helper, telemetry, webircgateway, smoke, directory, files, minio, nick-claim, roles, acme, proxy, probe, ircds, setup, setup-e2e, stack-apply]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     concurrency:
@@ -699,7 +760,7 @@ jobs:
           # release (below) tags with its version. The legacy tags (what
           # compose.yaml names on main and what installs from before stack
           # releases run) are still pushed for now.
-          for img in certsync:latest ergo:2.19.1 webircgateway:1.1.0-boson.2; do
+          for img in certsync:latest ergo:2.19.1 webircgateway:1.1.0-boson.2 telemetry:latest; do
             name=${img%%:*}; tag=${img#*:}
             docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --push \
               --label org.opencontainers.image.source=https://github.com/${{ github.repository }} \

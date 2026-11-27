@@ -7,7 +7,7 @@
 #   --out DIR      write the bundle tree to DIR (created; must be empty)
 #   --version V    the stack version (default 0.0.0-dev); written to VERSION
 #   --release      pin the images this repository builds (stack-ergo,
-#                  stack-certsync, stack-webircgateway) to :V in the
+#                  stack-certsync, stack-webircgateway, stack-telemetry) to :V in the
 #                  compose files, as a release does; without it they keep
 #                  the tags compose.yaml names on main
 #   --dist DIST    also write DIST/boson-stack-V.tar.gz, its .sha256 and
@@ -89,6 +89,7 @@ docs
 images/certsync
 images/ergo
 images/webircgateway
+images/telemetry
 images/wellknown
 "
 
@@ -119,7 +120,7 @@ chmod 644 "$OUT/VERSION"
 # A release pins the images this repository builds to its version.
 if $RELEASE; then
 	for f in compose.yaml compose.video-node.yaml; do
-		sed -E "s#(harbor\.floret\.dev/boson/stack-(ergo|certsync|webircgateway|setup)):[A-Za-z0-9._-]+#\1:$VERSION#g" \
+		sed -E "s#(harbor\.floret\.dev/boson/stack-(ergo|certsync|webircgateway|setup|telemetry)):[A-Za-z0-9._-]+#\1:$VERSION#g" \
 			"$OUT/$f" > "$OUT/$f.tmp"
 		cat "$OUT/$f.tmp" > "$OUT/$f"
 		rm -f "$OUT/$f.tmp"

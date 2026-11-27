@@ -27,6 +27,8 @@ test('re-run on an existing install is idempotent', async ({ page, request }) =>
   await expect(page.getByRole('switch', { name: /^Voice/ })).toBeChecked();
   // Read back from .env (the updates profile + the proxy URL).
   await expect(page.getByRole('switch', { name: /^Let the admin panel apply updates/ })).toBeChecked();
+  // The opt-out from the first run is read back from .env (TELEMETRY=off).
+  await expect(page.getByRole('switch', { name: /^Send anonymous usage & health stats/ })).not.toBeChecked();
   await next(page).click();
   await expect(page.getByRole('heading', { name: 'Firewall and ports' })).toBeVisible();
   // Ports the stack holds now count as fine.
