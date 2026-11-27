@@ -589,6 +589,13 @@ services:
       # Empty ERGO_API_TOKEN = no IRC roles (only admins pass role locks).
       ERGO_API_URL: ${VOICE_ERGO_API_URL:-http://ergo:8089}
       ERGO_API_TOKEN: ${ERGO_API_TOKEN:-}
+      # Add-on installs (bridge profile, no Ergo): IRC guests' channel
+      # membership for "Only people in #channel" voice channels, by nick,
+      # from evrd's managed API (quicvoice 1.17+ = boson-chat/quicvoice#22, evrd with
+      # /api/managed/channels/…/members/…; older ones keep those channels
+      # locked for guests). Unused while Ergo's API is configured.
+      BRIDGE_API_URL: ${VOICE_BRIDGE_API_URL:-${BRIDGE_CERT_HOST:+http://evrd-links:8098}}
+      BRIDGE_TOKEN: ${BRIDGE_TOKEN:-}
       TLS_CERT_FILE: /certs/tls.crt
       TLS_KEY_FILE: /certs/tls.key
       # Tokens from the auth service (POST /v1/voice/token), verified via JWKS.

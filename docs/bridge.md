@@ -33,8 +33,8 @@ bridge: its lines come from your server's name, under your network's name.
 5. Domain, TLS, admin, features, ports, as on a new server. With NickServ
    accounts the admin is your NickServ account (no Boson password: you sign
    in with your NickServ password). **Guests** (on by default, as on a new
-   server) come in through the bridge: see [Guests](#guests). Guests in
-   voice aren't available on this path yet. Accounts from other Boson servers (federated login) are: they join your
+   server) come in through the bridge: see [Guests](#guests), and
+   [Guests in voice](#guests-in-voice). Accounts from other Boson servers (federated login) are: they join your
    server through the bridge under a nick that carries their home server,
    without a services account there ([federation.md](federation.md#add-on-installs)).
 6. **Your server's config**: what to add to your server, per software, with
@@ -133,6 +133,20 @@ compose hands evrd the same secret as `EVRD_MANAGED_CLIENT_WEBIRC_PASSWORD`
 account, shows on your server with their own address rather than the
 gateway's, and guests are limited per address.
 
+### Guests in voice
+
+With `auth.guest_voice` on as well, guests join voice under their IRC nick
+as on any install. A voice channel under a text channel with **Only people
+in #channel** needs the guest's nick to be in that channel: quicvoiced asks
+the bridge (`BRIDGE_API_URL`, compose sets `http://evrd-links:8098` while
+`BRIDGE_CERT_HOST` is set, and `BRIDGE_TOKEN`), whose connections already
+know who's in each channel. Needs quicvoice 1.17 or later (boson-chat/quicvoice#22) and an evrd (4evrd/evrd#185) with
+`GET /api/managed/channels/{channel}/members/{nick}`; with older ones those
+channels stay locked for guests ("IRC role check unavailable"). Open voice
+channels (everyone can join) never need it. Guests are plain members
+everywhere: a channel that needs voice or op stays locked for them, even
+if their nick has it (the nick isn't verified), and the app says so.
+
 ### Upgrading an older add-on install
 
 An install made by an earlier wizard has evrd 0.60 or older, a
@@ -155,6 +169,8 @@ and keeps your secrets), or by hand:
 
 ## Not yet
 
-- **Guests in voice** on this path.
+- **Channel roles in voice** for signed-in users on this path: voice
+  channels that need +v/+o (or people in the channel) only let in network
+  admins; quicvoiced has no Ergo to ask.
 - **A web user's new address**: the bridge keeps the address a user's
   connection was made with until it reconnects.
