@@ -239,7 +239,15 @@ Rules for writing one:
   anything else fails the update, which rolls back.
 - A change compose can't see (a file a service reads) asks for the restart:
   `restart evrd`.
-- Numbers only grow; a released migration is never edited (write a new one).
+- Numbers only grow; a released migration is never edited (write a new
+  one), except to add the recheck line.
+- **Recheck**: a `# recheck: every update` line (in the first 20) makes it
+  run again on every update after it is recorded, so its change comes back
+  when it went missing (a `.env` put back from an older copy: a rollback of
+  the first stack update used to keep the record and lose the change). Only
+  for a migration whose check is cheap and whose change nobody would undo
+  on purpose. It counts as "applied" again when it changed `.env`; a failure
+  there is a warning, not a failed update.
 - Add a case to `test/stack-apply/run.sh`, including "already done by hand".
 
 Helpers (`migrations/lib.sh`): `env_get`, `env_has`, `env_set`,
@@ -250,7 +258,7 @@ Helpers (`migrations/lib.sh`): `env_get`, `env_has`, `env_set`,
 | Migration | What it does |
 |---|---|
 | `0001-bridge-client-webirc.sh` | Add-on installs (bridge profile) from before #55: `BRIDGE_CLIENT_WEBIRC_PASSWORD` generated, `,evrd-links=<it>` appended to `WEBIRC_PASSWORDS`, `managed_nick_guard_grace 60s` added to `bridge/evrd.conf` (evrd restarted). Waits while `EVRD_IMAGE` pins evrd < 0.61. |
-| `0002-wellknown-web.sh` | Installs that set `WELLKNOWN_SECTIONS` by hand (add-on installs from before #58) with the web profile and `WEB_HOST`: `web` added, so `boson.json` names the web client (`web.url`) and other installs' voice, video and files accept it (directory-mode origins). |
+| `0002-wellknown-web.sh` | Installs that set `WELLKNOWN_SECTIONS` by hand (add-on installs from before #58) with the web profile and `WEB_HOST`: `web` added, so `boson.json` names the web client (`web.url`) and other installs' voice, video and files accept it (directory-mode origins). Rechecked on every update. |
 
 ### Moving an existing install onto releases
 

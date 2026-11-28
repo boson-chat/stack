@@ -117,6 +117,32 @@ check "0002 without WELLKNOWN_SECTIONS: nothing (follows COMPOSE_PROFILES)" "[ $
 rc=$(mig2 'COMPOSE_PROFILES=auth,bridge\nWELLKNOWN_SECTIONS=irc,auth\n')
 check "0002 without the web profile: nothing" "[ $rc = 0 ] && grep -qx 'WELLKNOWN_SECTIONS=irc,auth' $T/m/.env"
 
+# The ircforever loss (2026-11-27): 0002 ran and was recorded, then a
+# rollback put back the .env from before it (keeping the record). A recheck
+# migration makes its change again on the next migrate, and stays put after.
+DIR=$T/lost
+mkdir -p "$DIR"
+printf 'COMPOSE_PROFILES=auth,bridge,web\nWEB_HOST=chat.x\nWELLKNOWN_SECTIONS=irc,auth,voice,files\n' > "$DIR/.env"
+cp "$DIR/.env" "$T/env.before"
+apply "$T/new" files "$T/new" >/dev/null
+apply "$T/new" migrate "$T/new" >/dev/null
+check "lost: 0002 applied and recorded" "grep -qx 'WELLKNOWN_SECTIONS=irc,auth,voice,files,web' $DIR/.env && grep -q '^0002-wellknown-web.sh ' $DIR/.boson/migrations.applied"
+cat "$T/env.before" > "$DIR/.env"
+out=$(apply "$T/new" plan "$T/new")
+check "lost: plan still says done" "grep -q '^@@MIGRATION 0002-wellknown-web.sh done' <<<\"\$out\""
+out=$(apply "$T/new" migrate "$T/new")
+check "lost: the next migrate puts web back (applied again), recorded once" \
+	"grep -qx 'WELLKNOWN_SECTIONS=irc,auth,voice,files,web' $DIR/.env && grep -q '^@@MIGRATION 0002-wellknown-web.sh applied' <<<\"\$out\" && [ \$(grep -c '^0002-wellknown-web.sh ' $DIR/.boson/migrations.applied) = 1 ]"
+out=$(apply "$T/new" migrate "$T/new")
+check "lost: and then done, nothing changes" "grep -q '^@@MIGRATION 0002-wellknown-web.sh done' <<<\"\$out\" && grep -qx 'WELLKNOWN_SECTIONS=irc,auth,voice,files,web' $DIR/.env"
+check "lost: 0001 (no recheck) isn't run again" "! grep -q '0001-bridge-client-webirc.sh (recheck)' <<<\"\$out\""
+cp -R "$T/new" "$T/rbroken"
+printf '#!/bin/sh\n# Fails on recheck.\n# recheck: every update\n[ -e "$STACK_DIR/once" ] && exit 1\ntouch "$STACK_DIR/once"\n' > "$T/rbroken/migrations/0097-rbroken.sh"
+apply "$T/rbroken" migrate "$T/rbroken" >/dev/null
+rc=0
+out=$(apply "$T/rbroken" migrate "$T/rbroken" 2>&1) || rc=$?
+check "a failing recheck: a warning, not a failed update" "[ $rc = 0 ] && grep -q 'warning: recheck of 0097-rbroken.sh failed' <<<\"\$out\" && grep -q '^@@MIGRATION 0097-rbroken.sh done' <<<\"\$out\""
+
 # A deferred migration isn't recorded and runs again on the next update.
 DIR=$T/deferred
 mkdir -p "$DIR/bridge"
