@@ -321,7 +321,7 @@ services:
   evrd:
     <<: *restart
     profiles: [bridge]
-    image: ${EVRD_IMAGE:-ghcr.io/4evrd/evrd:0.62.0}
+    image: ${EVRD_IMAGE:-ghcr.io/4evrd/evrd:0.64.0}
     network_mode: "service:evrd-links"
     # Waits for its certificate (certsync copies IRC_HOST's from Traefik);
     # evrd re-reads it when it changes.
@@ -393,7 +393,7 @@ services:
     profiles: [auth]
     # Releases: harbor.floret.dev/boson/auth:<version>. To run an unreleased
     # checkout instead, add compose.auth-src.yaml (see README).
-    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.31.0}
+    image: ${AUTH_IMAGE:-harbor.floret.dev/boson/auth:1.35.0}
     environment:
       ENV: production
       LOG_LEVEL: ${AUTH_LOG_LEVEL:-info}
@@ -545,7 +545,7 @@ services:
   quicvoiced:
     <<: *restart
     profiles: [voice]
-    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.16.0}
+    image: ${QUICVOICE_IMAGE:-harbor.floret.dev/boson/quicvoice:1.17.0}
     ports:
       - "7700:7700/udp"
     environment:
@@ -766,7 +766,7 @@ services:
   admin:
     <<: *restart
     profiles: [admin]
-    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.31.0}
+    image: ${ADMIN_IMAGE:-harbor.floret.dev/boson/admin:1.36.2}
     environment:
       ENV: production
       # The stack config file: the panel edits it (Settings pages, Config
@@ -985,7 +985,7 @@ services:
   api:
     <<: *restart
     profiles: [api]
-    image: ${API_IMAGE:-harbor.floret.dev/boson/backend:0.57.3}
+    image: ${API_IMAGE:-harbor.floret.dev/boson/backend:0.58.1}
     command: ["serve"]
     environment: &api-env
       PORT: "3000"
@@ -1062,7 +1062,7 @@ services:
   # Applies the API's database migrations before it starts (exits when done).
   api-migrate:
     profiles: [api]
-    image: ${API_IMAGE:-harbor.floret.dev/boson/backend:0.57.3}
+    image: ${API_IMAGE:-harbor.floret.dev/boson/backend:0.58.1}
     command: ["migrate", "up"]
     environment: *api-env
     restart: "no"
@@ -1544,7 +1544,7 @@ services:
   web:
     <<: *restart
     profiles: [web]
-    image: ${WEB_IMAGE:-harbor.floret.dev/boson/web:0.104.0}
+    image: ${WEB_IMAGE:-harbor.floret.dev/boson/web:0.107.0}
     environment:
       BOSON_AUTH_URL: https://${AUTH_HOST:-auth.invalid}
       BOSON_API_URL: ${WEB_API_URL:-https://${API_HOST:-api.${DOMAIN:-localhost}}}
