@@ -8,7 +8,8 @@
 # guard for channels restricted to roles, see docs/irc-channels.md; creator
 # grace: an emptied unregistered channel's creator keeps operator status for
 # a while, see docs/irc-channels.md; disconnecting a disabled account's
-# clients, see docs/irc-channels.md and docs/federation.md), plus
+# clients, see docs/irc-channels.md and docs/federation.md; the registered
+# channel count in /v1/status, for the usage stats, see docs/telemetry.md), plus
 # boson-ergo: renders ircd.yaml from the environment,
 # checks SASL logins against the boson auth service, syncs roles and runs
 # RoleServ.

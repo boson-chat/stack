@@ -77,15 +77,15 @@ attempts, percentages) are small integers or percentages, capped as stated.
 | `install.mode` | enum | `fresh` (the stack's own Ergo), `addon` (Boson in front of an existing IRC server through the bridge), `unknown` |
 | `install.ircd` | enum | `ergo`, `unrealircd`, `inspircd`, `ngircd`, `solanum`, `charybdis`, `hybrid`, `other`, `unknown` |
 | `install.arch` | enum | `amd64`, `arm64`, `other` |
-| `counts.accounts` | bucket | accounts in auth (people, not bots/services) |
-| `counts.active_7d` | bucket | accounts active in the last 7 days |
-| `counts.active_30d` | bucket | accounts active in the last 30 days |
-| `counts.irc_peak_24h` | bucket | most IRC users connected at once in the last 24 h (`null` if unknown) |
-| `counts.channels` | bucket | registered channels (`null` if unknown) |
+| `counts.accounts` | bucket | accounts in auth (people, not bots/services). From auth's internal `GET /internal/v1/stats` (`X-Internal-Token`) on every report; on an auth without it, from auth's admin API while someone with `users.view` uses the panel (`null` once that read is over 7 days old) |
+| `counts.active_7d` | bucket | accounts active in the last 7 days (`last_active_at`; same source as `accounts`) |
+| `counts.active_30d` | bucket | accounts active in the last 30 days (same source as `accounts`) |
+| `counts.irc_peak_24h` | bucket | most IRC users connected at once in the last 24 h, sampled every 15 minutes and at send time (`null` if unknown). `fresh`: Ergo's API (`POST /v1/status`, `users.total`); `addon`: the bridge's managed API (evrd `GET /api/managed/stats`, the IRC server's LUSERS). When that has no count, the panel's IRC check reads LUSERS, which needs guest access |
+| `counts.channels` | bucket | registered channels (`null` if unknown). `fresh`: Ergo's API (`POST /v1/status`, `registered_channels`, from the stack's Ergo patch); `addon`: the IRC server's channel count from the bridge's managed API (LUSERS' channels formed, as no IRCd says how many are registered); `null` otherwise |
 | `features.voice_minutes_24h` | bucket or `null` | voice minutes (people × minutes) in the last 24 h; `null` without the voice profile or metrics |
 | `features.video_minutes_24h` | bucket or `null` | the same for video |
 | `features.files_uploaded_24h` | bucket or `null` | files uploaded in the last 24 h |
-| `features.push_sent_24h` | bucket or `null` | push notifications sent in the last 24 h |
+| `features.push_sent_24h` | bucket or `null` | push notifications sent in the last 24 h: pushes the relay delivered to APNs / FCM (`pushrelay_upstream_requests_total{result="ok"}`, scraped as job `pushrelay` from `pushrelay:3001/metrics`); `null` without the `pushrelay` profile or metrics |
 | `settings.registration` | enum | `open`, `invite`, `closed` |
 | `settings.guest_access` | bool | guests may use IRC without an account |
 | `settings.guest_first` | bool or `null` | the web client lets visitors in as guests first; `null` if the install's version doesn't have the setting |
