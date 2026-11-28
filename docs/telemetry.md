@@ -37,9 +37,14 @@ wizard, the apps' Settings and the website (`boson.chat/telemetry`) show:
 
 Both are JSON bodies, `Content-Type: application/json`, at most **16 KiB**
 (install report) and **2 KiB** (app ping). No cookies, no auth headers, no
-query strings. A failed send is retried at the next scheduled time only; it
-is never queued, never retried in a loop and never blocks or slows anything
-else. Senders log failures at debug level only.
+query strings. An install report that fails on the way (network, DNS, TLS,
+timeout, a 5xx) is retried with backoff (admin panel with the retry): about
+15 min later, then 30 min, 1 h, 2 h, … (± 20 %, never under 10 min) up to
+the daily cadence, as the same report (a failed `setup` or `update` stays
+that), surviving a restart; one the receiver refused (4xx) waits for the
+next scheduled send. A failed app ping waits for the next day's. A send
+never blocks or slows anything else. Senders log failures at
+debug level only (a refusal at info).
 
 ### Buckets
 
@@ -168,7 +173,7 @@ limit keeps a keyed hash of the IP in memory for at most an hour.
 | `415` | not `application/json` | `{"ok":false,"error":"content_type"}` |
 | `429` | rate limited (per IP) | `{"ok":false,"error":"rate_limited"}` |
 
-Senders ignore the body and never retry on any status.
+Senders ignore the body. Only the install report retries, and only after a 5xx or no answer (the backoff above); a 4xx is never retried.
 
 ## JSON Schema
 
