@@ -1502,6 +1502,8 @@ services:
       # "web": {"url": "https://WEB_HOST"}: other installs accept this web
       # client's calls when this server is verified in their directory.
       WEB_HOST: ${WEB_HOST:-}
+      # Only for a warning in the log: web profile on, web not in the sections.
+      WELLKNOWN_PROFILES: ${COMPOSE_PROFILES:-}
       AUTH_HOST: ${AUTH_HOST}
       VOICE_HOST: ${VOICE_HOST}
       FILES_HOST: ${FILES_HOST:-files.${DOMAIN:-localhost}}

@@ -24,6 +24,9 @@
 #                       auth lists it in /v1/web-origins, so their voice,
 #                       video and files accept its calls. Left out when
 #                       WEB_HOST is empty.
+#   WELLKNOWN_PROFILES  COMPOSE_PROFILES, only for a warning: the web profile
+#                       on with WEB_HOST set but WELLKNOWN_SECTIONS without
+#                       web means other installs refuse this web client.
 #   WELLKNOWN_FEDERATION_URL  with the auth section: auth's federation
 #                       metadata (http://auth:8080/.well-known/boson-federation.json),
 #                       published verbatim as "federation" (docs/federation.md).
@@ -96,6 +99,10 @@ fi
 if has web && [ -n "${WEB_HOST:-}" ]; then
 	h=$(host WEB_HOST "$WEB_HOST")
 	json="$json,\"web\":{\"url\":\"https://$h\"}"
+elif [ -n "${WEB_HOST:-}" ]; then
+	case ",$(echo "${WELLKNOWN_PROFILES:-}" | tr -d ' ')," in
+	*,web,*) echo "wellknown: warning: the web profile is on and WEB_HOST is set, but WELLKNOWN_SECTIONS ($WELLKNOWN_SECTIONS) has no web: boson.json doesn't name the web client, so other installs' voice, video and files refuse it. Add web to WELLKNOWN_SECTIONS in .env." >&2 ;;
+	esac
 fi
 
 fed_url=""

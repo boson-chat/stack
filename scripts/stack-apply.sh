@@ -27,7 +27,10 @@
 # migrate: migrations/NNNN-name.sh not yet in .boson/migrations.applied run
 # in order (sh, with STACK_DIR, ENV_FILE and MIGRATIONS_LIB), each recorded
 # when it exits 0. Exit 3 = not yet (left for the next update); anything
-# else stops here with an error.
+# else stops here with an error. A migration with a "# recheck: every
+# update" line runs again on every migrate after it is recorded, so a change
+# it made that went missing (a .env put back from an older copy) comes back;
+# "applied" again when it changed .env, a failure there is only a warning.
 #
 # Output: plain lines for people, and lines for the panel:
 #   @@STACKFILE <action> <path>   add | update | same | local | unknown |
@@ -194,6 +197,11 @@ is_applied() {
 	[ -f "$APPLIED" ] && awk -v m="$1" '$1 == m { found = 1 } END { exit !found }' "$APPLIED"
 }
 
+# recheck FILE: runs again on every migrate, recorded or not.
+recheck() { sed -n '1,20p' "$1" | grep -q '^# recheck: every update'; }
+
+env_sum() { if [ -f "$ENV_FILE" ]; then sha256 "$ENV_FILE"; fi; }
+
 about() {
 	# The first comment line after the shebang says what it does.
 	sed -n '2{s/^# *//;p;q;}' "$1"
@@ -206,6 +214,19 @@ do_migrate() {
 		[ -f "$m" ] || continue
 		name=$(basename "$m")
 		if is_applied "$name"; then
+			if [ "$mode" = migrate ] && recheck "$m"; then
+				echo "== migration $name (recheck): $(about "$m")"
+				before=$(env_sum)
+				rc=0
+				STACK_DIR=$STACK_DIR ENV_FILE=$ENV_FILE MIGRATIONS_LIB=$NEW/migrations/lib.sh \
+					sh "$m" || rc=$?
+				if [ "$rc" = 0 ] && [ "$(env_sum)" != "$before" ]; then
+					echo "$name: its change had gone missing, made again"
+					echo "@@MIGRATION $name applied"
+					continue
+				fi
+				[ "$rc" = 0 ] || [ "$rc" = 3 ] || echo "warning: recheck of $name failed (exit $rc), left as it is"
+			fi
 			echo "@@MIGRATION $name done"
 			continue
 		fi
