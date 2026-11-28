@@ -19,6 +19,12 @@ scrape_configs:
   - job_name: admin
     static_configs:
       - targets: ["admin:8081"]
+  # pushrelay profile; down (no data) otherwise. Its internal listener
+  # serves /metrics (pushrelay_upstream_requests_total{result="ok"}: pushes
+  # delivered to APNs / FCM, the usage stats' features.push_sent_24h).
+  - job_name: pushrelay
+    static_configs:
+      - targets: ["pushrelay:3001"]
   # Host metrics (node-exporter, metrics profile). It runs on the host network,
   # bound to the stack network's gateway; victoriametrics maps
   # host.docker.internal to that address (NODE_EXPORTER_ADDR). instance is

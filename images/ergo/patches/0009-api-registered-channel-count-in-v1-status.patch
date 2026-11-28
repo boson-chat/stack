@@ -1,0 +1,107 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: James Trotter <james@jamesat.dev>
+Date: Fri, 27 Nov 2026 19:53:14 -0500
+Subject: [PATCH] api: registered channel count in /v1/status
+
+registered_channels: how many channels have a founder, next to the
+channels currently active. The boson stack's admin panel reports it
+(bucketed) in its anonymous usage stats.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01LVmr3hed5hEbU4zSrMUP4L
+---
+ docs/API.md           |  1 +
+ irc/api.go            |  5 ++++-
+ irc/apistatus_test.go | 21 +++++++++++++++++++++
+ irc/channelmanager.go | 12 ++++++++++++
+ 4 files changed, 38 insertions(+), 1 deletion(-)
+ create mode 100644 irc/apistatus_test.go
+
+diff --git a/docs/API.md b/docs/API.md
+index f9eddd2a..7a3071ac 100644
+--- a/docs/API.md
++++ b/docs/API.md
+@@ -323,6 +323,7 @@ The response is a JSON object with fields:
+   * `unknown`: number of users with unknown status
+   * `max`: maximum number of users seen connected at once
+ * `channels`: integer, number of channels currently active
++* `registered_channels`: integer, number of registered channels (those with a founder)
+ * `servers`: integer, number of servers connected in the network
+ 
+ `/v1/whois`
+diff --git a/irc/api.go b/irc/api.go
+index 9b38bc1d..9c520e55 100644
+--- a/irc/api.go
++++ b/irc/api.go
+@@ -613,7 +613,9 @@ type apiStatusResponse struct {
+ 		Max       int `json:"max"`
+ 	} `json:"users"`
+ 	Channels int `json:"channels"`
+-	Servers  int `json:"servers"`
++	// RegisteredChannels is how many channels have a founder.
++	RegisteredChannels int `json:"registered_channels"`
++	Servers            int `json:"servers"`
+ }
+ 
+ func (a *ergoAPI) handleStatus(w http.ResponseWriter, r *http.Request) {
+@@ -634,6 +636,7 @@ func (a *ergoAPI) handleStatus(w http.ResponseWriter, r *http.Request) {
+ 	response.Users.Unknown = stats.Unknown
+ 	response.Users.Max = stats.Max
+ 	response.Channels = server.channels.Len()
++	response.RegisteredChannels = server.channels.RegisteredLen()
+ 	response.Servers = 1
+ 
+ 	a.writeJSONResponse(response, w, r)
+diff --git a/irc/apistatus_test.go b/irc/apistatus_test.go
+new file mode 100644
+index 00000000..ee7896ec
+--- /dev/null
++++ b/irc/apistatus_test.go
+@@ -0,0 +1,21 @@
++// Copyright (c) 2026 James Trotter
++// released under the MIT license
++
++package irc
++
++import "testing"
++
++func TestAPIStatusRegisteredChannels(t *testing.T) {
++	server := channelExpiryTestServer(t, 0)
++	emptyTestChannel(server, "#open")
++	reg := emptyTestChannel(server, "#reg")
++	reg.stateMutex.Lock()
++	reg.registeredFounder = "alice"
++	reg.stateMutex.Unlock()
++
++	var resp apiStatusResponse
++	apiCall(t, server, "/v1/status", struct{}{}, &resp)
++	if !resp.Success || resp.Channels != 2 || resp.RegisteredChannels != 1 {
++		t.Fatalf("status: %+v", resp)
++	}
++}
+diff --git a/irc/channelmanager.go b/irc/channelmanager.go
+index e8d7da93..d093c7bf 100644
+--- a/irc/channelmanager.go
++++ b/irc/channelmanager.go
+@@ -360,6 +360,18 @@ func (cm *ChannelManager) Len() int {
+ 	return len(cm.chans)
+ }
+ 
++// RegisteredLen returns the number of registered channels (with a founder).
++func (cm *ChannelManager) RegisteredLen() (n int) {
++	cm.RLock()
++	defer cm.RUnlock()
++	for _, entry := range cm.chans {
++		if entry.channel.Founder() != "" {
++			n++
++		}
++	}
++	return
++}
++
+ // Channels returns a slice containing all current channels
+ func (cm *ChannelManager) Channels() (result []*Channel) {
+ 	cm.RLock()
+-- 
+2.56.1
+

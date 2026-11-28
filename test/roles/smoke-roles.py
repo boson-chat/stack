@@ -121,6 +121,15 @@ def eventually(cond, timeout=15, every=1.0):
 def compose(*args, stdin=None):
     return subprocess.run(COMPOSE + list(args), input=stdin, capture_output=True, text=True)
 
+def ergo_status():
+    """Ergo's POST /v1/status (from inside the container: the API isn't published)."""
+    r = compose("exec", "-T", "ergo", "wget", "-qO-", "--header", "Authorization: Bearer " + os.environ["ERGO_API_TOKEN"],
+                "--post-data", "{}", "http://127.0.0.1:8089/v1/status")
+    try:
+        return json.loads(r.stdout)
+    except ValueError:
+        return {"error": r.stdout + r.stderr}
+
 # ---- set up roles ---------------------------------------------------------
 AUTH_PUBLIC = f"http://127.0.0.1:{os.environ.get('TEST_AUTH_PUBLIC_PORT', '28080')}"
 AUTH_TEST = f"http://127.0.0.1:{os.environ.get('TEST_AUTH_PORT', '28081')}"
@@ -546,6 +555,18 @@ if MODE == "fake":
     check("network channels: its members weren't kicked", not any(" KICK " in l and "#rules" in l for l in frank.log))
     info = cs(frank, "INFO #lobby")
     check("network channels: #lobby stays registered", "alice" in info.lower(), info)
+    # /v1/status counts registered channels (patch 0009; the admin panel's
+    # usage stats): at least #lobby, at most every channel there is, and one
+    # more once RoleServ registers another network channel.
+    st = ergo_status()
+    check("Ergo /v1/status: registered_channels counts the registered ones",
+          isinstance(st.get("registered_channels"), int) and 1 <= st["registered_channels"] <= st.get("channels", -1), st)
+    before = st.get("registered_channels")
+    http("POST", AUTH_TEST + "/test/state", {"network": {"channels": [
+        {"channel": "#lobby", "name": "#Lobby", "topic": "Welcome to the smoke", "autojoin": True},
+        {"channel": "#counted", "name": "#counted", "topic": "", "autojoin": False}]}})
+    got = eventually(lambda: isinstance(before, int) and ergo_status().get("registered_channels") == before + 1, 15, 2)
+    check("Ergo /v1/status: a newly registered channel is counted", got, ergo_status())
     h.send("QUIT")
 
 # RoleServ's account can't be taken over through auth

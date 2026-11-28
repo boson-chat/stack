@@ -871,6 +871,17 @@ services:
       # https://telemetry.boson.chat).
       TELEMETRY: ${TELEMETRY:-on}
       TELEMETRY_URL: ${TELEMETRY_URL:-}
+      # Where the report's counts come from, with no admin signed in:
+      # accounts from auth's internal GET /internal/v1/stats (and the email
+      # preview endpoints, X-Internal-Token); IRC users and registered
+      # channels from Ergo's API (irc profile); on an add-on install the
+      # network's users and channels from the bridge's managed API (bridge
+      # profile). A service that isn't running just leaves its counts null.
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-}
+      ERGO_API_URL: ${ADMIN_ERGO_API_URL-http://ergo:8089}
+      ERGO_API_TOKEN: ${ERGO_API_TOKEN:-}
+      BRIDGE_API_URL: ${ADMIN_BRIDGE_API_URL-http://evrd-links:8098}
+      BRIDGE_TOKEN: ${BRIDGE_TOKEN:-}
     volumes:
       # rw: the panel saves config/boson.yaml (temp file + rename in this dir)
       # and the Branding page's images in config/branding/.

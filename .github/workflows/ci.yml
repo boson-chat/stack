@@ -178,8 +178,19 @@ jobs:
           [ -n "$tok" ] || { echo "setup.sh did not write ERGO_API_TOKEN"; exit 1; }
           net=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$(docker compose ps -q ergo)")
           w() { docker run --rm --network "$net" busybox:1.37.0 wget -qO- -T 5 "$@"; }
-          w --header "Authorization: Bearer $tok" --post-data '{}' http://ergo:8089/v1/status |
-            python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["success"], d; print("ergo api:", d["version"])'
+          # registered_channels (images/ergo/patches/0009): the admin panel's
+          # usage stats count it. The smoke user's channel registered itself
+          # when the policy let them create one.
+          w --header "Authorization: Bearer $tok" --post-data '{}' http://ergo:8089/v1/status > status.json
+          python3 - "$(docker compose exec -T ergo grep -c 'operator-only-creation: true' /ircd/ircd.yaml || true)" <<'PY'
+          import json, sys
+          d = json.load(open("status.json")); admins_only = sys.argv[1].strip() not in ("", "0")
+          assert d["success"], d
+          n = d["registered_channels"]
+          assert isinstance(n, int) and isinstance(d["users"]["total"], int), d
+          assert admins_only or n >= 1, d
+          print("ergo api:", d["version"], "registered channels:", n, "users:", d["users"]["total"])
+          PY
           if w --post-data '{}' http://ergo:8089/v1/status 2>/dev/null; then echo "API answered without a token"; exit 1; fi
           if curl -s -m 3 http://127.0.0.1:8089/ >/dev/null; then echo "Ergo API is published on the host"; exit 1; fi
           if curl -sk -m 3 --cacert local-certs/ca.pem https://irc.localhost/v1/status -o /dev/null -w '%{http_code}' | grep -q 200; then echo "Ergo API routed by Traefik"; exit 1; fi
