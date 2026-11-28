@@ -5,7 +5,9 @@ package devseed
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand/v2"
+	"slices"
 	"time"
 
 	"github.com/boson-chat/stack/images/telemetry/internal/schema"
@@ -33,6 +35,9 @@ func Seed(ctx context.Context, st *store.Store, now time.Time, n, days int, seed
 		addon := rng.IntN(5) == 0
 		accounts := []int{3, 12, 40, 80, 300, 900, 2500}[rng.IntN(7)]
 		restarts := 0
+		// The hardware, from its own generator so the rest of the seed stays as it was.
+		hw := rand.New(rand.NewPCG(seed+uint64(i), 0x5bd1e995))
+		size := hostSize(hw)
 		for d := start; d >= stop; d-- {
 			t := now.Add(-time.Duration(d)*24*time.Hour - time.Duration(rng.IntN(20))*time.Hour)
 			if t.After(now) {
@@ -50,6 +55,16 @@ func Seed(ctx context.Context, st *store.Store, now time.Time, n, days int, seed
 				restarts += 5
 				r.Health.Services["ergo"] = schema.ServiceHealth{Restarts: restarts, State: "restarting"}
 				r.Health.Healthy = false
+			}
+			if size != nil {
+				r.HostSize = size
+				// Smaller boxes run fuller.
+				h := r.Health.Host
+				h.CPUP95 = ptr(clampPct(float64(70-8*slices.Index(schema.CPUBuckets, *size.CPUCores)) + hw.NormFloat64()*8))
+				h.MemP95 = ptr(clampPct(float64(85-7*slices.Index(schema.RAMBuckets, *size.RAMGB)) + hw.NormFloat64()*6))
+				if size.DiskGB != nil {
+					h.DiskUsed = ptr(clampPct(float64(75-8*slices.Index(schema.DiskBuckets, *size.DiskGB)) + hw.NormFloat64()*8))
+				}
 			}
 			if i%13 == 2 && r.Health.Host != nil {
 				r.Health.Host.DiskUsed = ptr(94.5)
@@ -87,6 +102,40 @@ func Seed(ctx context.Context, st *store.Store, now time.Time, n, days int, seed
 		}
 	}
 	return nil
+}
+
+func clampPct(v float64) float64 { return math.Round(min(max(v, 1), 99)*10) / 10 }
+
+// hostSize is a made-up host: most are small VPSes, 1 in 6 is an older
+// admin without host_size (nil), and without metrics the disk is unknown.
+func hostSize(rng *rand.Rand) *schema.HostSize {
+	if rng.IntN(6) == 0 {
+		return nil
+	}
+	pick := func(b []string, weights ...int) *string {
+		total := 0
+		for _, w := range weights {
+			total += w
+		}
+		n := rng.IntN(total)
+		for i, w := range weights {
+			if n < w {
+				return ptr(b[i])
+			}
+			n -= w
+		}
+		return ptr(b[len(b)-1])
+	}
+	hs := &schema.HostSize{
+		CPUCores: pick(schema.CPUBuckets, 14, 30, 28, 16, 8, 3, 1),
+		RAMGB:    pick(schema.RAMBuckets, 3, 12, 30, 28, 16, 7, 3, 1),
+		DiskGB:   pick(schema.DiskBuckets, 10, 30, 28, 18, 8, 4, 2),
+		Arch:     pick(schema.Arches, 70, 28, 2),
+	}
+	if rng.IntN(8) == 0 {
+		hs.DiskGB = nil
+	}
+	return hs
 }
 
 func report(rng *rand.Rand, id, stack string, addon bool, accounts int, first bool) *schema.Report {

@@ -915,8 +915,9 @@ services:
     restart: "no"
 
   # The admin panel's only door to Docker: a socket proxy that allows listing
-  # and inspecting containers, their logs and stats, and start/stop/restart,
-  # nothing else (no exec, create, delete, images, volumes, events), and only
+  # and inspecting containers, their logs and stats, start/stop/restart, and
+  # reading GET /info (CPU count, memory and architecture for the usage
+  # stats' host_size, docs/telemetry.md), nothing else (no exec, create, delete, images, volumes, events), and only
   # for the host named "admin". The panel itself never mounts the socket and
   # limits actions to this compose project.
   docker-proxy:
@@ -937,7 +938,7 @@ services:
       - -watchdoginterval=600
       - -stoponwatchdog
       - -shutdowngracetime=5
-      - '-allowGET=(/v1\.[0-9]+)?/(_ping|version|containers/json|containers/[a-zA-Z0-9_.-]+/(json|logs|stats))'
+      - '-allowGET=(/v1\.[0-9]+)?/(_ping|version|info|containers/json|containers/[a-zA-Z0-9_.-]+/(json|logs|stats))'
       - '-allowHEAD=(/v1\.[0-9]+)?/_ping'
       - '-allowPOST=(/v1\.[0-9]+)?/containers/[a-zA-Z0-9_.-]+/(start|stop|restart)'
     volumes:
@@ -967,7 +968,7 @@ services:
       - -watchdoginterval=600
       - -stoponwatchdog
       - -shutdowngracetime=5
-      - '-allowGET=(/v1\.[0-9]+)?/(_ping|version|containers/json|containers/[a-zA-Z0-9_.-]+/(json|logs|stats))'
+      - '-allowGET=(/v1\.[0-9]+)?/(_ping|version|info|containers/json|containers/[a-zA-Z0-9_.-]+/(json|logs|stats))'
       - '-allowHEAD=(/v1\.[0-9]+)?/_ping'
       - '-allowPOST=(/v1\.[0-9]+)?/(containers/[a-zA-Z0-9_.-]+/(start|stop|restart)|containers/create|images/create)'
       - '-allowDELETE=(/v1\.[0-9]+)?/containers/[a-zA-Z0-9_.-]+'

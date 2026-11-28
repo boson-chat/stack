@@ -52,6 +52,14 @@ test('every page renders with data, and sign out ends the session', async ({ pag
 	await expect(page.getByRole('heading', { name: 'Install mode' })).toBeVisible();
 	await shot(page, 'features', testInfo);
 
+	await go('Hardware');
+	await expect(page.getByRole('heading', { name: 'Installs per size' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Architecture' })).toBeVisible();
+	await expect(page.getByText('amd64 (x86-64)')).toBeVisible();
+	await expect(page.getByRole('columnheader', { name: 'Memory, 24 h p95' })).toBeVisible();
+	await expect(page.getByRole('cell', { name: '2–4 GB' }).first()).toBeVisible();
+	await shot(page, 'hardware', testInfo);
+
 	await go('Problems');
 	await expect(page.locator('.tag', { hasText: 'Failed update' }).first()).toBeVisible();
 	await shot(page, 'problems', testInfo);

@@ -33,6 +33,7 @@ func seed(t *testing.T) *store.Store {
 		if i == 1 {
 			m["stack"] = map[string]any{"version": "1.47.0"}
 			m["health"].(map[string]any)["updates"] = map[string]any{"attempts": 1, "failures": 1, "rollbacks": 1, "errors": []string{"checks"}}
+			m["host_size"] = map[string]any{"cpu_cores": "3-4", "ram_gb": "4-8", "disk_gb": nil, "arch": "arm64"}
 		}
 		r, err := schema.ParseReport(testutil.JSON(t, m))
 		if err != nil {
@@ -92,6 +93,12 @@ func TestDay(t *testing.T) {
 		{"boson_people_hi", map[string]string{"count": "accounts"}, 100},
 		{"boson_app_devices", map[string]string{"platform": "ios", "version": "0.106.0", "channel": "stable"}, 1},
 		{"boson_app_crashes", map[string]string{"platform": "ios", "version": "0.106.0"}, 2},
+		// One install without host_size (an older sender), one with it.
+		{"boson_installs_host_size", map[string]string{"dim": "cpu_cores", "bucket": "3-4"}, 1},
+		{"boson_installs_host_size", map[string]string{"dim": "cpu_cores", "bucket": "unknown"}, 1},
+		{"boson_installs_host_size", map[string]string{"dim": "ram_gb", "bucket": "4-8"}, 1},
+		{"boson_installs_host_size", map[string]string{"dim": "disk_gb", "bucket": "unknown"}, 2},
+		{"boson_installs_host_size", map[string]string{"dim": "arch", "bucket": "arm64"}, 1},
 	} {
 		got, ok := find(s, c.name, c.labels)
 		if !ok || got != c.want {

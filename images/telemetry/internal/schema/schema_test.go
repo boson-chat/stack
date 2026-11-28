@@ -140,7 +140,8 @@ func TestSpecExample(t *testing.T) {
 "settings":{"registration":"open","guest_access":true,"guest_first":null,"smtp":true,"sso":["oidc"],"federation_peers":"0","directory_listed":true},
 "health":{"updates":{"attempts":1,"failures":1,"rollbacks":1,"errors":["checks"]},
 "services":{"auth":{"restarts":0,"state":"running"},"ergo":{"restarts":7,"state":"restarting"}},
-"host":{"cpu_p95":34.5,"cpu_max":98.2,"mem_p95":71.0,"disk_used":62.3,"load_per_cpu":40.1},"healthy":false},"uptime_days":41}`
+"host":{"cpu_p95":34.5,"cpu_max":98.2,"mem_p95":71.0,"disk_used":62.3,"load_per_cpu":40.1},"healthy":false},"uptime_days":41,
+"host_size":{"cpu_cores":"3-4","ram_gb":"4-8","disk_gb":"50-100","arch":"amd64"}}`
 	r, err := schema.ParseReport([]byte(ex))
 	if err != nil {
 		t.Fatal(err)
@@ -169,5 +170,73 @@ func TestProblems(t *testing.T) {
 	}
 	if q := schema.Of(r, nil); strings.Contains(strings.Join(q.Kinds, ","), "crash_loop") {
 		t.Errorf("restart growth without a previous report: %v", q.Kinds)
+	}
+}
+
+// host_size is optional in schema 1: a report without it (an older sender)
+// is valid, and so is null, an object of nulls or one of buckets.
+func TestHostSize(t *testing.T) {
+	r, err := schema.ParseReport(testutil.JSON(t, testutil.Report(id)))
+	if err != nil || r.HostSize != nil {
+		t.Fatalf("without host_size: %v %+v", err, r)
+	}
+	full := map[string]any{"cpu_cores": "3-4", "ram_gb": "4-8", "disk_gb": "50-100", "arch": "arm64"}
+	nulls := map[string]any{"cpu_cores": nil, "ram_gb": nil, "disk_gb": nil, "arch": nil}
+	for name, v := range map[string]any{"null": nil, "nulls": nulls, "full": full} {
+		m := testutil.Report(id)
+		m["host_size"] = v
+		r, err := schema.ParseReport(testutil.JSON(t, m))
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		if name == "full" && (r.HostSize == nil || *r.HostSize.CPUCores != "3-4" || *r.HostSize.RAMGB != "4-8" ||
+			*r.HostSize.DiskGB != "50-100" || *r.HostSize.Arch != "arm64") {
+			t.Errorf("full: %+v", r.HostSize)
+		}
+		if name == "nulls" && (r.HostSize == nil || r.HostSize.CPUCores != nil || r.HostSize.Arch != nil) {
+			t.Errorf("nulls: %+v", r.HostSize)
+		}
+	}
+	// Every bucket of each enum is accepted.
+	for field, enum := range map[string][]string{"cpu_cores": schema.CPUBuckets, "ram_gb": schema.RAMBuckets,
+		"disk_gb": schema.DiskBuckets, "arch": schema.Arches} {
+		for _, b := range enum {
+			m := testutil.Report(id)
+			hs := map[string]any{"cpu_cores": nil, "ram_gb": nil, "disk_gb": nil, "arch": nil}
+			hs[field] = b
+			m["host_size"] = hs
+			if _, err := schema.ParseReport(testutil.JSON(t, m)); err != nil {
+				t.Errorf("%s=%s: %v", field, b, err)
+			}
+		}
+	}
+	bad := map[string]any{
+		"host_size.cpu_cores": "4",      // an exact count
+		"host_size.ram_gb":    "7.7",    // an exact size
+		"host_size.disk_gb":   "1000",   // not a bucket
+		"host_size.arch":      "x86_64", // Docker's name, not the enum
+	}
+	for path, v := range bad {
+		m := testutil.Report(id)
+		m["host_size"] = map[string]any{"cpu_cores": "2", "ram_gb": "2-4", "disk_gb": "25-50", "arch": "amd64"}
+		set(m, path, v)
+		_, err := schema.ParseReport(testutil.JSON(t, m))
+		var se *schema.Error
+		if err == nil || !asErr(err, &se) || se.Field != path {
+			t.Errorf("%s = %v: %v", path, v, err)
+		}
+	}
+	for name, v := range map[string]any{
+		"missing key": map[string]any{"cpu_cores": "2", "ram_gb": "2-4", "arch": "amd64"},
+		"extra key":   map[string]any{"cpu_cores": "2", "ram_gb": "2-4", "disk_gb": nil, "arch": "amd64", "hostname": "chat.example.com"},
+		"not object":  "4 cores",
+		"number":      4,
+	} {
+		m := testutil.Report(id)
+		m["host_size"] = v
+		if _, err := schema.ParseReport(testutil.JSON(t, m)); err == nil {
+			t.Errorf("%s accepted", name)
+		}
 	}
 }
