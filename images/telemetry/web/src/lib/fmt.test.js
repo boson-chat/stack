@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ago, country, flag, num, pct, range } from './fmt.js';
+import { ago, country, flag, num, pct, range, size } from './fmt.js';
 
 describe('fmt', () => {
 	it('formats numbers and shares', () => {
@@ -28,5 +28,20 @@ describe('fmt', () => {
 		expect(ago('2026-11-27T11:00:00Z', now)).toBe('1 h ago');
 		expect(ago('2026-11-26T12:00:00Z', now)).toBe('24 h ago');
 		expect(ago('2026-11-20T12:00:00Z', now)).toBe('7 days ago');
+	});
+});
+
+describe('size', () => {
+	it('words each host_size bucket', () => {
+		expect(size('cpu_cores', '1')).toBe('1 core');
+		expect(size('cpu_cores', '3-4')).toBe('3–4 cores');
+		expect(size('cpu_cores', '33+')).toBe('33+ cores');
+		expect(size('ram_gb', '<1')).toBe('Under 1 GB');
+		expect(size('ram_gb', '4-8')).toBe('4–8 GB');
+		expect(size('ram_gb', '64+')).toBe('64 GB+');
+		expect(size('disk_gb', '500-1000')).toBe('500 GB–1 TB');
+		expect(size('disk_gb', '1000+')).toBe('1 TB+');
+		expect(size('arch', 'amd64')).toBe('amd64 (x86-64)');
+		expect(size('ram_gb', 'unknown')).toBe('Unknown');
 	});
 });

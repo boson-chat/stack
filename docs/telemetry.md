@@ -106,6 +106,17 @@ attempts, percentages) are small integers or percentages, capped as stated.
 | `health.host` | object or `null` | `null` without the metrics profile (no VictoriaMetrics/node-exporter). Otherwise each of `cpu_p95`, `cpu_max`, `mem_p95`, `disk_used`, `load_per_cpu` (numbers, percentages 0–100 with one decimal, `load_per_cpu` 0–100: the 24 h p95 of load1 ÷ CPU count) or `null` when that one isn't available |
 | `health.healthy` | bool | the panel's own verdict at send time: every running service healthy, nothing restarting, no update failure unresolved |
 | `uptime_days` | int 0–3650 or `null` | days since the host booted (node-exporter), `null` without metrics |
+| `host_size` | object or `null`, **optional** | the host's hardware, as buckets only (see **Host size buckets**). Added to schema 1 without a bump: a report without it (an older admin panel) is valid, and the receiver counts it as unknown. When present it has all four keys below; each is `null` when unknown. |
+| `host_size.cpu_cores` | enum or `null` | CPUs Docker sees (`GET /info` `NCPU`, through the admin's socket proxy): `1`, `2`, `3-4`, `5-8`, `9-16`, `17-32`, `33+` |
+| `host_size.ram_gb` | enum or `null` | memory (`GET /info` `MemTotal`), GiB: `<1`, `1-2`, `2-4`, `4-8`, `8-16`, `16-32`, `32-64`, `64+` |
+| `host_size.disk_gb` | enum or `null` | size of the filesystem holding Docker's data root (`GET /info` `DockerRootDir`; the longest node-exporter mount point that contains it, else `/`), from node-exporter's `node_filesystem_size_bytes` in the stack's VictoriaMetrics, GiB: `<25`, `25-50`, `50-100`, `100-250`, `250-500`, `500-1000`, `1000+`. `null` without the metrics profile |
+| `host_size.arch` | enum or `null` | Docker's `Architecture` (`x86_64` → `amd64`, `aarch64`/`arm64` → `arm64`): `amd64`, `arm64`, `other` |
+
+**Host size buckets.** The exact core count, memory and disk size are
+never sent, only their bucket. A bucket includes its upper edge and
+excludes its lower one (`2-4` is more than 2 up to 4 GiB; `<1` is up to
+1 GiB; `64+` is more than 64): a "4 GB" server, which reports a little under
+4 GiB, is `2-4`. `cpu_cores` buckets are whole CPUs (`3-4` is 3 or 4).
 
 **Service enum**: `traefik`, `certsync`, `ergo`, `roleserv`, `evrd`,
 `evrd-links`, `postgres`, `auth`, `quicvoiced`, `quicvideod`,
@@ -148,6 +159,10 @@ Not in any field, not in logs, not stored:
 - channel names, topics, messages, message counts per person, who talks to whom;
 - IP addresses (see below), hostnames, domains, network names, URLs;
 - secrets: passwords, tokens, keys, `.env` values, SSO client IDs;
+- exact hardware figures: the core count, memory and disk size are sent
+  only as `host_size` buckets, never as exact values, and nothing that
+  identifies the machine (no hostname, serial, kernel, OS or Docker
+  version, CPU model);
 - free-text error messages or logs;
 - anything about a specific person.
 
@@ -269,7 +284,15 @@ Senders ignore the body. Only the install report retries, and only after a 5xx o
                       "mem_p95": { "$ref": "#/$defs/pct" }, "disk_used": { "$ref": "#/$defs/pct" },
                       "load_per_cpu": { "$ref": "#/$defs/pct" } } }] },
                   "healthy": { "type": "boolean" } } },
-    "uptime_days": { "type": ["integer", "null"], "minimum": 0, "maximum": 3650 }
+    "uptime_days": { "type": ["integer", "null"], "minimum": 0, "maximum": 3650 },
+    "host_size": { "oneOf": [{ "type": "null" }, {
+      "type": "object", "additionalProperties": false,
+      "required": ["cpu_cores", "ram_gb", "disk_gb", "arch"],
+      "properties": {
+        "cpu_cores": { "enum": ["1", "2", "3-4", "5-8", "9-16", "17-32", "33+", null] },
+        "ram_gb": { "enum": ["<1", "1-2", "2-4", "4-8", "8-16", "16-32", "32-64", "64+", null] },
+        "disk_gb": { "enum": ["<25", "25-50", "50-100", "100-250", "250-500", "500-1000", "1000+", null] },
+        "arch": { "enum": ["amd64", "arm64", "other", null] } } }] }
   }
 }
 ```
@@ -298,7 +321,8 @@ Example:
     "host": { "cpu_p95": 34.5, "cpu_max": 98.2, "mem_p95": 71.0, "disk_used": 62.3, "load_per_cpu": 40.1 },
     "healthy": false
   },
-  "uptime_days": 41
+  "uptime_days": 41,
+  "host_size": { "cpu_cores": "3-4", "ram_gb": "4-8", "disk_gb": "50-100", "arch": "amd64" }
 }
 ```
 
@@ -380,6 +404,7 @@ install's last report that day counts once):
 | `boson_installs_country` | `country` |
 | `boson_installs_profile` | `profile` |
 | `boson_installs_mode` | `mode`, `ircd` |
+| `boson_installs_host_size` | `dim` (`cpu_cores`, `ram_gb`, `disk_gb`, `arch`), `bucket` (that field's bucket, or `unknown` when null or the report has no `host_size`) |
 | `boson_installs_setting` | `setting` (`registration`, `guest_access`, `guest_first`, `smtp`, `sso`, `directory_listed`, `federation`: peers > 0), `value` (enum value, `true`/`false`/`unknown`) |
 | `boson_installs_feature` | `feature` (`voice`, `video`, `files`, `push`): installs whose bucket isn't `0`/`null` |
 | `boson_installs_problem` | `problem` (`update_failed`, `rollback`, `crash_loop`, `unhealthy`, `cpu`, `memory`, `disk`) |
@@ -453,6 +478,9 @@ Stopped-reporting installs per week are counted from the per-install table
 for over 7 days since). Pages: **Overview** (active installs 1d/7d/30d; new and
 stopped-reporting installs per week; accounts and active users summed across
 installs), **Versions** (adoption per release and per service; installs
-older than N releases), **Features**, **Problems** (anonymous install IDs
+older than N releases), **Features**, **Hardware** (installs per CPU,
+memory and disk size bucket and per architecture; next to each CPU, memory
+and disk bucket the median `cpu_p95`, `mem_p95` and `disk_used` of the
+installs in it), **Problems** (anonymous install IDs
 linking to their 90-day report history), **Apps** (daily active devices by
 platform and version, crashes per version) and **Countries**.

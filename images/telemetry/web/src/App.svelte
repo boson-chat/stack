@@ -6,6 +6,7 @@
 	import Overview from './pages/Overview.svelte';
 	import Versions from './pages/Versions.svelte';
 	import Features from './pages/Features.svelte';
+	import Hardware from './pages/Hardware.svelte';
 	import Problems from './pages/Problems.svelte';
 	import Install from './pages/Install.svelte';
 	import Apps from './pages/Apps.svelte';
@@ -15,6 +16,7 @@
 		{ href: '/', label: 'Overview' },
 		{ href: '/versions', label: 'Versions' },
 		{ href: '/features', label: 'Features' },
+		{ href: '/hardware', label: 'Hardware' },
 		{ href: '/problems', label: 'Problems' },
 		{ href: '/apps', label: 'Apps' },
 		{ href: '/countries', label: 'Countries' }
@@ -108,6 +110,7 @@
 			{#if route.path === '/'}<Overview />
 			{:else if route.path === '/versions'}<Versions />
 			{:else if route.path === '/features'}<Features />
+			{:else if route.path === '/hardware'}<Hardware />
 			{:else if route.path === '/problems'}<Problems />
 			{:else if installID}<Install id={installID} />
 			{:else if route.path === '/apps'}<Apps />

@@ -82,3 +82,23 @@ export const labels = {
 };
 
 export const label = (k) => labels[k] ?? k;
+
+// A host_size bucket as words: ("cpu_cores", "3-4") → "3–4 cores".
+export function size(dim, b) {
+	if (b == null || b === 'unknown') return 'Unknown';
+	const dash = (s) => s.replace('-', '–');
+	switch (dim) {
+		case 'cpu_cores':
+			return dash(b) + (b === '1' ? ' core' : ' cores');
+		case 'ram_gb':
+		case 'disk_gb':
+			if (b.startsWith('<')) return `Under ${b.slice(1)} GB`;
+			if (b === '1000+') return '1 TB+';
+			if (b === '500-1000') return '500 GB–1 TB';
+			if (b.endsWith('+')) return `${b.slice(0, -1)} GB+`;
+			return dash(b) + ' GB';
+		case 'arch':
+			return { amd64: 'amd64 (x86-64)', arm64: 'arm64', other: 'Other' }[b] ?? b;
+	}
+	return b;
+}

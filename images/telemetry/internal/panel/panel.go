@@ -7,9 +7,11 @@ import (
 	"errors"
 	"io/fs"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/netip"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -58,6 +60,7 @@ func (p *Panel) Handler() http.Handler {
 	mux.HandleFunc("GET /api/overview", p.guard(p.overview))
 	mux.HandleFunc("GET /api/versions", p.guard(p.versions))
 	mux.HandleFunc("GET /api/features", p.guard(p.features))
+	mux.HandleFunc("GET /api/hardware", p.guard(p.hardware))
 	mux.HandleFunc("GET /api/problems", p.guard(p.problems))
 	mux.HandleFunc("GET /api/installs/{id}", p.guard(p.install))
 	mux.HandleFunc("GET /api/apps", p.guard(p.apps))
@@ -470,6 +473,90 @@ func (p *Panel) features(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"installs": n, "profiles": counts(profiles), "features": counts(feats), "sso": counts(sso),
 		"registration": counts(reg), "modes": counts(modes), "federation": fedOut, "flags": fl,
 		"series": hist, "series_error": e})
+}
+
+// ---- Hardware ----------------------------------------------------------------
+
+// usage is the median of one host percentage over the installs in a size
+// bucket that reported it.
+type usage struct {
+	Bucket   string   `json:"bucket"`
+	Installs int      `json:"installs"`
+	Reported int      `json:"reported"`
+	Median   *float64 `json:"median"`
+}
+
+func median(v []float64) *float64 {
+	if len(v) == 0 {
+		return nil
+	}
+	sort.Float64s(v)
+	m := v[len(v)/2]
+	if len(v)%2 == 0 {
+		m = (v[len(v)/2-1] + v[len(v)/2]) / 2
+	}
+	m = math.Round(m*10) / 10
+	return &m
+}
+
+// hardware: installs active in the last 7 days per host_size bucket (in
+// bucket order, unknown last), and next to CPU, memory and disk size the
+// median of the matching usage percentage (cpu_p95, mem_p95, disk_used).
+func (p *Panel) hardware(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	act, err := p.Store.InstallsSeenSince(ctx, p.Now().Add(-7*24*time.Hour))
+	if err != nil {
+		jsonErr(w, http.StatusServiceUnavailable, "database unavailable")
+		return
+	}
+	per := map[string]map[string]int{}
+	vals := map[string]map[string][]float64{}
+	usageOf := map[string]func(h *schema.Host) *float64{
+		"cpu_cores": func(h *schema.Host) *float64 { return h.CPUP95 },
+		"ram_gb":    func(h *schema.Host) *float64 { return h.MemP95 },
+		"disk_gb":   func(h *schema.Host) *float64 { return h.DiskUsed },
+	}
+	for _, d := range schema.HostDims {
+		per[d], vals[d] = map[string]int{}, map[string][]float64{}
+	}
+	n, sized := 0, 0
+	for _, in := range act {
+		rep := in.Report
+		if rep == nil {
+			continue
+		}
+		n++
+		if rep.HostSize != nil {
+			sized++
+		}
+		for _, s := range schema.HostSizeOf(rep) {
+			per[s.Dim][s.Bucket]++
+			if f := usageOf[s.Dim]; f != nil && rep.Health.Host != nil {
+				if v := f(rep.Health.Host); v != nil {
+					vals[s.Dim][s.Bucket] = append(vals[s.Dim][s.Bucket], *v)
+				}
+			}
+		}
+	}
+	dist := map[string][]count{}
+	use := map[string][]usage{}
+	for _, d := range schema.HostDims {
+		dist[d] = []count{}
+		for _, b := range append(slices.Clone(schema.HostDimBuckets[d]), "unknown") {
+			c := per[d][b]
+			if c == 0 {
+				continue
+			}
+			dist[d] = append(dist[d], count{b, c})
+			if usageOf[d] != nil && b != "unknown" {
+				use[d] = append(use[d], usage{Bucket: b, Installs: c, Reported: len(vals[d][b]), Median: median(vals[d][b])})
+			}
+		}
+		if usageOf[d] != nil && use[d] == nil {
+			use[d] = []usage{}
+		}
+	}
+	writeJSON(w, map[string]any{"installs": n, "reported": sized, "dims": schema.HostDims, "sizes": dist, "usage": use})
 }
 
 // ---- Problems ----------------------------------------------------------------

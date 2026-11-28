@@ -92,7 +92,11 @@ var (
 		"self_update", "rollback", "timeout", "other"}
 	ServiceStates = []string{"running", "restarting", "unhealthy", "exited", "created"}
 	Platforms     = []string{"macos", "windows", "linux", "ios", "android", "web"}
-	Channels      = []string{"stable", "beta", "dev"}
+	// host_size buckets, in order. A bucket includes its upper edge.
+	CPUBuckets  = []string{"1", "2", "3-4", "5-8", "9-16", "17-32", "33+"}
+	RAMBuckets  = []string{"<1", "1-2", "2-4", "4-8", "8-16", "16-32", "32-64", "64+"}
+	DiskBuckets = []string{"<25", "25-50", "50-100", "100-250", "250-500", "500-1000", "1000+"}
+	Channels    = []string{"stable", "beta", "dev"}
 )
 
 var (
@@ -114,6 +118,16 @@ type Report struct {
 	Settings   Settings          `json:"settings"`
 	Health     Health            `json:"health"`
 	UptimeDays *int              `json:"uptime_days"`
+	// HostSize is optional (an addition to schema 1): nil when absent or null.
+	HostSize *HostSize `json:"host_size,omitempty"`
+}
+
+// HostSize is the host's hardware, in buckets. Each field is nil when unknown.
+type HostSize struct {
+	CPUCores *string `json:"cpu_cores"`
+	RAMGB    *string `json:"ram_gb"`
+	DiskGB   *string `json:"disk_gb"`
+	Arch     *string `json:"arch"`
 }
 
 type Stack struct {
@@ -187,6 +201,33 @@ type App struct {
 	Channel    string `json:"channel"`
 	Crashes    int    `json:"crashes"`
 	Servers    string `json:"servers"`
+}
+
+// HostDims are host_size's fields, in the panel's order.
+var HostDims = []string{"cpu_cores", "ram_gb", "disk_gb", "arch"}
+
+// HostDimBuckets is each host_size field's buckets, in order.
+var HostDimBuckets = map[string][]string{"cpu_cores": CPUBuckets, "ram_gb": RAMBuckets, "disk_gb": DiskBuckets, "arch": Arches}
+
+// SizeOf is one host_size field's bucket ("unknown" when null or absent).
+type SizeOf struct{ Dim, Bucket string }
+
+// HostSizeOf is the report's host_size, one entry per field in HostDims
+// order: a report without host_size (an older sender) is unknown on each.
+func HostSizeOf(r *Report) []SizeOf {
+	var hs HostSize
+	if r != nil && r.HostSize != nil {
+		hs = *r.HostSize
+	}
+	out := make([]SizeOf, 0, len(HostDims))
+	for i, v := range []*string{hs.CPUCores, hs.RAMGB, hs.DiskGB, hs.Arch} {
+		b := "unknown"
+		if v != nil {
+			b = *v
+		}
+		out = append(out, SizeOf{HostDims[i], b})
+	}
+	return out
 }
 
 // Error is a validation failure at a JSON path.
@@ -391,22 +432,43 @@ func ParseReport(body []byte) (*Report, error) {
 	if d := r.UptimeDays; d != nil && (*d < 0 || *d > 3650) {
 		return nil, bad("uptime_days")
 	}
+	if hs := r.HostSize; hs != nil {
+		for _, f := range []struct {
+			name string
+			v    *string
+			enum []string
+		}{{"cpu_cores", hs.CPUCores, CPUBuckets}, {"ram_gb", hs.RAMGB, RAMBuckets},
+			{"disk_gb", hs.DiskGB, DiskBuckets}, {"arch", hs.Arch, Arches}} {
+			if f.v != nil && !slices.Contains(f.enum, *f.v) {
+				return nil, bad("host_size.%s", f.name)
+			}
+		}
+	}
 	slices.Sort(r.Profiles)
 	slices.Sort(r.Settings.SSO)
 	slices.Sort(r.Health.Updates.Errors)
 	return &r, nil
 }
 
-// health.host is null or an object with all five keys, and each service
-// entry has both of its keys.
+// health.host is null or an object with all five keys, each service
+// entry has both of its keys, and host_size (optional) is absent, null or an
+// object with all four keys.
 func checkHostShape(body []byte) error {
 	var raw struct {
 		Health struct {
 			Host     map[string]any            `json:"host"`
 			Services map[string]map[string]any `json:"services"`
 		} `json:"health"`
+		HostSize map[string]any `json:"host_size"`
 	}
 	_ = json.Unmarshal(body, &raw)
+	if raw.HostSize != nil {
+		for _, k := range []string{"cpu_cores", "ram_gb", "disk_gb", "arch"} {
+			if _, ok := raw.HostSize[k]; !ok {
+				return bad("host_size.%s", k)
+			}
+		}
+	}
 	if raw.Health.Host != nil {
 		for _, k := range []string{"cpu_p95", "cpu_max", "mem_p95", "disk_used", "load_per_cpu"} {
 			if _, ok := raw.Health.Host[k]; !ok {

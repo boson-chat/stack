@@ -81,7 +81,7 @@ func (r *Rollup) Day(ctx context.Context, day string) ([]vm.Sample, error) {
 	}
 
 	versions, countries, profiles, modes, settings, features, problems := counter{}, counter{}, counter{}, counter{}, counter{}, counter{}, counter{}
-	lo, hi := counter{}, counter{}
+	lo, hi, sizes := counter{}, counter{}, counter{}
 	for _, row := range reports {
 		rep := row.Report
 		versions[key("stack", rep.Stack.Version)]++
@@ -93,6 +93,9 @@ func (r *Rollup) Day(ctx context.Context, day string) ([]vm.Sample, error) {
 			profiles[key(p)]++
 		}
 		modes[key(rep.Install.Mode, rep.Install.IRCd)]++
+		for _, d := range schema.HostSizeOf(rep) {
+			sizes[key(d.Dim, d.Bucket)]++
+		}
 		s := rep.Settings
 		settings[key("registration", s.Registration)]++
 		settings[key("guest_access", fmt.Sprint(s.GuestAccess))]++
@@ -134,6 +137,7 @@ func (r *Rollup) Day(ctx context.Context, day string) ([]vm.Sample, error) {
 	add("boson_installs_country", countries, "country")
 	add("boson_installs_profile", profiles, "profile")
 	add("boson_installs_mode", modes, "mode", "ircd")
+	add("boson_installs_host_size", sizes, "dim", "bucket")
 	add("boson_installs_setting", settings, "setting", "value")
 	add("boson_installs_feature", features, "feature")
 	add("boson_installs_problem", problems, "problem")
